@@ -1,0 +1,19 @@
+# @zakkster/lite-yggdrasil
+
+> A zero-GC engine for mutable ordered sequences where the position of anything is a running total (planned).
+
+Version: 0.0.0
+Status: pre-release. Nothing is built yet; the engine is planned, not shipped.
+
+Current export: VERSION (string).
+
+PLANNED exports (not implemented, do not call them):
+- SumSequence (first engine, planned v0.1.0)
+- SumMap
+- IntervalMap
+- Yggdrasil
+
+Planned idea: the summary with dimensions -- seek by any running total.
+Main file: Yggdrasil.js (ESM). Types: Yggdrasil.d.ts. Error tag (planned): [lite-yggdrasil].
+Plan: ROADMAP.md, RESEARCH.md, SCOPE.md (repo only, not in the npm package).
+License: MIT (c) 2026 Zahary Shinikchiev

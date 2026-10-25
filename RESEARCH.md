@@ -114,8 +114,8 @@ Following the sibling convention (lite-loglogn ADR 0004 Amendment 1, D-host = no
 gated in COUNTS, not time:
 
 - DETERMINISTIC (gated every run): trunk nodes touched per op, pulls per op, leaf moves per op.
-  touches(op) <= c * log2(L) + k, with L = leaf runs, c from the BB<3,2> height bound (~2.41), k the
-  leaf constant -- an exact, host-independent line. The foil's count (elements moved) is n-linear.
+  touches(op) <= p(op) * H(Lmax(n)) + k(op), all integers (ADR 0003 G-11; the slope
+  c = 2.409 of log2 L is REPORTED only), k(op) the leaf constant -- an exact, host-independent line. The foil's count (elements moved) is n-linear.
 - REPORTED (docs only, with provenance): ns/op vs log2 n, fitted with lite-logn's frozen family fit
   (r2 floor 0.958) for display. Never a gate (no hosted CI; sibling convention).
 
@@ -191,22 +191,25 @@ A benchmark page with no loss rows is a red flag; the suite treats it as a faile
 
 - I-1 **Balance**: leaf-oriented BB<3,2> (Hirai-Yamamoto, the unique integer pair for Nievergelt-
   Reingold) with BALANCE WEIGHT = LEAF COUNT: each leaf run weighs 1; internal weight = sum of the
-  children. For every internal node: 3 * w(l) >= w(r) and 3 * w(r) >= w(l). Gamma = 2 selects
-  single vs double rotation. Element count is a SEPARATE summary column.
+  children. For every internal node: 3 * w(l) >= w(r) and 3 * w(r) >= w(l). Gamma = 2 for insert /
+  delete only; join / split use BFS's rule (ADR 0001 T-2 / T-3). Element count is a SEPARATE summary column.
 - I-2 **Summaries**: count[u] = count[l] + count[r]; sum_d[u] = sum_d[l] + sum_d[r]; maxKey / maxEnd
   likewise -- recomputed from children on every pull, never maintained by deltas.
-- I-3 **Measures**: integers in Float64; seekable dims m >= 0; each dim's TOTAL <= 2^53 - 1 (an op
+- I-3 **Measures**: integers in Float64; every SUM dim m >= 0 (ADR 0002 M-1; -0 -> +0, M-2); each dim's TOTAL <= 2^53 - 1 (an op
   that would exceed it throws, set unchanged).
 - I-4 **Seek**: indexAtSum(d, y) = first i with sumBefore(i) + m_i > y (STRICT); zero-measure items
   never returned at a boundary; y < 0 throws; y >= total returns length.
-- I-5 **Leaves**: sorted runs, B = 16; full -> split 8 + 8, except rightmost-append / leftmost-prepend
-  -> 15 + 1; below 4 -> merge if neighbour <= 5, else equalize floor / ceil((s + k) / 2).
+  y domain: NaN / +-Infinity / non-number throw; fractional allowed (ADR 0002 M-8).
+- I-5 **Leaves**: sorted runs, B = 16, m = B/4 = 4; Table 3 sizes: interior full-leaf split 9|8 / 8|9,
+  rightmost-append 13|4 / leftmost-prepend 4|13; underflow (s = m - 1) -> merge iff s + k <= B/2, else
+  equalize floor / ceil((s + k) / 2) (ADR 0001 T-5..T-8).
 - I-6 **Routing (keyed)**: go left iff q <= maxKey[left]; a leaf owns (maxKey(prev leaf),
   maxKey(leaf)]; the rightmost owns up to +inf.
 - I-7 **Ids**: Int32; leaves negative (`~leafId`); no value >= 2^31 is ever read from a Uint32Array on
   a hot path.
-- I-8 **Height**: height <= spine-stack size = ceil(2.5 * log2(L + 2)) + 8, L <= ceil(C / 4) + 1.
-- I-9 **Finger**: valid only while its epoch equals the tree epoch; a hit never descends.
+- I-8 **Height**: height <= spine-stack size = H(Lmax), Lmax = ceil(C / m) + K (ADR 0001 T-9 /
+  T-10, ADR 0004 A-5).
+- I-9 **Finger**: valid only while its epoch equals the tree epoch; a hit never descends. Incomplete as stated -- see B-17; the SumSequence planner fixes it.
 
 ---
 
@@ -226,6 +229,35 @@ by every design review; a class seen twice becomes a standing gate.
 | B-6 | Symmetric 8 + 8 split on sorted appends leaves every leaf half full; "100% finger hits" claimed. | review of a peer's design | DB-9 count-first claims (occupancy and hit counts printed, not asserted) |
 | B-7 | Spine stack fixed at 64 entries; BB<3,2> height exceeds it near 2^27 elements.          | internal review                  | DB-3 invariant walker asserting height <= stack size |
 | B-8 | Unverified performance prose ("sub-nanosecond" within 2^53 ns = ~104 days; "copyWithin compiles to memmove"). | review of a peer's design | DB-10 claim audit (every number needs a run log or an "expected" label) |
+| B-9 | (S1) splitAt / append between independently constructed fixed-capacity arenas cannot be O(log n) (moving nodes between typed-array arenas is O(moved)); lite-logn Treap shares one arena but allocates views per split. | pre-read of SCOPE section 5 (orchestrator, S0) | DB-11 consumer-first spike (cut / paste a block) -> ruled Y-15, ADR 0004 |
+| B-10 | (S1) The <3,2> proof (Hirai-Yamamoto) covers insert / delete only; join / split is Blelloch-Ferizovic-Sun's proof with its own rotation rule -- gamma = 2 inside join is unproven. | pre-read (S0) | DB-4 proof-assumption table (one table per cited proof, not one per structure) -> ADR 0001 T-3, Table 2 |
+| B-11 | (S2) "split 8 + 8" / "15 + 1" describe 16 elements; where the 17th goes was unspecified, and every count formula (finger hits, occupancy) depends on it. | pre-read (S0) | DB-9 count-first claims (deriving the formula forces it) -> ADR 0001 Table 3 |
+| B-12 | (S1) Totals bounded per dim but negatives allowed on non-seekable dims: an internal partial sum can exceed 2^53 while the total does not -> shape-dependent rounding (B-2 class again). | pre-read (S0) | DB-7 boundary catalogue (partial sums, not only totals) -> ADR 0002 M-1 |
+| B-13 | (S2) Seam leaves after splitAt / join can fall below the minimum; no repair rule, no single-leaf exemption. | pre-read (S0) | DB-2 exhaustive small-scope (splitAt at every position) -> ADR 0001 T-7 / T-8 |
+| B-14 | (S3) ROADMAP DB-2 claimed B-1 "falls out at B = 4 (sibling leaves of 1 and 4)": at B = 4 those weigh 2 vs 5 under element-count+1 weights -- balanced; the unfixable pair exists only at B = 16 (5 vs 17). | planner P-A (ADR 0001 M-1), confirmed by node arithmetic | DB-8 mutation-tested gates (run the mutant against the claimed witness) |
+| B-15 | (S3) The Adams size-only-weight mutant is EQUIVALENT on I-1 shapes (3(wl-1) >= wr-1 implies 3wl >= wr): it cannot be a deletion witness. | planner P-A | DB-8 (a mutant that no gate can kill is not a control) -> W-DEL / W-INS / W-TIE |
+| B-16 | (S3) ROADMAP HOT PATH "<= 15 leaf moves" is false: an interior split at p = 1 writes 16 at B = 16. | planner P-A | DB-9 count-first claims |
+| B-17 | (S1) Finger rule incomplete: (a) an ordinary miss does not move the finger and no epoch bump follows a non-finger mutation -> stale positional base returns a wrong row (B = 8, 9 rows, setMeasure(0), indexAtSum(75) -> 7, true 5); (b) draining the last element frees the leaf on a "hit" -> the next insert writes a freed leaf; (c) equalize ("no shape change") leaves a stale keyed fence -> I-6 broken. ADR 0001 and 0003 also define "hit" differently. SECOND finger-class bug (B-3) -> STANDING GATE: every op stream run with the finger enabled and disabled must give identical answers and identical walker state. | DB-1 adversarial review (also pre-read P-4) | DB-6 metamorphic (finger on == finger off) + DB-2 with the finger live |
+| B-18 | (S2) Epoch storage / wrap / clear() unspecified: b.clear() O(1) pool reset then a's insert reuses b's finger leaf; an Int32 epoch re-matches after 2^32 bumps; a plain field leaves Smi range after 2^30. | DB-1 | DB-7 boundary catalogue (counters and epochs at 2^30 / 2^31 / 2^32) |
+| B-19 | (S2) ADR 0003 G-12 "prepends mirror" is false for moves: a prepend into a packed leaf shifts every element (B = 16, 200 prepends: 1960 moves vs formula 45). | DB-1 | DB-9 count-first (simulate the edge stream before writing the formula) |
+| B-20 | (S2) ADR 0004 assertion-1 control can never fail: views 1365/1365/1366 make <= 1023 leaves under ADR 0001 T-9, not 1026; and 0004 A-5 ("one under-min leaf per view") contradicts T-9. Working control: views 1 / 1 / 4094 -> 1025. | DB-1 | DB-8 (run every control against the correct code AND the mutant before writing it down) |
+| B-21 | (S2) No way to choose B: DB-2 needs B = 4 / 8, the .d.ts options are { dims } only. | DB-1 | DB-11 spike (write the test harness against the API first) |
+| B-22 | (S2) The entity argument is never validated: undefined -> 0, 2^31 -> -2^31, 1.5 -> 1 in an Int32 column (fail open). | DB-1 | DB-7 boundary catalogue (every argument, not only measures) |
+| B-23 | (S2) I-7 ("no value >= 2^31 read from a Uint32Array on a hot path") contradicts SumMap's uint32 key column. | DB-1 | DB-7 + the lite-loglogn C-14 boxing lesson |
+| B-24 | (S2) The virtual-list consumer needs ops no document specifies: entityAt(i), getMeasure, a SumSequence cursor seek, a dims > 1 insert form that does not allocate, entity -> index (parent column; ADR 0004 O-3 defers it to v0.4). | DB-1 | DB-11 consumer-first spike |
+| B-25 | (S3) ADR 0001 T-2's per-ancestor balance check is dead on the hot path: weight = leaf count, so a non-splitting insert / non-underflowing remove changes no weight. | DB-1 | DB-4 (restating the proof's preconditions per op) |
+| B-26 | (S3) Seam-repair counts disagree (0004 A-4 "one", 0001 T-7 "<= 2" / join "<= 1", 0003 row 11 "<= 2"); T-7's "both single leaves -> one leaf" is false (10 + 10 -> two leaves). | DB-1 | DB-1 cross-document read |
+| B-27 | (S3) Table 3 hysteresis row holds only for the interior split: after a 13 + 4 edge split one remove underflows. | DB-1 | DB-2 |
+| B-28 | (S3) No stated MAX_CAPACITY / dims cap: Int32 count overflows near 2^31; indices >= 2^30 leave Smi range. | DB-1 | DB-7 |
+| B-29 | (S3) ADR 0003 G-13 can never fail (stack size = H(Lmax) by T-10, so G-13 reduces to "H is monotone"); "H(L) <= log_{4/3}(L) - 1.4" is false at L = 1. | DB-1 | DB-8 |
+| B-30 | (S3) ROADMAP 3.1 asked for torture / perf / bench scripts on day 1 with no engine: green on nothing. | pre-read (S0) | DB-8 (a gate with no subject cannot fail) -> ruled: scripts land with their subject |
+
+Standing rules from repeated classes (2026-10-25). Class seen twice becomes a standing gate / law
+(DB-12). FINGER (B-3, B-17): every op stream is run with the finger enabled and disabled and must give
+identical answers and identical walker state (the finger-on == finger-off metamorphic gate).
+CONTROL THAT CANNOT FAIL (B-20, B-29, plus the S0 scaffold review's GATE TEETH rejects): every control
+is executed against the correct code (must pass) AND against its mutant (must fail) in the session
+that writes it.
 
 Lesson for the suite: B-1 is the classic "a proof's assumptions do not survive a representation
 change" error. Citing a verified result (Coq / Isabelle) is not verification of OUR structure;

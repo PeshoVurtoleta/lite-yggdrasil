@@ -1,8 +1,9 @@
 # lite-yggdrasil -- PRE-BUILD roadmap
 
-> **STATE (2026-10-25): pre-build.** Only SCOPE.md (Rev 1), RESEARCH.md and this file exist.
-> D7 is RULED (both, distinct). D1-D6 and D8 are leans awaiting the S0 settle. Nothing is built,
-> nothing is published, `LiteYggdrasil/` is not a git repository yet.
+> **STATE (2026-10-25): S0 in progress (2026-10-25): Y-01, Y-02, Y-04, Y-05, Y-09, Y-13, Y-15 RULED; ADRs
+> 0001-0004; scaffolding at 0.0.0 (npm test green). 22 design bugs logged (RESEARCH
+> section 6 B-9..B-30); the 13 from the DB-1 review (B-17..B-29) are carried to the SumSequence planner.** D7 is RULED (both, distinct). Nothing
+> is published; git repo initialized (e14e2f3).
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -31,8 +32,7 @@ assistant never commits, publishes, pushes or tags (the suite git guard enforces
 | error tag  | `[lite-yggdrasil]`                                             |
 | exports    | `SumSequence`, `SumMap`, `IntervalMap`, `Yggdrasil` (+ `VERSION`) |
 
-**UNPUBLISHED, not a git repo.** `git init` is the maintainer's first act of S0 (the git guard
-blocks it for agents). Every version below is a first issue.
+**UNPUBLISHED.** Git initialized 2026-10-25 (e14e2f3). Every version below is a first issue.
 
 ---
 
@@ -45,7 +45,7 @@ steady-state hot path proven by `node --expose-gc test/torture.mjs`, every gate 
 
 Family deltas (RESEARCH.md section 5 states them as invariants I-1..I-9):
 
-1. **Measures are integers** stored in Float64, seekable dims >= 0, each dim's TOTAL <= 2^53 - 1;
+1. **Measures are integers** stored in Float64, every SUM dim >= 0 (ADR 0002 M-1), each dim's TOTAL <= 2^53 - 1;
    anything else throws `RangeError [lite-yggdrasil]`, set unchanged.
 2. **No user callback in a hot loop.** Summary kinds are fixed (COUNT, SUM, MAX); a polymorphic call
    in the pull loop is a rejected design.
@@ -65,20 +65,21 @@ Each settled call becomes a `decisions/NNNN-*.md` ADR in the session that owns i
 
 | ID | Sev | Design call | Recommended resolution | Status |
 | --- | --- | --- | --- | --- |
-| **Y-01** (D1) | **S1** | Trunk: binary BB<3,2> over leaf runs vs a B+ tree with fanout-16 internal nodes. | Binary BB<3,2>, balance weight = LEAF COUNT, two-argument `join(L, R)`; B+ fanout = research R-7, measured. | LEAN -> S0 |
-| **Y-02** (D2) | **S1** | First member: SumSequence vs SumMap. | SumSequence (no sibling overlap; P1 is the most common pain; proves trunk + leaves + sums without keys). | LEAN -> S0 |
+| **Y-01** (D1) | **S1** | Trunk: binary BB<3,2> over leaf runs vs a B+ tree with fanout-16 internal nodes. | Binary BB<3,2>, balance weight = LEAF COUNT, gamma = 2 for insert / delete, BFS own rule inside join / split (R-Y01), two-argument `join(L, R)`; B+ fanout = research R-7, measured. | **RULED 2026-10-25** (0001) |
+| **Y-02** (D2) | **S1** | First member: SumSequence vs SumMap. | SumSequence (no sibling overlap; P1 is the most common pain; proves trunk + leaves + sums without keys). | **RULED 2026-10-25** (maintainer: approved) |
 | **Y-03** (D3) | S2 | SumMap key domain: uint32 vs mapped floats. | uint32; a float -> sortable-uint helper later with -0 -> +0, NaN fails closed, and the >= 2^30 boxing lane gated as a first-class torture lane. | LEAN -> SumMap |
-| **Y-04** (D4) | S3 | Home: new package vs lite-logn member. | New package; lite-logn as devDep oracle / foil. | LEAN -> S0 |
-| **Y-05** (D5) | **S1** | Measures: integer-valued Float64 vs free floats. | Integers, totals <= 2^53 - 1, seekable dims >= 0, fail closed. | LEAN -> S0 |
-| **Y-06** (D6) | S2 | Leaf size B and policy. | B = 16; split 8 + 8, rightmost / leftmost 15 + 1; merge / equalize below 4 (RESEARCH I-5). Measured per host, REPORTED. | LEAN -> SumSequence |
+| **Y-04** (D4) | S3 | Home: new package vs lite-logn member. | New package; lite-logn as devDep oracle / foil. | **RULED 2026-10-25** (maintainer: approved) |
+| **Y-05** (D5) | **S1** | Measures: integer-valued Float64 vs free floats. | Integers, totals <= 2^53 - 1, every SUM dim >= 0, fail closed. | **RULED 2026-10-25** (0002) |
+| **Y-06** (D6) | S2 | Leaf size B and policy. | B = 16; split 9 + 8 / 8 + 9 (interior), 13 + 4 / 4 + 13 (rightmost append / leftmost prepend); merge / equalize below 4 (RESEARCH I-5). Measured per host, REPORTED. Split sizes RULED by ADR 0001 Table 3 (13 + 4 edge split, R-X1); B value still measured. | LEAN -> SumSequence |
 | **Y-07** (D7) | S2 | Interval overlap ownership. | **RULED 2026-10-25 (maintainer): BOTH, distinct.** lite-logn keeps its textbook keyed IntervalTree (its ROADMAP :916); lite-yggdrasil v0.3 IntervalMap is the mutable, split / join-able, multi-index one, ordered by (start, entityId). Neither package edits the other's roadmap. | **RULED** |
 | **Y-08** (D8) | S2 | First consumer to prove the API. | LiteVirtual `measuredAxis` (insert-in-the-middle O(n) -> O(log n)), as a recipe / spike on the yggdrasil side first; any LiteVirtual change is LiteVirtual's own session. | LEAN -> SumSequence |
-| **Y-09** | S2 | Diagnostic counters: which ones, Int32 wrap policy. | `_n` Int32Array: touches, pulls, splits, merges, borrows, rotations, fingerHits, fingerMisses, joinSteps; wrap at 2^31; REPORTED; the engine never reads them (lite-loglogn precedent). | S0 |
+| **Y-09** | S2 | Diagnostic counters: which ones, Int32 wrap policy. | `_n` Int32Array: touches, pulls, moves, splits, merges, equalizes, rotSingle, rotDouble, fingerHits, fingerMisses, joinSteps, seamRepairs (ADR 0003); wrap at 2^31; REPORTED; the engine never reads them (lite-loglogn precedent). | **RULED 2026-10-25** (0003; per-view counters, list per ADR 0003 table) |
 | **Y-10** | S2 | Max dims per instance. | 1..4, fixed at construction (Q-2). | SumSequence |
 | **Y-11** | S2 | Iteration API. | One preallocated cursor per instance (`c.seek*`, `c.next()`, fields), invalidated by epoch; no iterator objects. | SumSequence |
 | **Y-12** | S2 | Entity id source for the pool. | Raw int32 by default; lite-arena handle as an optional adapter (generation check = one load). | Yggdrasil pool |
-| **Y-13** | S3 | Statistical host. | "none: statistical claims are REPORTED only" (sibling convention, as lite-loglogn). | S0 |
+| **Y-13** | S3 | Statistical host. | "none: statistical claims are REPORTED only" (sibling convention, as lite-loglogn). | **RULED 2026-10-25** (0003) |
 | **Y-14** | S3 | Day-1 scaffolding and `files[]`. | Mirror `LiteLogN/` (6 shipped files: Yggdrasil.js, .d.ts, llms.txt, README.md, CHANGELOG.md, LICENSE); test/, benchmark/, decisions/, demo/ repo-only. | S0 |
+| **Y-15** | **S1** | Arena ownership for split / join | ADR 0004 option (a): one internal shared arena, `SumSequence.arena(C, o, k)` views at setup, cross-arena split / append = RangeError | **RULED 2026-10-25** (0004) |
 
 ---
 
@@ -91,11 +92,12 @@ control fails, and the reviewer has asked of every test "would this fail if the 
 Mirror `LiteLogN/` (package.json scripts, test layout, decisions/, benchmark/ copied from Bench v2).
 `npm test` (deterministic only), `npm run torture`, `npm run test:perf`, `npm run bench`,
 `npm run verify` (test + types + torture + perf, timed parts under quiet-lock).
+Ruled 2026-10-25 (R-SC): S0 ships `npm test`, `test:types`, `verify` only; `torture` / `test:perf` arrive with SumSequence and `bench` with Bench-ADOPT, so no script is ever green on nothing.
 
 ### 3.2 Oracle gate (DETERMINISTIC)
 Fuzz vs an INDEPENDENT oracle written from the spec, not from the engine: a plain JS array of
 (entity, measures) for SumSequence, a sorted array for SumMap, a naive interval list for IntervalMap.
-0 divergences over seeded streams; every structural event (split 8 + 8, split 15 + 1, merge,
+0 divergences over seeded streams; every structural event (interior split 9|8 / 8|9, edge split 13|4 / 4|13, merge,
 equalize, rotation single / double, join, splitAt) asserted to fire > 0 times per stream.
 
 ### 3.3 Invariant walker (DETERMINISTIC)
@@ -105,15 +107,14 @@ fences, I-7 id signs, I-8 height <= spine size, I-9 finger epoch.
 
 ### 3.4 Count gates (DETERMINISTIC) -- the splice witness
 touches / pulls / moves per op against exact formulas from the spec (RESEARCH section 3); finger
-hits on a strictly increasing stream = the value derived from the leaf policy (expected 14 of every
-15 appends), computed in the test from the policy, never read back from the engine.
+hits on a strictly increasing stream = the value derived from the leaf policy (12 of every 13 appends at B = 16 (ADR 0001 Table 3, ADR 0003 G-12 with s0 = m)), computed in the test from the policy, never read back from the engine.
 
 ### 3.5 Metamorphic gates (DETERMINISTIC)
 - shape independence: one multiset, k insertion orders -> bit-identical answers to every seek;
 - `splitAt(i)` then `append` == identity (structure-independent comparison);
 - `insertAt(i, x)` then `removeAt(i)` == identity;
 - `indexAtSum(d, sumBefore(d, i)) == i` whenever m_i > 0;
-- clear() restores the constructed state.
+- clear() restores the constructed state (diagnostic counters excepted -- ADR 0003 G-8).
 
 ### 3.6 Torture and perf (DETERMINISTIC counts, timed parts under quiet-lock)
 0 B/op on every hot op (insertAt, removeAt, setMeasure, indexAtSum, sumBefore, cursor walk, and for
@@ -166,7 +167,7 @@ before any engine code; DB-5..DB-12 become gates in the member's session.
 - **DB-2 Exhaustive small-scope checking.** Bugs show up in small cases (the small-scope hypothesis).
   The leaf size B and capacity are constructor parameters with a TEST-ONLY minimum (B = 4), so the
   test enumerates EVERY op sequence up to length ~10-12 over a tiny key / measure alphabet and runs
-  the invariant walker after each op. B-1 falls out in milliseconds (sibling leaves of 1 and 4).
+  the invariant walker after each op. B-1 unfixable sibling PAIR needs B = 16 (5 vs 17; at B = 4 the pair 1 / 4 weighs 2 vs 5, balanced -- B-14), but the element-count mutant still fails the walker at B = 4 (a 4-element leaf beside a 4-leaf subtree, ADR 0001 M-1); DB-2 runs at B = 4 AND B = 8 (ADR 0001 Table 3).
   Deterministic, part of `npm test`.
 - **DB-3 Invariant walker after every op** (section 3.3), in fuzz AND exhaustive runs, including the
   height <= spine-stack bound (B-7) -- an assertion, not a comment.
@@ -181,11 +182,10 @@ before any engine code; DB-5..DB-12 become gates in the member's session.
   identity round-trips catch split / join seam bugs; seek-of-sumBefore catches the strict / non-strict
   boundary (I-4).
 - **DB-7 Boundary-value catalogue**, one table per facade, every row a test: empty, single element,
-  single leaf, capacity full, zero measures, -0, NaN, non-integers, negatives on seekable dims,
+  single leaf, capacity full, zero measures, -0, NaN, non-integers, negatives on any SUM dim,
   totals at 2^53 - 1 and +1, keys at 2^30 - 1 / 2^30 / 2^31 - 1 / 2^31 / 2^32 - 1, rightmost and
   leftmost leaves, ties in (start, entityId). B-4 and B-5 are rows of it.
-- **DB-8 Mutation-tested gates.** Every gate ships the mutant it must kill: Adams-style size weights
-  (must fail I-1 under deletions), element-count weights over leaves (B-1, must fail DB-2), fence-less
+- **DB-8 Mutation-tested gates.** Every gate ships the mutant it must kill: the gamma witnesses W-DEL / W-INS / W-TIE (the Adams size-weight mutant is equivalent on I-1 shapes -- B-15), element-count weights over leaves (B-1, must fail DB-2), fence-less
   finger (must lose its hits), symmetric split on appends (must fail the occupancy count), float
   measures (must fail shape independence), recursion in join (must fail the deep-tree stack test).
 - **DB-9 Count-first claims.** No sentence says "fast", "100%" or "O(1)" without the count that
@@ -239,7 +239,7 @@ What blocks what:
 ---
 package: "@zakkster/lite-yggdrasil"
 version_target: none (no release)
-status: planned
+status: in progress (2026-10-25)
 peers: ["@zakkster/lite-gc-profiler", "@zakkster/lite-leak", "@zakkster/lite-perf-gate"]
 depends_on: []
 blocks: [SumSequence, SumMap, IntervalMap, Yggdrasil]
@@ -269,7 +269,7 @@ NON-GOALS
   No engine code, no benchmark numbers.
 
 DONE WHEN
-  Y-01 / Y-02 / Y-04 / Y-05 RULED, ADRs 0001-0003 written and reviewed, scaffolding green.
+  Y-01 / Y-02 / Y-04 / Y-05 / Y-09 / Y-13 / Y-15 RULED, ADRs 0001-0004 written and reviewed, scaffolding green.
 ```
 
 ===============================================================================
@@ -304,20 +304,20 @@ TASKS
     (I-4), iterative splitAt / append on spine stacks (I-8), positional finger (I-9), counters (Y-09),
     preallocated cursor (Y-11). Int32 ids, negative leaves (I-7). Fail closed per I-3.
   - Gates 3.2-3.6 with their mutants (DB-8).
+  - Resolve the DB-1 findings B-17..B-29 (RESEARCH section 6) in the planner pass before the first coder batch; B-17 adds the finger-on == finger-off metamorphic gate.
   - Docs: README (LiteSepforge blueprint spine), llms.txt, .d.ts, CHANGELOG 0.1.0, GUIDE.
 
 ASSERTIONS
   - Oracle 0 divergences; every structural event fires > 0 per stream.
   - Exhaustive small-scope: every sequence up to the chosen length passes the walker; the
     element-count-weight mutant (B-1) FAILS it.
-  - touches per op <= ceil(2.41 * log2(L)) + k (exact formula in the ADR); finger hits on a strictly
+  - touches per op <= p(op) * H(Lmax(n)) + k(op) (ADR 0003 G-11); finger hits on a strictly
     increasing append stream = policy-derived value.
   - Shape independence: 3 insertion orders, identical seek answers; float-measure mutant FAILS.
   - torture 0 B/op on every hot op; controls fail.
 
 HOT PATH
-  insertAt / removeAt / setMeasure / indexAtSum / sumBefore: one descent (or a finger hit), <= 15
-  leaf moves, one pull per level, zero allocation.
+  insertAt / removeAt / setMeasure / indexAtSum / sumBefore: one descent (or a finger hit), leaf moves per the exact formula of the SumSequence spec (formulas pending; the old <= 15 was false -- B-16, ADR 0001 O-4), one pull per level, zero allocation.
 
 NON-GOALS
   No keys (SumMap), no intervals, no pool, no persistence, no lazy range updates.

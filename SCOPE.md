@@ -2,7 +2,7 @@
 
 Status: the founding scope note. ROADMAP.md and RESEARCH.md are AUTHORITATIVE from here on; where
 this note and ROADMAP.md disagree, ROADMAP.md wins. D7 RULED (both, distinct); D1-D6 + D8 are
-leans carried into ROADMAP.md section 2 for S0 to settle.
+leans carried into ROADMAP.md section 2 for S0 to settle. Since S0 (2026-10-25) decisions/0001-0004 are RULED; where they differ from this note they win (e.g. the 13|4 edge split, every SUM dim >= 0, the shared arena).
 
 ## 1. Purpose, in one sentence
 

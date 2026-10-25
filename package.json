@@ -1,0 +1,68 @@
+{
+  "name": "@zakkster/lite-yggdrasil",
+  "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
+  "version": "0.0.0",
+  "description": "Pre-release scaffold of a zero-dependency engine for mutable ordered sequences that seek by any running total (a summary tree); no engine code ships in this version.",
+  "type": "module",
+  "main": "./Yggdrasil.js",
+  "module": "./Yggdrasil.js",
+  "types": "./Yggdrasil.d.ts",
+  "exports": {
+    ".": {
+      "types": "./Yggdrasil.d.ts",
+      "node": "./Yggdrasil.js",
+      "import": "./Yggdrasil.js",
+      "default": "./Yggdrasil.js"
+    }
+  },
+  "files": [
+    "Yggdrasil.js",
+    "Yggdrasil.d.ts",
+    "llms.txt",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:types": "tsc -p test/types/tsconfig.json",
+    "verify": "npm test && npm run test:types"
+  },
+  "keywords": [
+    "sum-tree",
+    "summary-tree",
+    "ordered-sequence",
+    "prefix-sum",
+    "rope",
+    "order-statistics",
+    "data-structures",
+    "zero-dependency"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@zakkster/lite-gc-profiler": "^1.16.0",
+    "@zakkster/lite-leak": "^1.10.0",
+    "@zakkster/lite-perf-gate": "^1.4.2",
+    "typescript": "^7.0.2"
+  },
+  "homepage": "https://github.com/PeshoVurtoleta/lite-yggdrasil#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PeshoVurtoleta/lite-yggdrasil.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PeshoVurtoleta/lite-yggdrasil/issues",
+    "email": "shinikchiev@yahoo.com"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/PeshoVurtoleta"
+  },
+  "sideEffects": false
+}

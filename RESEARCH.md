@@ -1,0 +1,307 @@
+# lite-yggdrasil Research Notes
+
+Research companion to ROADMAP.md (the plan) and SCOPE.md (the founding scope note, Rev 1).
+ASCII-only. Started 2026-10-25. Nothing in this file is a shipped claim: every timing statement is
+labelled "expected" until a run log of the cycle that measured it exists (suite law).
+
+Contents
+1. Core identity -- "where is X?" is a sum
+2. The problems, and who has them today
+3. The analytical anchor -- the splice witness (counts first)
+4. The benchmark suite -- adopt Bench v2, add the scenario tier and the "where it loses" table
+5. Design core and its invariants
+6. Design-bug log -- what review caught before code, and which technique would have caught it earlier
+7. The candidate roster
+8. Boundaries with sibling packages
+9. Prior art (sources)
+10. Open questions
+
+---
+
+## 1. Core identity -- "where is X?" is a sum
+
+lite-yggdrasil is a zero-GC engine for **mutable ordered sequences where the position of anything is
+a running total**: splice anywhere in O(log n), seek by ANY running total (count, pixels, bytes,
+milliseconds, volume), and keep the same entities in more than one order.
+
+### The honest unifying thread
+
+The engine is one idea, not a bag of trees: the **summary with dimensions** (the idea behind Zed's
+`sum_tree`). Every element carries a small vector of integer measures; every node caches the sum
+(or the max) of its subtree; a cursor descends by ANY one dimension of that summary.
+
+| You seek by...              | ...and you get                  | Classic name                     |
+|-----------------------------|---------------------------------|----------------------------------|
+| count                       | the k-th element                | rank / select, implicit treap    |
+| sum of row heights          | the row at scrollTop = y        | variable-height virtual list     |
+| sum of line feeds           | the line containing offset o    | rope / piece-table line index    |
+| sum of durations            | the clip playing at time t      | timeline / sequencer             |
+| sum of volume (keyed)       | the price where depth reaches V | order-book depth                 |
+| max of interval end (keyed) | every interval stabbing x       | interval tree                    |
+
+Three facades share ONE trunk and ONE leaf arena: `SumSequence` (implicit position), `SumMap`
+(uint32 keys), `IntervalMap` (start-ordered, `maxEnd` summary). The fourth export, `Yggdrasil`, is
+the shared entity pool whose trees ("realms") all thread the same stable entity ids. The mythology
+names exactly one mechanism: one trunk connecting several worlds = one id space connecting several
+orders. Nothing else in the API is named after a myth.
+
+### What it is NOT
+
+- Not a hash map (no O(1) point lookup; a `Map` beats it there, and the benchmark says so).
+- Not an integer-universe successor structure (that is lite-loglogn).
+- Not a textbook teaching member (that is lite-logn; it keeps its IntervalTree -- D7 ruling).
+- Not a spatial index (lite-bvh / lite-spatial).
+- Not persistent in v1 (research R-8 only).
+
+---
+
+## 2. The problems, and who has them today
+
+P1. **Positional lookup over a mutable sequence.** Variable-height virtual lists, editor line /
+    offset maps, timelines of concatenated clips. Today: a prefix-sum array (O(n) rebuild on every
+    insert / delete) or a Fenwick tree (O(log n) VALUE updates, no insert in the middle).
+P2. **Aggregates over a live keyed set.** "Volume resting above price p", "how many timers before
+    t", "the key where cumulative weight crosses y". Rank / select by COUNT is common; seek by an
+    arbitrary SUM dimension is not.
+P3. **Overlap over MUTABLE intervals.** Clips active at t, booking conflicts, 1D sweep broadphase,
+    decorations overlapping a range.
+P4. **Multi-view entities without sync bugs.** Price-time order AND cancel-by-id; deadline order AND
+    per-owner removal; offset order AND decoration id. Today: a `Map` plus a sorted array kept in
+    sync by hand, an O(n) delete path or stale entries.
+P5. **Bulk structural edits.** Cut / paste a range of rows, move a block of clips, split at a key,
+    append two sequences: O(log n) split / join instead of O(n) copies.
+
+### In the suite (survey 2026-10-25; file:line at that date)
+
+- lite-logn (LogN.js v1.5.1): **Treap** (:1912) size-only summary, rank / select by count, split /
+  merge on a shared arena, randomized; **Scapegoat** (:2515) size-only, no split / merge;
+  **SortedArray** (:6447) O(n) insert / delete; **SegmentTree** (:1079) fixed kind, fixed length;
+  **Fenwick** (:557) the suite's only seek-by-sum (`search` :781), fixed length.
+- No interval tree, stabbing query, sweep, sum tree, rope, piece table or multi-index anywhere.
+  lite-logn's ROADMAP (:916) plans a Treap-based IntervalTree; it stays there (D7 ruling).
+
+Consumers that hand-roll a weaker version today (each is a candidate recipe, never a hard dep):
+
+| Package       | Today                                                               | Problem |
+|---------------|---------------------------------------------------------------------|---------|
+| LiteVirtual   | `measuredAxis` private Fenwick (Virtual.js:46-84); a row insert goes through `setCount` = full rebuild, O(n) (:677, :748) | P1 |
+| LiteTimeline  | every track scanned every frame (Timeline.js:83); no remove          | P3, P1  |
+| LiteKeyframe  | sorted Float32 keys, O(n) insertion shift (Keyframe.js:226); linear scan under ~16 then binary search (:44, :55) | P2 (leaf-scale crossover precedent) |
+| LiteDataTable | full O(N log N) re-sort per change (Table.js:511, :753); one view    | P4, P2  |
+| LiteDiCron    | every job polled every tick, O(n) (Cron.js:478)                      | P2      |
+| LiteArena     | generational 32-bit handles, 20-bit index + 12-bit generation (Arena.js:5, :31) | the id source for P4 |
+
+### Outside the suite
+
+Every serious editor builds this privately: VS Code's piece tree (a red-black tree caching left-
+subtree length and line-feed count -- a two-dimension sum tree for one consumer) and Zed's
+`sum_tree` (a copy-on-write B+ tree whose Summary exposes several Dimensions, any of which can be
+used to seek). `sorted-btree` (npm) is a fast keyed B+ tree with O(1) clone, but has no summary
+dimensions; `@flatten-js/interval-tree` is the Cormen interval tree on object nodes. No reusable,
+zero-GC, typed-array, deterministic JS engine for the summary-dimension idea was found.
+
+---
+
+## 3. The analytical anchor -- the splice witness (counts first)
+
+Every sibling family has an anchor whose SHAPE witnesses its class (lite-o1 flat, lite-logn a
+straight line vs log2 n, lite-loglogn a line vs log2 w). lite-yggdrasil's anchor is the **splice
+witness**: the cost of `insertAt(middle)` + `indexAtSum(random y)` grows as a straight line in
+log2 n, while the honest O(n) foils (splice + prefix-sum rebuild; Fenwick + rebuild on insert --
+LiteVirtual's pattern today) leave it.
+
+Following the sibling convention (lite-loglogn ADR 0004 Amendment 1, D-host = none), the anchor is
+gated in COUNTS, not time:
+
+- DETERMINISTIC (gated every run): trunk nodes touched per op, pulls per op, leaf moves per op.
+  touches(op) <= c * log2(L) + k, with L = leaf runs, c from the BB<3,2> height bound (~2.41), k the
+  leaf constant -- an exact, host-independent line. The foil's count (elements moved) is n-linear.
+- REPORTED (docs only, with provenance): ns/op vs log2 n, fitted with lite-logn's frozen family fit
+  (r2 floor 0.958) for display. Never a gate (no hosted CI; sibling convention).
+
+A second, family-specific anchor: the **shape-independence witness**. The same multiset inserted in
+k different orders (different tree shapes) answers every seek bit-identically. It exists only
+because measures are integers (D5); with fractional floats it fails by design (control).
+
+---
+
+## 4. The benchmark suite -- adopt Bench v2, add the scenario tier and the "where it loses" table
+
+**Adopt, do not reinvent.** lite-o1 Bench v2, already ported to lite-logn (`LiteLogN/benchmark/`:
+Harness / Matrix / Report / Template / METHODOLOGY), is copied and wired: child process per cell,
+honesty header (seed / node / arch / date / load), vacuity rule (the STRING `n/a`, never 0),
+`traceHash` determinism, bootstrap CI + Mann-Whitney, zero-dep inline-SVG report. The eight
+dimensions carry over (D1 witness ... D8 workloads). Swapped in: the splice witness (section 3) and
+the foils below.
+
+### 4.1 Foils (the thing a competent engineer would actually write)
+
+| Facade        | Primary foil (fair, O(n))                         | Strong rival (fair, competent)           | Counter-foil (where WE should lose) |
+|---------------|---------------------------------------------------|------------------------------------------|-------------------------------------|
+| SumSequence   | `Array.splice` + prefix-sum rebuild               | Fenwick + rebuild on insert (LiteVirtual today) | Fenwick on a FIXED-length, resize-only workload |
+| SumMap        | sorted typed array + binary search + shift        | `sorted-btree` (npm), lite-logn Treap / Scapegoat (count seek only) | native `Map` for point get / set |
+| IntervalMap   | linear scan of an interval array                  | `@flatten-js/interval-tree`, lite-logn IntervalTree once shipped | static sorted-by-start array for read-only data |
+| Yggdrasil pool| `Map` + k sorted arrays synced by hand            | k independent SumMaps + a `Map` id index | a single SumMap when only one order is needed |
+
+A rival that cannot answer a query (Treap seek-by-sum, `Map` successor) gets the cell `n/a` with
+the reason, never a number and never 0.
+
+### 4.2 The scenario tier (the "advanced problems" made visible)
+
+Each scenario is a scripted, seeded workload a reader recognizes, run against the foil, the strong
+rival and Yggdrasil, with exact op counts printed next to the times:
+
+- S1 **Virtual list, 1M rows**: smooth scroll (indexAtSum per frame), random row expand / collapse
+  (setMeasure, zero heights included), insert / delete rows mid-list while scrolling.
+- S2 **Editor line index, 100k lines**: random edits; offset -> line and line -> offset; paste of a
+  10k-line block (join) and cut of one (split).
+- S3 **Timeline, 50k clips**: scrub (time -> clip), ripple delete, move a block of clips (split +
+  join), clips active at t (IntervalMap, v0.3).
+- S4 **Order book**: price levels with resting volume; depth-at-volume (keyAtSum), best bid / ask,
+  cancel-by-order-id across price-time and id realms (pool, v0.4).
+- S5 **Calendar / booking**: insert with overlap check, release, "free slots in [a, b)" (v0.3).
+- S6 **Data table, 3 maintained sort orders under updates** vs re-sort-on-change (pool, v0.4).
+
+### 4.3 The "where it loses" table (published, not hidden)
+
+Expected losses, stated as hypotheses to be MEASURED and printed with the crossover n:
+- static data: a prefix-sum array + binary search beats any tree for read-only seeks;
+- resize-only (no inserts): Fenwick wins (smaller constant, one array);
+- point lookups by key: `Map` wins (O(1), no order);
+- tiny n (expected below ~64-256): a plain array splice wins;
+- split / join on a 2-element sequence: overhead dominates.
+A benchmark page with no loss rows is a red flag; the suite treats it as a failed honesty review.
+
+### 4.4 Publication (everyone can see the numbers)
+
+- `benchmark/report.html` + `benchmark/results.json` committed; the README "Benchmarks" section is
+  generated from results.json (never hand-typed numbers) with the provenance line: date, host, CPU,
+  Node, load average at start and end, quiet-lock state, run count, commit + main-file sha.
+- `npm run bench` reproduces it on any machine; `npm run bench -- --scenario S1` runs one scenario.
+- Every number is REPORTED tier (D-host = none): a measurement, never a law; PRELIMINARY when the host
+  was NOISY (quiet-lock exit 76), and labelled so in the report header.
+- Counts (touches, pulls, splits, finger hits) are printed beside every timing; counts are exact and
+  reproducible bit-for-bit, so a reader can verify the work even when their timings differ.
+
+---
+
+## 5. Design core and its invariants
+
+(SCOPE.md Rev 1 D-C1..D-C8; restated here as invariants the walker checks.)
+
+- I-1 **Balance**: leaf-oriented BB<3,2> (Hirai-Yamamoto, the unique integer pair for Nievergelt-
+  Reingold) with BALANCE WEIGHT = LEAF COUNT: each leaf run weighs 1; internal weight = sum of the
+  children. For every internal node: 3 * w(l) >= w(r) and 3 * w(r) >= w(l). Gamma = 2 selects
+  single vs double rotation. Element count is a SEPARATE summary column.
+- I-2 **Summaries**: count[u] = count[l] + count[r]; sum_d[u] = sum_d[l] + sum_d[r]; maxKey / maxEnd
+  likewise -- recomputed from children on every pull, never maintained by deltas.
+- I-3 **Measures**: integers in Float64; seekable dims m >= 0; each dim's TOTAL <= 2^53 - 1 (an op
+  that would exceed it throws, set unchanged).
+- I-4 **Seek**: indexAtSum(d, y) = first i with sumBefore(i) + m_i > y (STRICT); zero-measure items
+  never returned at a boundary; y < 0 throws; y >= total returns length.
+- I-5 **Leaves**: sorted runs, B = 16; full -> split 8 + 8, except rightmost-append / leftmost-prepend
+  -> 15 + 1; below 4 -> merge if neighbour <= 5, else equalize floor / ceil((s + k) / 2).
+- I-6 **Routing (keyed)**: go left iff q <= maxKey[left]; a leaf owns (maxKey(prev leaf),
+  maxKey(leaf)]; the rightmost owns up to +inf.
+- I-7 **Ids**: Int32; leaves negative (`~leafId`); no value >= 2^31 is ever read from a Uint32Array on
+  a hot path.
+- I-8 **Height**: height <= spine-stack size = ceil(2.5 * log2(L + 2)) + 8, L <= ceil(C / 4) + 1.
+- I-9 **Finger**: valid only while its epoch equals the tree epoch; a hit never descends.
+
+---
+
+## 6. Design-bug log -- caught before code (2026-10-25)
+
+The point of this section is the habit: each entry names the bug class, how it was found, and the
+ROADMAP section 4 technique that would have caught it EARLIER and cheaper. New entries are appended
+by every design review; a class seen twice becomes a standing gate.
+
+| ID  | Bug (in the draft spec)                                                                 | Found by                         | Would have been caught by |
+|-----|-----------------------------------------------------------------------------------------|----------------------------------|---------------------------|
+| B-1 | Balance weight = element count + 1 over variable-size leaf runs: two sibling leaves of 4 and 16 elements violate 3*5 >= 17 and no rotation can fix two leaves. | external design review (a peer's read of SCOPE draft) | DB-2 exhaustive small-scope (B = 4, n <= 12 finds it in milliseconds); DB-4 proof-assumption table (the proof assumes uniform external weight 1) |
+| B-2 | Fractional float measures make seek results depend on tree shape (rounding by association order). | internal review of the draft    | DB-6 metamorphic: same multiset, k insertion orders, identical answers |
+| B-3 | Finger tested on the leaf's [min, max] CONTENTS: every sorted append misses.            | internal review of a peer's design | DB-6 metamorphic + DB-9 count-first claims (hit count on a sorted stream) |
+| B-4 | The 2^53 bound stated per measure, not per dimension TOTAL.                              | review of a peer's design        | DB-7 boundary catalogue (totals at 2^53 - 1) |
+| B-5 | Float-to-uint key helper: -0 and +0 become two keys; NaN unspecified; every positive float maps above 2^31 (the V8 boxing lane). | review of a peer's design | DB-7 boundary catalogue; the lite-loglogn D1 (-0) and C-14 (boxing) lessons |
+| B-6 | Symmetric 8 + 8 split on sorted appends leaves every leaf half full; "100% finger hits" claimed. | review of a peer's design | DB-9 count-first claims (occupancy and hit counts printed, not asserted) |
+| B-7 | Spine stack fixed at 64 entries; BB<3,2> height exceeds it near 2^27 elements.          | internal review                  | DB-3 invariant walker asserting height <= stack size |
+| B-8 | Unverified performance prose ("sub-nanosecond" within 2^53 ns = ~104 days; "copyWithin compiles to memmove"). | review of a peer's design | DB-10 claim audit (every number needs a run log or an "expected" label) |
+
+Lesson for the suite: B-1 is the classic "a proof's assumptions do not survive a representation
+change" error. Citing a verified result (Coq / Isabelle) is not verification of OUR structure;
+listing the proof's assumptions and checking each one is.
+
+---
+
+## 7. The candidate roster
+
+### Tier 1 -- the members to ship
+- **SumSequence** (0.1.0) -- implicit position, multi-dim sums, insertAt / removeAt / setMeasure /
+  indexAtSum / sumBefore / splitAt / append, positional finger.
+- **SumMap** (0.2.0) -- uint32 keys, get / set / delete, successor / predecessor, rank / select,
+  sumBelow / keyAtSum, splitAt / join, fence-key finger.
+- **IntervalMap** (0.3.0) -- (start, entityId) order, maxEnd summary, stab / overlap into caller
+  typed arrays, split / join.
+- **Yggdrasil pool** (0.4.0) -- stable entity ids (raw int32 or a lite-arena handle, Y-12), several
+  realms, per-realm back-pointers, remove(id) from all realms.
+
+### Tier 2 -- strong candidates
+- **Lazy range measure update** (shift every clip in a range by dt; collapse a section) -- a lazy tag
+  per node; needs its own invariant set.
+- **Percentile / quantile helper** over a SumMap count or weight dim.
+- **Rope payload helper** (piece-table recipe for text) -- a recipe first, a member only if earned.
+
+### Tier 3 -- research track (measured, never assumed)
+- R-4 **Cracked leaves** (unsorted append, sort / select at burst): pays only if the measured
+  crossover moves; in-order scans then pay a per-leaf sort.
+- R-7 **B+ internal fanout** vs the binary trunk: shallower and cache-friendlier, harder split / join.
+- R-8 **Epoch persistence**: birth / death epoch per node, free only when no live snapshot falls in
+  [birth, death); leaves copied whole; secondary realms not versioned (a documented limit); fixed
+  arena fills faster (fail closed).
+
+### Declined (do not reopen without new evidence)
+- SWAR key signatures in leaves: help equality only, not ordered seek; BigInt64Array lanes allocate.
+- A user callback monoid in the pull loop: a polymorphic call site deopts; fixed kinds only.
+
+---
+
+## 8. Boundaries with sibling packages
+
+- **lite-logn**: textbook O(log n) members incl. its planned IntervalTree (D7: both exist, distinct).
+  lite-logn is a devDep oracle / foil here, never a runtime dep.
+- **lite-loglogn**: integer-universe successor (StratifiedBitset / XFastTrie / YFastTrie). Shares the
+  bucket-hysteresis lesson (YFastTrie K / h) and the boxing lesson (C-14), no code.
+- **lite-o1**: BitSet, CuckooMap, SparseSet -- usable by the pool for id liveness; devDep only.
+- **lite-arena**: generational handles -- the candidate id source for the pool (Y-12).
+- **lite-fastbit32 / fastbit1024**: occupancy masks if R-4 ever ships.
+- Consumers (LiteVirtual, LiteTimeline, LiteKeyframe, LiteDataTable, LiteDiCron): recipes or optional
+  peers on THEIR side; lite-yggdrasil never imports them.
+
+---
+
+## 9. Prior art (sources)
+
+- Zed `sum_tree`: docs.rs/zed-sum-tree; "Rope & SumTree" write-up via simonwillison.net/b/7735.
+- VS Code piece tree: code.visualstudio.com/blogs/2018/03/23/text-buffer-reimplementation.
+- `sorted-btree` (qwertie/btree-typescript): cdn.jsdelivr.net/npm/sorted-btree@2.1.0/readme.md.
+- `@flatten-js/interval-tree` (Cormen interval tree, object nodes).
+- Nievergelt and Reingold, "Binary search trees of bounded balance", 1972/73.
+- Hirai and Yamamoto, "Balancing weight-balanced trees", JFP 21(3) 2011 (<3,2> unique integer pair,
+  weight = size + 1 for the N-R scheme; Coq-checked). Notes: mew.org/~kazu/proj/weight-balanced-tree/
+- Nipkow and Dirix, "Weight-Balanced Trees", Isabelle AFP (a verified spec to test against).
+- Blelloch, Ferizovic, Sun, "Just Join for Parallel Ordered Sets", SPAA 2016.
+- Idreos, Kersten, Manegold, "Database Cracking", CIDR 2007 (R-4).
+- Heinz, Zobel, Williams, "Burst tries", 2002 (R-4).
+- Graefe, "Modern B-Tree Techniques", 2011 (fence keys; monotonic-insert split).
+- Jackson, "Software Abstractions" (Alloy; the small-scope hypothesis behind DB-2).
+
+---
+
+## 10. Open questions
+
+- Q-1 Leaf size B per facade: 16 uint32 keys is one cache line; SumSequence carries no keys, so its
+  leaf may be measure-bound instead (16 x dims x 8 B). Measure, REPORTED.
+- Q-2 Max dims per instance (fixed at construction; 1..4?) and its effect on pull cost.
+- Q-3 Cursor API: one preallocated cursor per instance vs a caller-owned cursor object created once.
+- Q-4 Id source for the pool: raw int32 vs lite-arena handle (generation checks cost a load per op).
+- Q-5 Whether IntervalMap needs a min-start summary for "free slots in [a, b)" (S5).

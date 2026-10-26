@@ -3,15 +3,16 @@
  *
  * MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
- * Pre-release engine build (rung A-R3 of the E0 ladder): SumSequence init,
+ * Pre-release engine build (rung S-R1 of the E0 ladder): SumSequence init,
  * layout, pools, constructor validation, counters and getters (A-R1a), the
  * positional ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
  * seeks indexAtSum / sumBefore and clear(), with their C-10 checks (A-R1b),
  * the trunk insert side (A-R2): positional descents into _fpath, the Table 3
  * leaf split, the hot pull pass, the cold weight pull with H-Y rotations and
  * the structural re-home, and the remove side (A-R3): the T-6 neighbour walk,
- * the one repair (merge / equalize), the delete rebalance and the drain.
- * splitAt / append are not built yet. Nothing is released between rungs.
+ * the one repair (merge / equalize), the delete rebalance and the drain, and
+ * the k >= 2 clear() free-walk (S-R1). splitAt / append are not built yet.
+ * Nothing is released between rungs.
  *
  * Layout (0005 C-44). Every view owns, in this order: _root, _len, _fl, _fb,
  * _fdepth, _fpath, _cv, _n, then the hoisted refs _hdr, _left, _right, _weight,
@@ -242,11 +243,76 @@ function ygReset(hdr) {
   hdr[YG_IFREE] = YG_END;
 }
 
+// R-S1: a corrupt view fails closed. One cold throw site, a plain Error (no
+// ygFail token): clear() trusts nothing it is about to free.
+function ygCorrupt(detail) {
+  throw new Error('lite-yggdrasil: clear() corrupt view: ' + detail);
+}
+
+// A root / child ref must name a bumped node: a leaf ref needs ~ref < lbump,
+// an internal ref 0 <= ref < ibump (EMPTY_ROOT fails this).
+function ygClearRef(ref, lb, ib, what) {
+  if (ref < 0 ? !(~ref < lb) : !(ref < ib)) ygCorrupt(what + ' ref ' + ref + ' out of range');
+}
+
 // clear() of a non-empty view while another view holds elements: the k >= 2
-// free-walk (0004 A-6) lands in rung S-R1. Until then it fails closed, before
-// any write.
-function ygClearWalk() {
-  throw new Error('lite-yggdrasil: clear() free-walk is not built yet (rung S-R1)');
+// free-walk (0004 A-6; C-8). Cold, iterative, allocation-free, O(L_view): the
+// internal free-list link _inext is the work stack (a live node's _inext is
+// unused). Pop u, check both child refs, free each leaf child, push each
+// internal child, then free u. Every node of THIS view's tree goes back to
+// its pool; live -= _len. No counter write (C-25), _n untouched (C-8).
+// Fail closed (R-S1, R-S2): _len > live or a bad root throws before any
+// write; a child ref outside the bumps, or a walk past ibump internals /
+// lbump leaves (a cycle), throws mid-walk after live -= _len and partial
+// frees, with no further write. Not detected (R-S3): a ref inside the bumps
+// naming another view's node, a free node or a node shared within the view.
+function ygClearWalk(v) {
+  const hdr = v._hdr;
+  const left = v._left;
+  const right = v._right;
+  const inext = v._inext;
+  const root = v._root;
+  const len = v._len;
+  const lb = hdr[YG_LBUMP];
+  const ib = hdr[YG_IBUMP];
+  if (len > hdr[YG_LIVE]) ygCorrupt('_len ' + len + ' > live ' + hdr[YG_LIVE]);
+  ygClearRef(root, lb, ib, 'root');
+  hdr[YG_LIVE] -= len;
+  if (root < 0) {
+    ygFreeLeaf(v, ~root);
+    return;
+  }
+  inext[root] = YG_END;
+  let top = root;
+  let ni = 0;
+  let nl = 0;
+  while (top !== YG_END) {
+    if (!(ni < ib)) ygCorrupt('more than ' + ib + ' internals');
+    const u = top;
+    top = inext[u];
+    const l = left[u];
+    const r = right[u];
+    ygClearRef(l, lb, ib, 'child');
+    ygClearRef(r, lb, ib, 'child');
+    if (l < 0) {
+      if (!(nl < lb)) ygCorrupt('more than ' + lb + ' leaves');
+      ygFreeLeaf(v, ~l);
+      nl++;
+    } else {
+      inext[l] = top;
+      top = l;
+    }
+    if (r < 0) {
+      if (!(nl < lb)) ygCorrupt('more than ' + lb + ' leaves');
+      ygFreeLeaf(v, ~r);
+      nl++;
+    } else {
+      inext[r] = top;
+      top = r;
+    }
+    ygFreeInt(v, u);
+    ni++;
+  }
 }
 
 // ---- op helpers (cold; C-10, RV-2, RF-1) ------------------------------------------
@@ -1255,7 +1321,7 @@ export class SumSequence {
   clear() {
     const hdr = this._hdr;
     if (this._len === hdr[YG_LIVE]) ygReset(hdr);
-    else if (this._len !== 0) ygClearWalk();
+    else if (this._len !== 0) ygClearWalk(this);
     this._root = YG_EMPTY_ROOT;
     this._len = 0;
     this._fl = YG_NIL;

@@ -10,9 +10,8 @@
 // Controls (each must FAIL the lane with its expected class): a C-25 touches
 // "+2 per level" mutant of the engine, and the structural re-home `<=` mutant (the
 // only gate for A4-10 a). Mutants are exact-count source patches of a temp copy
-// (buildMutant, C-46 M-8); the adapter is rebuilt over the mutant. The anchors come
-// from the coder: ANCHORS values are 'TODO' until the orchestrator supplies literal
-// [anchor, replacement, count] lists, and a row with a 'TODO' anchor is marked todo.
+// (buildMutant, C-46 M-8); the adapter is rebuilt over the mutant. The anchors are
+// literal [anchor, replacement, count] lists (a 'TODO' anchor would mark its row todo).
 // ASCII-only.
 
 import { test, after } from 'node:test';
@@ -61,9 +60,10 @@ for (const dims of [1, 2]) {
     for (const B of [4, 8, 16]) {
       const kinds = ['insertAt', 'removeAt', 'setMeasure', 'getMeasure', 'entityAt', 'indexAtSum', 'sumBefore',
         'splitInsert', 'structRemove', 'removeLast', 'removeMerge', 'removeEqualize'];
-      // clear on a non-empty view with other views live is skipped until S-R1 (count-lane.mjs limit):
-      // required only where it is seen (checked per B below)
-      if (B !== 16) kinds.push('clear', 'reset'); // B=16 reaches live 0 only via clear
+      // S-R1: clear runs for real in engine mode, on both paths (free-walk and O(1) reset);
+      // the lane checks every counter delta of each clear is 0 (C-25 row TOUCH_TOTAL_CLEAR,
+      // pulls [0, 0], hits / misses / splits / merges / equalizes / seams / moves / rot / join 0).
+      kinds.push('clear', 'clearFree', 'clearReset', 'reset');
       for (const k of kinds) {
         assert.ok((res.seenB[B + ':' + k] || 0) > 0, `B=${B} dims=${dims}: op/case "${k}" never exercised`);
       }

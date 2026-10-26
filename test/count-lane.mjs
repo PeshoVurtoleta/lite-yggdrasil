@@ -140,15 +140,13 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
     if (E && (op === 'splitAt' || op === 'append') && typeof v[op] !== 'function') {
       op = n === 0 ? (live < C ? 'insertAt' : 'clear') : 'getMeasure';
     }
-    // LANE LIMIT until S-R1: the engine's clear() free-walk (a non-empty view while another
-    // view holds elements) is not built; engine mode reads instead of clearing there.
-    if (E && n > 0 && live !== n) {
-      if (op === 'clear') op = 'getMeasure';
-      else if (op === 'splitAt') {
-        let em = false;
-        for (let k = 1; k < count; k++) if (views[(vi + k) % count]._len === 0) em = true;
-        if (!em) op = 'getMeasure'; // splitAt's no-empty-operand path would clear()
-      }
+    // LANE LIMIT until S-R3: splitAt with no empty operand view would clear() inside splitAt
+    // (and append / the real splitAt join are not built until S-R2 / S-R3); engine mode reads
+    // instead there. A plain clear() op runs for real (free-walk or O(1) reset, rung S-R1).
+    if (E && n > 0 && live !== n && op === 'splitAt') {
+      let em = false;
+      for (let k = 1; k < count; k++) if (views[(vi + k) % count]._len === 0) em = true;
+      if (!em) op = 'getMeasure';
     }
     // finger-off mix: one op in four runs with the finger dropped first (C-4).
     const off = (r() % 4) === 0;
@@ -308,6 +306,9 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
     } else { v.clear(); or[vi].clear(); expLeaf = 'nil'; x.row = SC.TOUCH_TOTAL_CLEAR; }
 
     seenK(op); seenB(op);
+    // engine report only: clear of a non-empty view, split by path (S-R1). clearFree = another
+    // view holds elements (free-walk); clearReset = _len === live (O(1) reset).
+    if (E && op === 'clear' && n > 0) seenB(live === n ? 'clearReset' : 'clearFree');
     if (op === 'insertAt' && exp.splits) seenB('splitInsert');
     if (T && op === 'removeAt') {
       if (exp.merges) seenB('removeMerge');

@@ -3,9 +3,12 @@
  *
  * MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
- * Pre-release engine build (rung A-R1a of the E0 ladder): SumSequence init,
- * layout, pools, constructor validation, counters and getters. The element ops
- * land in the next rungs; nothing is released between rungs.
+ * Pre-release engine build (rung A-R1b of the E0 ladder): SumSequence init,
+ * layout, pools, constructor validation, counters and getters (A-R1a), plus the
+ * one-leaf ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
+ * seeks indexAtSum / sumBefore and clear() on a root-leaf view, with their C-10
+ * checks. A full-leaf insert (split, rung A-R2) and a multi-leaf underflow
+ * (rung A-R3) fail closed. Nothing is released between rungs.
  *
  * Layout (0005 C-44). Every view owns, in this order: _root, _len, _fl, _fb,
  * _fdepth, _fpath, _cv, _n, then the hoisted refs _hdr, _left, _right, _weight,
@@ -31,6 +34,11 @@ const YG_LBUMP = 1;
 const YG_LFREE = 2;
 const YG_IBUMP = 3;
 const YG_IFREE = 4;
+const YG_TOUCHES = 0;             // counter slots (C-24)
+const YG_MOVES = 2;
+const YG_MISSES = 9;
+// 2^53-1, the measure / total bound (0002 M-1, M-4). The one non-Smi constant.
+const YG_MAX = 9007199254740991;
 
 // Handoff from arena() to the constructor: the pending arena columns while
 // arena() builds its views, null at every other time. Cold only.
@@ -221,6 +229,120 @@ function ygClearWalk() {
   throw new Error('lite-yggdrasil: clear() free-walk is not built yet (rung S-R1)');
 }
 
+// ---- op helpers (cold; C-10, RV-2, RF-1) ------------------------------------------
+
+// M-3 for one measure slot (m1..m3 at dims > 1): typeof, range (NaN fails),
+// integer test. No coercion, no valueOf call.
+function ygMeasure(m) {
+  if (typeof m !== 'number') ygFail('measure', 'must be a number');
+  if (!((m >= 0) & (m <= YG_MAX))) ygFail('measure', 'must be in [0, 2^53-1]');
+  if (!Number.isInteger(m)) ygFail('measure', 'must be an integer');
+}
+
+// insertAt's one cold re-check for the slots m1..m3 (RV-2): reached on a
+// present extra slot, or on every insert at dims > 1. C-10 order: the measures
+// of slots < dims, then the extra slots; then the validated slots are staged in
+// sx (scratch, not state).
+function ygSlots(ar, m1, m2, m3) {
+  const dims = ar.dims;
+  if (dims > 1) ygMeasure(m1);
+  if (dims > 2) ygMeasure(m2);
+  if (dims > 3) ygMeasure(m3);
+  if (((m1 !== undefined) & (dims < 2)) | ((m2 !== undefined) & (dims < 3)) | ((m3 !== undefined) & (dims < 4))) {
+    ygFail('extra', 'slot beyond dims must be undefined');
+  }
+  const sx = ar.sx;
+  if (dims > 1) sx[1] = m1 + 0;
+  if (dims > 2) sx[2] = m2 + 0;
+  if (dims > 3) sx[3] = m3 + 0;
+}
+
+// insertAt headroom over every dim, from the staged sx (M-4: m_d > MAX - t_d).
+function ygHeadroomIns(v) {
+  const ar = v._ar;
+  const sx = ar.sx;
+  const r = v._root;
+  for (let d = 0; d < ar.dims; d++) {
+    const t = r === YG_EMPTY_ROOT ? 0 : r < 0 ? v._lsum[d][~r] : v._sums[d][r];
+    if (sx[d] > YG_MAX - t) ygFail('headroom', 'total would exceed 2^53-1');
+  }
+}
+
+// setMeasure headroom (RF-1): the hot test m <= MAX - t failed, so a READ-ONLY
+// descent (element rule; no _fpath / _fl / _fb / _fdepth write) fetches m_old
+// and decides m > MAX - (t - m_old). The new m is staged in sx[0].
+function ygSetHeadroom(v, at, dd) {
+  const left = v._left;
+  const right = v._right;
+  const count = v._count;
+  const llen = v._llen;
+  let ref = v._root;
+  let k = at;
+  while (ref >= 0) {
+    const l = left[ref];
+    const cl = l < 0 ? llen[~l] : count[l];
+    if (k < cl) {
+      ref = l;
+    } else {
+      k -= cl;
+      ref = right[ref];
+    }
+  }
+  const r = v._root;
+  const t = r < 0 ? v._lsum[dd][~r] : v._sums[dd][r];
+  const old = v._meas[dd][(~ref << v._ar.shift) + k];
+  if (v._ar.sx[0] > YG_MAX - (t - old)) ygFail('headroom', 'total would exceed 2^53-1');
+}
+
+// First insert on an empty view: allocate the root leaf (C-8 cold). The new
+// element's measures come from sx. A miss; moves 0 (s = p = 0); touches 0.
+function ygFirstLeaf(v, e) {
+  const ar = v._ar;
+  const id = ygAllocLeaf(v);
+  const base = id << ar.shift;
+  const sx = ar.sx;
+  v._ent[base] = e;
+  for (let d = 0; d < ar.dims; d++) {
+    v._meas[d][base] = sx[d];
+    v._lsum[d][id] = v._meas[d][base]; // recount over len 1 (C-45)
+  }
+  v._llen[id] = 1;
+  v._hdr[YG_LIVE] += 1;
+  v._root = ~id;
+  v._len = 1;
+  v._fl = ~id;
+  v._fb = 0;
+  v._fdepth = 0;
+  v._n[YG_MISSES] += 1;
+}
+
+// removeAt of a view's last element: free the leaf, finger NIL / 0 / 0 (C-5);
+// at live 0 both pools reset to construction order instead (RA-4, C-8).
+function ygDrain(v, id) {
+  const hdr = v._hdr;
+  hdr[YG_LIVE] -= 1;
+  if (hdr[YG_LIVE] === 0) ygReset(hdr);
+  else ygFreeLeaf(v, id);
+  v._root = YG_EMPTY_ROOT;
+  v._len = 0;
+  v._fl = YG_NIL;
+  v._fb = 0;
+  v._fdepth = 0;
+  v._n[YG_MISSES] += 1;
+}
+
+// A full-leaf insert needs the Table 3 split (rung A-R2). Until then it fails
+// closed: called before any write.
+function ygSplit() {
+  ygFail('split', 'a full leaf needs the leaf split, not built yet (rung A-R2)');
+}
+
+// A remove that underflows a leaf of a multi-leaf view needs T-6 (rung A-R3).
+// Unreachable on one leaf; fails closed before any write.
+function ygUnderflow() {
+  ygFail('underflow', 'a leaf underflow needs the T-6 repair, not built yet (rung A-R3)');
+}
+
 // ---- the view ---------------------------------------------------------------------
 
 export class SumSequence {
@@ -298,6 +420,271 @@ export class SumSequence {
     const r = this._root;
     if (r === YG_EMPTY_ROOT) return 0;
     return r < 0 ? this._lsum[d >>> 0][~r] : this._sums[d >>> 0][r];
+  }
+
+  // ---- positional ops (C-10, C-12; finger writes M-1, C-3, C-5) --------------------
+  // Root-leaf view: the touched leaf is ~_root, fb 0, depth 0, so touches add
+  // d = 0 and pulls 0 (A-R2 adds the descent and the pull pass). Every op is a
+  // finger miss (the core never READS the finger until the hit test, C-4).
+  // Counters are bumped after the loops (0003 G-5 / G-7).
+
+  insertAt(i, e, m0, m1, m2, m3) {
+    const n = this._len;
+    if (typeof i !== 'number') ygFail('index', 'must be a number');
+    if (((i >>> 0) !== i) | (i > n)) ygFail('index', 'must be an integer in [0, length]');
+    const at = i >>> 0;
+    if (typeof e !== 'number' || (e & 0x3FFFFFFF) !== e) ygFail('entity', 'must be an integer in [0, 2^30-1]');
+    if (typeof m0 !== 'number') ygFail('measure', 'must be a number');
+    if (!((m0 >= 0) & (m0 <= YG_MAX))) ygFail('measure', 'must be in [0, 2^53-1]');
+    if (!Number.isInteger(m0)) ygFail('measure', 'must be an integer');
+    const ar = this._ar;
+    const dims = ar.dims;
+    if (((m1 !== undefined) & (dims < 2)) | ((m2 !== undefined) & (dims < 3)) | ((m3 !== undefined) & (dims < 4)) |
+        (dims > 1)) {
+      ygSlots(ar, m1, m2, m3);
+    }
+    const hdr = this._hdr;
+    if (!(hdr[YG_LIVE] < ar.C)) ygFail('capacity', 'live + 1 > C');
+    const r = this._root;
+    const t0 = r === YG_EMPTY_ROOT ? 0 : r < 0 ? this._lsum[0][~r] : this._sums[0][r];
+    const sx = ar.sx;
+    sx[0] = m0 + 0; // staged (scratch, not state; -0 -> +0, 0002 M-2)
+    if ((m0 > YG_MAX - t0) | (dims > 1)) ygHeadroomIns(this);
+    if (r === YG_EMPTY_ROOT) {
+      ygFirstLeaf(this, e);
+      return;
+    }
+    const id = ~r;
+    const llen = this._llen;
+    const len = llen[id];
+    if (len === ar.B) ygSplit();
+    // ---- first write ----
+    const base = id << ar.shift;
+    const p = base + at;
+    const end = base + len;
+    const ent = this._ent;
+    for (let j = end; j > p; j--) ent[j] = ent[j - 1];
+    ent[p] = e;
+    const meas = this._meas;
+    const lsum = this._lsum;
+    for (let d = 0; d < dims; d++) {
+      const col = meas[d];
+      for (let j = end; j > p; j--) col[j] = col[j - 1];
+      col[p] = sx[d];
+      let s = 0;
+      for (let j = base; j <= end; j++) s += col[j];
+      lsum[d][id] = s;
+    }
+    llen[id] = len + 1;
+    hdr[YG_LIVE] += 1;
+    this._len = n + 1;
+    this._fl = r;
+    this._fb = 0;
+    this._fdepth = 0;
+    const cn = this._n;
+    cn[YG_MISSES] += 1;
+    cn[YG_MOVES] += len - at;
+  }
+
+  removeAt(i) {
+    const n = this._len;
+    if (typeof i !== 'number') ygFail('index', 'must be a number');
+    if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
+    const at = i >>> 0;
+    const r = this._root;
+    const id = ~r;
+    const ar = this._ar;
+    const base = id << ar.shift;
+    const ent = this._ent;
+    const e = ent[base + at];
+    if (n === 1) {
+      ygDrain(this, id);
+      return e;
+    }
+    const llen = this._llen;
+    const len = llen[id];
+    if ((len === ar.m) & (n > len)) ygUnderflow();
+    // ---- first write ----
+    const p = base + at;
+    const last = base + len - 1;
+    for (let j = p; j < last; j++) ent[j] = ent[j + 1];
+    const meas = this._meas;
+    const lsum = this._lsum;
+    for (let d = 0; d < ar.dims; d++) {
+      const col = meas[d];
+      for (let j = p; j < last; j++) col[j] = col[j + 1];
+      let s = 0;
+      for (let j = base; j < last; j++) s += col[j];
+      lsum[d][id] = s;
+    }
+    llen[id] = len - 1;
+    this._hdr[YG_LIVE] -= 1;
+    this._len = n - 1;
+    this._fl = r;
+    this._fb = 0;
+    this._fdepth = 0;
+    const cn = this._n;
+    cn[YG_MISSES] += 1;
+    cn[YG_MOVES] += len - 1 - at;
+    return e;
+  }
+
+  setMeasure(i, d, m) {
+    const n = this._len;
+    if (typeof i !== 'number') ygFail('index', 'must be a number');
+    if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
+    const at = i >>> 0;
+    const ar = this._ar;
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+      ygFail('dim', 'must be an integer in [0, dims)');
+    }
+    const dd = d >>> 0;
+    if (typeof m !== 'number') ygFail('measure', 'must be a number');
+    if (!((m >= 0) & (m <= YG_MAX))) ygFail('measure', 'must be in [0, 2^53-1]');
+    if (!Number.isInteger(m)) ygFail('measure', 'must be an integer');
+    const r = this._root;
+    const t = r < 0 ? this._lsum[dd][~r] : this._sums[dd][r];
+    if (m > YG_MAX - t) {
+      ar.sx[0] = m;
+      ygSetHeadroom(this, at, dd);
+    }
+    // ---- first write ----
+    const id = ~r;
+    const base = id << ar.shift;
+    const col = this._meas[dd];
+    col[base + at] = m + 0;
+    const end = base + this._llen[id];
+    let s = 0;
+    for (let j = base; j < end; j++) s += col[j];
+    this._lsum[dd][id] = s;
+    this._fl = r;
+    this._fb = 0;
+    this._fdepth = 0;
+    this._n[YG_MISSES] += 1;
+  }
+
+  getMeasure(i, d) {
+    const n = this._len;
+    if (typeof i !== 'number') ygFail('index', 'must be a number');
+    if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
+    const at = i >>> 0;
+    const ar = this._ar;
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+      ygFail('dim', 'must be an integer in [0, dims)');
+    }
+    const r = this._root;
+    const x = this._meas[d >>> 0][(~r << ar.shift) + at];
+    this._fl = r;
+    this._fb = 0;
+    this._fdepth = 0;
+    this._n[YG_MISSES] += 1;
+    return x;
+  }
+
+  entityAt(i) {
+    const n = this._len;
+    if (typeof i !== 'number') ygFail('index', 'must be a number');
+    if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
+    const r = this._root;
+    const e = this._ent[(~r << this._ar.shift) + (i >>> 0)];
+    this._fl = r;
+    this._fb = 0;
+    this._fdepth = 0;
+    this._n[YG_MISSES] += 1;
+    return e;
+  }
+
+  // ---- seeks: one sum descent from the root, finger-neutral (C-2, I-4) ---------
+  // touches += d(t) (C-25); an empty view runs no descent and touches 0 (RA-5).
+  // acc and y stay in this body (C-13).
+
+  // M-7: the smallest i with S_i + m_i > y (strict), else length. y >= total
+  // goes right at every node and the leaf scan runs off the last leaf: length.
+  indexAtSum(d, y) {
+    const ar = this._ar;
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+      ygFail('dim', 'must be an integer in [0, dims)');
+    }
+    if (typeof y !== 'number' || !((y >= 0) & (y < Infinity))) {
+      ygFail('seek', 'must be a number in [0, Infinity)');
+    }
+    let ref = this._root;
+    if (ref === YG_EMPTY_ROOT) return 0;
+    const dd = d >>> 0;
+    const left = this._left;
+    const right = this._right;
+    const count = this._count;
+    const llen = this._llen;
+    const sums = this._sums[dd];
+    const lsum = this._lsum[dd];
+    let acc = 0;
+    let base = 0;
+    let depth = 0;
+    while (ref >= 0) {
+      const l = left[ref];
+      const sl = l < 0 ? lsum[~l] : sums[l];
+      if (y < acc + sl) {
+        ref = l;
+      } else {
+        acc += sl;
+        base += l < 0 ? llen[~l] : count[l];
+        ref = right[ref];
+      }
+      depth++;
+    }
+    const id = ~ref;
+    const len = llen[id];
+    const col = this._meas[dd];
+    const b0 = id << ar.shift;
+    let j = 0;
+    while (j < len) {
+      const m = col[b0 + j];
+      if (acc + m > y) break;
+      acc += m;
+      j++;
+    }
+    this._n[YG_TOUCHES] += depth;
+    return base + j;
+  }
+
+  // Sum of dim d over [0, i). The oracle order: index, then dim (C-10).
+  sumBefore(d, i) {
+    const n = this._len;
+    if (typeof i !== 'number') ygFail('index', 'must be a number');
+    if (((i >>> 0) !== i) | (i > n)) ygFail('index', 'must be an integer in [0, length]');
+    const ar = this._ar;
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+      ygFail('dim', 'must be an integer in [0, dims)');
+    }
+    let ref = this._root;
+    if (ref === YG_EMPTY_ROOT) return 0;
+    const dd = d >>> 0;
+    const left = this._left;
+    const right = this._right;
+    const count = this._count;
+    const llen = this._llen;
+    const sums = this._sums[dd];
+    const lsum = this._lsum[dd];
+    let acc = 0;
+    let k = i >>> 0;
+    let depth = 0;
+    while (ref >= 0) {
+      const l = left[ref];
+      const cl = l < 0 ? llen[~l] : count[l];
+      if (k < cl) {
+        ref = l;
+      } else {
+        acc += l < 0 ? lsum[~l] : sums[l];
+        k -= cl;
+        ref = right[ref];
+      }
+      depth++;
+    }
+    const col = this._meas[dd];
+    const b0 = ~ref << ar.shift;
+    for (let j = 0; j < k; j++) acc += col[b0 + j];
+    this._n[YG_TOUCHES] += depth;
+    return acc;
   }
 
   // ---- clear (C-8, 0004 A-6) ---------------------------------------------------------

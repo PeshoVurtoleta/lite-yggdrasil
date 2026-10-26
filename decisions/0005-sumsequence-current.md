@@ -1,15 +1,22 @@
 # 0005 -- SumSequence CURRENT: the binding rules of the 0.1.0 spec closure
 
-consolidated through ADDENDUM 3 at da45c50 / PLAN-G-A e2b52b3f / PLAN-G-B 03f0bf88 / DB1-plans 4f60e9a1; ADDENDUM 4
-(0005's own) folded in at 6514d58; ADDENDUM 5 (0005's own, E0 planner pass) folded in at f5d95af; ADDENDUM 6
-(0005's own, rung 3-4 rulings) folded in at fabc0a9; ADDENDUM 7 (0005's own, rung 4 readings) folded in at d2bf49a;
-ADDENDUM 8 (0005's own, rung 5 rulings R-S1..R-S3) folded in at d2bf49a
+consolidated through ADDENDUM 9 at aee3c83 + rung-6 tree (Yggdrasil.js ee348f22).
+Earlier fold notes (each names the HEAD the fold was written against; it landed in the next docs commit):
+- ADDENDUMS 1-3: da45c50 / PLAN-G-A e2b52b3f / PLAN-G-B 03f0bf88 / DB1-plans 4f60e9a1
+- ADDENDUM 4 (0005's own): folded in at 6514d58
+- ADDENDUM 5 (0005's own, E0 planner pass): folded in at f5d95af
+- ADDENDUM 6 (0005's own, rung 3-4 rulings): folded in at fabc0a9
+- ADDENDUM 7 (0005's own, rung 4 readings): folded in at d2bf49a
+- ADDENDUM 8 (0005's own, rung 5 rulings R-S1..R-S3): folded in at d2bf49a
+- ADDENDUM 9 (0005's own, rung 6 ruling R-J1 and review readings): folded in at aee3c83 + rung-6 tree
+- Re-consolidated at ADDENDUM 9 (A4..A9 were past the B1 consolidation): the D8 nits are folded (the A8-1 quote form,
+  the C-8 guard tag, the Status and legend wrapping, long headings split into a heading + a Sources line).
 
 - Status: CURRENT, consolidated (not RULED: the maintainer rulings are R-D1..R-D4, R-E1..R-E5, R-Q1, R-P1, R-P2,
-  R-S1, R-S2 and R-S3 below; every other rule is a planner rule that survived DB-1 review rounds r1..r3, an
-  ADDENDUM 4 reading, an E0
-  reading / merge ruling M-1..M-8 folded by ADDENDUM 5, or the r3 review reading Q4 folded by ADDENDUM 6, or a
-  rung-4 reading A7-1..A7-5 folded by ADDENDUM 7, or a rung-5 coder reading A8-4 folded by ADDENDUM 8)
+  R-S1..R-S3 and R-J1 below; every other rule is a planner rule that survived DB-1 review rounds r1..r3, an
+  ADDENDUM 4 reading, an E0 reading / merge ruling M-1..M-8 folded by ADDENDUM 5, the r3 review reading Q4 folded by
+  ADDENDUM 6, a rung-4 reading A7-1..A7-5 folded by ADDENDUM 7, a rung-5 coder reading A8-4 folded by ADDENDUM 8, or
+  a rung-6 review reading A9-2..A9-8 folded by ADDENDUM 9)
 - Date: 2026-10-26
 - Session: SumSequence CURRENT consolidation (docs unit B1)
 - Provenance of this text: consolidated from .handoff/PLAN-G-A.md (body, rulings, ADDENDA 1-3), .handoff/PLAN-G-B.md
@@ -17,8 +24,8 @@ ADDENDUM 8 (0005's own, rung 5 rulings R-S1..R-S3) folded in at d2bf49a
   pass) from .handoff/PLAN-E0.md (the merge: M-1..M-8, R-E1..R-E4; its reconciliations win over the six plans) and its
   six plans PLAN-E0-A / -F / -K / -S / -V / -G. Rule ids cite those files by name (Sources legend);
   the plan files are gitignored and archived at release. The rung ladder lives in PLAN-E0.md, never here.
-- Precedence: ADDENDUM 8 > ADDENDUM 7 > ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 > ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 >
-  body. Every rule below is the FINAL rule, stated in full.
+- Precedence: ADDENDUM 9 > ADDENDUM 8 > ADDENDUM 7 > ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 > ADDENDUM 3 > ADDENDUM 2 >
+  ADDENDUM 1 > body. Every rule below is the FINAL rule, stated in full.
   A superseded rule is not repeated here (it lives in the plan files and the Source map says where it went).
 - Binding: this file is binding for every agent. ADRs 0001..0004 keep their ruled text; where this file amends an
   item, the ADR carries a pointer block (the Amends table below). Two texts for one rule would be two specs.
@@ -86,11 +93,19 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   (Recommended)". Option text: "C-8 says plainly what is NOT detected. Forged private state is beyond the guard; the
   walker (test-side) catches it. No code change."
 
+AskUserQuestion, 2026-10-26 (rung 6 burst):
+
+- R-J1: (join pulls; C-20 named no join rule) = "Split convention, gated (Recommended)". Option text: "Join pulls = 1
+  for the fresh internal node + 1 per popped join-spine node + 2 per single / 3 per double rotation (the C-20 A6-3
+  split convention); append's pulls delta = the seam repair's C-20 pulls + these; an exact test row pins it. No
+  engine change."
+
 ## Sources legend
 
+- 0005 A9-1..A9-8 = this file's own ADDENDUM 9 (below; the ruling R-J1, quoted above, and the rung-6 review readings
+  A9-2..A9-8, NOT ruled). Every A9 item names the CURRENT rules it changed and every changed rule cites its A9 ids.
 - 0005 A8-1..A8-4 = this file's own ADDENDUM 8 (below; the rulings R-S1..R-S3, quoted above). Every A8 item names the
-  CURRENT rules
-  it changed and every changed rule cites its A8 ids.
+  CURRENT rules it changed and every changed rule cites its A8 ids.
 - 0005 A7-1..A7-5 = this file's own ADDENDUM 7 (below; orchestrator / reviewer readings from rung 4, no ruling).
   Every A7 item names the CURRENT rules it changed and every changed rule cites its A7 ids.
 - 0005 A6-1..A6-4 = this file's own ADDENDUM 6 (below; the rulings R-Q1, R-P1 and R-P2 and the r3 review reading Q4).
@@ -133,7 +148,8 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   The finger stores positions (leaf, first index, depth, path) and nothing summed: it caches no prefix sum.
 - ROADMAP wording "indexAtSum / sumBefore ... (or a finger hit)" is therefore false; seeks are "one descent".
 
-### C-3 Re-home after every positional op (G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-4)
+### C-3 Re-home after every positional op
+Sources: G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-4 -> 0005 A9-3
 
 - Every positional op re-homes the finger after its last write, reads included (their descent writes the path).
   Non-structural op: fl / fb := the leaf the op touched. Structural op (split, merge, equalize, first-leaf
@@ -145,6 +161,10 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   ygSplit; unreachable under C-15) leaves the finger invalidated (_fl = NIL, _fb = 0, _fdepth = 0, set before the
   throw, so the next positional op is a miss and I-9 holds) and may leave _fpath[0..d) rewritten by the descent. Every
   other throw changes nothing. The splitAt / append 'pool' pre-checks fire before any write and change nothing (A7-4).
+- Append pre-check (A9-3, review reading, NOT ruled): its test is (both operands non-empty) and (internal free list
+  empty) and (internal bump exhausted). It is decided on the operands, before the seam repair, so with both operands
+  non-empty and a full internal pool it throws even when the seam merge would make the join the identity (no fresh
+  node would then be allocated).
 - Standing gate: A1 (C-34). Mutants MF-2 and MF-4 (C-35) are the teeth.
 - The keyed-fence variant (B-17 part c: a stale fence after equalize, I-6) is DEFERRED to the SumMap brief
   (C-42); the carried rule is this structural re-home plus a keyed copy of MF-4.
@@ -201,7 +221,8 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   measure(d) each return a boxed double (b = 1, C-13).
 - Closes RESEARCH Q-3. A cursor walk gives O(log n + k) reads at 0 B (this is why readRange is not in v0.1, C-12).
 
-### C-8 clear() restores the constructed state, `_n` excepted (G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-4)
+### C-8 clear() restores the constructed state, `_n` excepted
+Sources: G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-4
 
 - clear() restores the view to its constructed state exactly: _len 0, _root === EMPTY_ROOT, _fl NIL, _cv false,
   header bump 0 and live 0 once every view has cleared. The diagnostic counters `_n` are EXCLUDED (0003 G-8, X-8:
@@ -215,11 +236,11 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
 - Drain (RA-4, A5-13): a removeAt that takes the arena to live 0 resets both pools to construction order exactly as
   clear() does (0004 A-6 states the reset only for clear(); the stubs reset on every transition to live 0). With
   k >= 2 views, live 0 means every view is empty.
-- Corrupt-view guard (R-S1, R-S2, R-S3, A8-1..A8-4; the EMPTY_ROOT, child and bump clauses are a reading, A8-4): the
-  k >= 2 clear() free-walk (0004 A-6) range-checks the root ref (leaf ref ~root < leaf bump; internal 0 <= root <
-  internal bump; EMPTY_ROOT fails) and _len <= live before any write, range-checks every child ref and bounds the walk
-  by the bumps; a failure throws a plain Error whose message starts 'lite-yggdrasil: clear() corrupt view: ' (not a
-  RangeError, no C-10 token). Cold path only; hot bodies unchanged.
+- Corrupt-view guard (R-S1, R-S2, R-S3, A8-1..A8-4; the EMPTY_ROOT, child, bump and message-prefix clauses are a
+  coder reading, A8-4, NOT ruled): the k >= 2 clear() free-walk (0004 A-6) range-checks the root ref (leaf ref ~root <
+  leaf bump; internal 0 <= root < internal bump; EMPTY_ROOT fails) and _len <= live before any write, range-checks
+  every child ref and bounds the walk by the bumps; a failure throws a plain Error whose message starts
+  'lite-yggdrasil: clear() corrupt view: ' (not a RangeError, no C-10 token). Cold path only; hot bodies unchanged.
 - Mid-walk failure (R-S2): only the root / _len checks run before any write; a mid-walk failure throws AFTER live -=
   _len and the frees already made (the view keeps _root / _len); the arena is not trusted after it.
 - Not detected (R-S3): a ref inside the bumps that names another view's node, a free node or a node shared inside the
@@ -237,7 +258,9 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
 - Replaces any int32-range guard (RESEARCH :306-308 becomes `(e & 0x3FFFFFFF) === e`, [0, 2^30-1]).
 - Amends 0002 M-5 (entity added to the check set). The cursor sentinel -1 cannot collide with an entity.
 
-### C-10 Check order (G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16, A5-20, A5-26, A5-30 -> 0005 A6-1 -> 0005 A7-3 -> 0005 A8-1)
+### C-10 Check order
+Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16, A5-20, A5-26, A5-30 -> 0005 A6-1 ->
+  0005 A7-3 -> 0005 A8-1 -> 0005 A9-3
 
 - Check order, all before the first write: i, e, measures (M-3 each, slots < dims), extra slots, capacity, headroom.
   The capacity RangeError message carries the token 'capacity' and is checked between extra slots and headroom.
@@ -256,7 +279,8 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
 - Tokens (R-E4, A5-4): the cold allocator, and a cold check before the first write of splitAt (1 leaf) and append
   (1 internal), throw RangeError with the token 'pool'; under C-15 it never fires (0004 A-5's only capacity failure
   stays live + 1 > C). RV-5's proposed Error('pool') is superseded by R-E4 (consistent with R-X5 "RangeError
-  everywhere").
+  everywhere"). The append check is evaluated whenever both operands are non-empty, whatever the seam repair then does
+  (A9-3, review reading, NOT ruled; C-3).
 - Dims 1..3 (RV-2, A5-30, R-Q1, A6-1): the extra-slot and headroom branches carry `| (dims > 1)` and send dims > 1 to
   one cold re-check. R-Q1 adds one hot branch, the dims > 1 test guarding the fused inline typeof of slots
   1..dims-1 (C-44), so the dims=1 census below is 15 (RV-2's 14 is superseded). No census gate exists: the reviewer
@@ -383,7 +407,7 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   T(a,b) = the sum of s for a <= s < b. N=200 at B=16, m=4: 1960 moves, 15 splits, 184 hits (closed form ==
   simulation, node v26.8.2, untimed, 2026-10-26).
 
-### C-20 Hot pull pass (G-B B-25 -> 0005 A6-3)
+### C-20 Hot pull pass (G-B B-25 -> 0005 A6-3 -> 0005 A9-1)
 
 - A non-structural insert / remove / setMeasure is ONE pull pass (count and sums only): no weight read, no balance
   check; pulls == depth. Weights and the T-2 balance check run only in cold rebalance (split, merge), where
@@ -392,8 +416,11 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   internal node remains).
   An equalize changes no weight: pulls == |anc(u) U anc(v)|.
   Amends 0001 T-2 and 0003 counters row 1.
+- Join pulls (R-J1, A9-1): a join (ygJoin) pulls 1 for the fresh internal node + 1 per popped join-spine node + 2 per
+  single / 3 per double rotation (the A6-3 split convention). append's pulls delta = the seam repair's C-20 pulls + the
+  join's. An exact test row pins it (the R-J1 hand rows of test/SplitAppend.test.mjs). No engine change.
 
-### C-21 Seam repair counts (G-B B-26 -> 0005 A5-8, A5-24 -> 0005 A7-2)
+### C-21 Seam repair counts (G-B B-26 -> 0005 A5-8, A5-24 -> 0005 A7-2 -> 0005 A9-2)
 
 - splitAt repairs rL + rR in 0..2, where rX = [result X has >= 2 leaves and its seam leaf < m]; the joins inside a
   split do no repair. append repairs [both non-empty and min(a,b) < m] in 0..1, repairing u = the short seam leaf
@@ -403,6 +430,8 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   join, on the operands (R-E5; amends 0001 T-7's "after join"; C-25's d_a(last) + d_b(first)); a one-leaf operand
   merged away makes the join the identity. rX is decided from the result's leaf count and its seam leaf size,
   without a seam search (so "0 repairs: d(c)" is exact); a boundary cut never repairs.
+- Seam leaf (A9-2, review reading, NOT ruled): u, the short seam leaf append repairs, is always a ROOT leaf: a short
+  seam leaf (< m) exists only in a one-leaf operand (walker I-5 / 0001 T-8), so u's stack depth is 0.
 - Helpers (M-5, A5-8): repair(u, v, uLeft) and the T-6 helpers take (stack, depth) and accept u and v in different
   trees (C-43), so append's seam repair needs no core hunk. A7-2: repair takes TWO (stack, depth) pairs, a shared-
   prefix count sh and the owner view vu; it never writes _len, hdr live or the finger (the caller does). It fits the
@@ -415,14 +444,18 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   always an equalize (t = B) to 8|8, costing 8 moves (append side) / 13 (prepend side). The big side needs B/2+2 = 10
   removes. The interior row (5 removes / 9 inserts) is unchanged; R-X1 sizes stay.
 
-### C-23 Height bound and G-13 (G-B B-29 -> G-B ASSERTION 2)
+### C-23 Height bound and G-13 (G-B B-29 -> G-B ASSERTION 2 -> 0005 A9-4)
 
 - G-13 becomes: H(L) == a DP maximum height over all I-1 splits, for L in 1..2048; the engine group adds attainment
   at Lmax; a stack of H(Lmax)-1 must FAIL. H(1) = 0; the bound "<= log_{4/3} L - 1.4" holds only for L >= 2.
   H(1024) = 21, H(2^16) = 36. Controls: a floor(2w/3) mutant FAILS at L = 4 (2 vs 3); the old bound FAILS at L = 1.
+- Stack attainment (A9-4, review reading, NOT ruled): a join pushes fewer than HL entries (HL = H(Lmax)). The full
+  H(Lmax) size of both stacks is, on the rung-6 tree, attained only through append's SEAM PATHS: jstack holds other's
+  first-leaf path (d_b entries), sstack holds this's last-leaf path (d_a entries); d == HL == 12 at B = 8 in the
+  jsize / jsizeR rows of test/SplitAppendMutants.test.mjs.
 - Amends 0001 T-10 and 0003 G-13.
 
-### C-24 COUNTERS (R-D2 -> 0005 A5-15)
+### C-24 COUNTERS (R-D2 -> 0005 A5-15 -> 0005 A9-1, A9-5)
 
 - The counter indexes are a static frozen class field SumSequence.COUNTERS; the export list is unchanged. Closes
   0003 O-3. Counters stay per view (R-X2) and clear() keeps them (C-8).
@@ -430,8 +463,13 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   C-12 never listed them) (RA-6). splitAt and append count into this._n, as the stubs and StubCounts do; splitAt's
   out._n delta is 0 (RS-1). joinSteps = internal nodes pushed on the join stack, at most HB(Lmax) per join (RS-5;
   0003 row 10 cites a bound that 0001 never stated).
+- Join counters (A9-1, A9-5): a join's pulls are counted per C-20 (R-J1). joinSteps (A9-5, review reading, NOT ruled)
+  is 0 when the two trees are already balanced (the first c, b's root unless 3 w(b) < w(a), already passes I-1
+  against the other root, so the push loop does not run).
 
-### C-25 Touches (DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 0005 A5-3, A5-14, A5-24, A5-25 -> 0005 A7-1)
+### C-25 Touches
+Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 0005 A5-3, A5-14, A5-24, A5-25 ->
+  0005 A7-1 -> 0005 A9-6
 
 - touches = internal nodes PUSHED onto a descent's path stack: the main descent, the neighbour walk from sibling(u),
   the F-3 re-home, the seam search, and a cursor leaf crossing. Never the leaf itself, never pulls, rotations or join
@@ -442,6 +480,9 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   still pays d(t) although the cursor ends invalid (R-E3); splitAt at i in {0, length}, or on an empty view, has no
   leaf c: touches 0, no descent (RS-3; the stub short-circuits); append's seam repair is counted before the join
   (R-E5, C-21).
+- Append descents (A9-6, review reading, NOT ruled): append counts touches += d_a + d_b once, when both operands are
+  non-empty. The d_b descent (other's first leaf) pushes nothing and only measures d_b; only a repair
+  re-walks that path into jstack, uncounted. Either way the touches counted equal the nodes of the two descents.
 - Table (exact | p): hit 0 | 0; first leaf 0 | 0; total, clear 0 | 0; non-structural miss incl. drain d(t) | 1;
   indexAtSum / sumBefore / seekIndex / seekSum d(t) (t = last leaf when i = length or y >= total) | 1; cursor next 0
   inside a leaf, d(t') - depth(lca) - 1 on a crossing | 1; insert that splits d(t) + d'(t') | 2; remove that
@@ -521,7 +562,9 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   splits; an `import` fixture added to spec-counts FAILS the 0003 G-9 gate.
 - GC: spec-counts exports 0 B/op over 1e5 calls, maxMajor 0; an object-returning mutant FAILS.
 
-### C-31 Lanes (G-B B-32 -> G-B-D1 -> B2-1 -> B2-6 -> DB1 P-01 -> 0005 A4-2, A4-5, A4-6, A4-11..14, A5-1, A5-23, A5-34 -> 0005 A7-5)
+### C-31 Lanes
+Sources: G-B B-32 -> G-B-D1 -> B2-1 -> B2-6 -> DB1 P-01 -> 0005 A4-2, A4-5, A4-6, A4-11..14, A5-1, A5-23, A5-34 -> 0005
+  A7-5
 
 - Shape-only BFS stays the state generator, closed under insertAt / removeAt / splitAt + append at every position,
   with walker and oracle after every op. At EVERY state, for each j in {NIL, 0..L-1}: replay the witness; j = NIL ->
@@ -581,7 +624,8 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
   /^balance/}; if the first engine run shows no failure at n <= 6, the B-1b row moves to test:lanes at nMax 9 with an
   addendum (CAPS never raised). The unpatched build passes through the same path.
 
-### C-32 Deep lane, coverage (G-B-D6 -> G-B B2-3 -> G-B B2-5 -> 0005 A4-1, A4-2, A4-5, A4-10..A4-12, A4-14, A5-1 -> 0005 A7-5)
+### C-32 Deep lane, coverage
+Sources: G-B-D6 -> G-B B2-3 -> G-B B2-5 -> 0005 A4-1, A4-2, A4-5, A4-10..A4-12, A4-14, A5-1 -> 0005 A7-5
 
 - Deep lane: xorshift32 with separate op / index / measure streams (G-A's constants and seeds, C-34); B=4 n in
   [8, 48], B=8 n in [16, 96]; two-view ops included; finger on / off in lockstep; walker + oracle after every op.
@@ -749,7 +793,9 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
 
 ### Deferred, owners, unverified
 
-### C-42 Deferred (G-A XG-2 -> G-A XG-4 -> G-A-D11 -> G-A TASKS 5-8 -> DB1 P-10 -> 0005 A4-12, A5-11, A5-28, A5-33)
+### C-42 Deferred
+Sources: G-A XG-2 -> G-A XG-4 -> G-A-D11 -> G-A TASKS 5-8 -> DB1 P-10 -> 0005 A4-12, A5-11, A5-28, A5-33 ->
+  0005 A9-7, A9-8
 
 - DEFERRED to the engine group (0005 A4-12): the engine lane numbers of C-31 / C-32 (2^22, nMax 9/15, nSweep 7/12, the
   2e4 deep run), the positive coverage run, the cursor suffixes, C-20 / C-25 exactness, and W-DEL / W-INS / W-TIE.
@@ -766,6 +812,10 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
 - Engine planner CONFIRMED (E0, RA-2, A5-11): NIL = 0 and EMPTY_ROOT = 0x3FFFFFFF (C-1, C-8, C-27).
 - OPEN, stays open (RS-8, A5-28): 0001 O-1 (the BFS join predicates, written from memory). The join rung transcribes
   0001 T-3 literally; walker I-1 on the lanes is the gate.
+- Evidence on O-1 (A9-7, review proof, NOT ruled): join's double rotation never sees a leaf inner node (ygJoinRotL /
+  ygJoinRotR read the children of z = the inner child of y, and have no leaf guard). O-1 stays OPEN.
+- 0001 M-4 (the gamma rotation rule inside join; not C-43's M-4) "record whether killed" (A9-8): the gamma-inside-join
+  mutant SURVIVES. Recorded as a fact; the engine's join keeps BFS's own rule (no gamma).
 - UNVERIFIED: the C-34 floors on the real engine (the leaf model always takes the right neighbour unless u is last;
   fingerHits margin 3.5%); the C-32 cells on the real engine; C-17 (PENDING); the U reachable counts (C-31).
 
@@ -791,7 +841,8 @@ AskUserQuestion, 2026-10-26 (rung 5 burst):
 - M-5 (A5-8, A7-2): repair(u, v, uLeft) and the T-6 helpers take (stack, depth) and accept u / v in different trees
   (C-21); repair takes two (stack, depth) pairs + sh + vu and leaves _len, hdr live and the finger to its caller.
 
-### C-44 Engine internal layout, the adapter contract (PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6-1)
+### C-44 Engine internal layout, the adapter contract
+Sources: PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6-1
 
 - Each view has own fields in this order: _root, _len, _fl, _fb, _fdepth, _fpath, _cv, _n, then hoisted column refs,
   and _ar (the shared arena record). _ar keys: C, B, shift, m, dims, Lmax, HL, views, sx. The header hdr is an
@@ -1148,6 +1199,15 @@ Each source item maps to a C-id or reads "history-only". Rule text is not repeat
 | 0005 A8-2 | C-8 |
 | 0005 A8-3 | C-8 |
 | 0005 A8-4 | C-8 |
+| R-J1 | C-20, C-24 |
+| 0005 A9-1 | C-20, C-24 |
+| 0005 A9-2 | C-21 |
+| 0005 A9-3 | C-3, C-10 |
+| 0005 A9-4 | C-23 |
+| 0005 A9-5 | C-24 |
+| 0005 A9-6 | C-25 |
+| 0005 A9-7 | C-42 |
+| 0005 A9-8 | C-42 |
 
 Count note: this map has 128 rows: G-A 61 (body 13, D-1..D-3 3, R-D1..R-D3 3, TASKS 0-8 9, A1..A5 5, RISK 3, G-A-D1..D11
 11, A2-1..A2-8 8, A3-1..A3-5 5, plus the shared R-D4 row), G-B 39 (O-4, B-19, B-25, B-26, B-27, B-29, B-32, XG-1;
@@ -1158,8 +1218,8 @@ rows 0005 A4-1..A4-14 follow the DB1 rows (142 rows). The 49 E0 source rows (PLA
 M-1..M-8 8, RA 6, RF 3, RK 6, RS 8, RV 8, G R 5) and the 34 rows 0005 A5-1..A5-34 follow the A4 rows (225 rows).
 The 4 rung-3/4 source rows (R-Q1, R-P1, R-P2, r3 review Q4) and the 4 rows 0005 A6-1..A6-4 follow the A5 rows (233
 rows); the 5 rows 0005 A7-1..A7-5 follow them (238 rows); the 3 rung-5 source rows R-S1..R-S3 and the 4 rows
-0005 A8-1..A8-4 follow those (245 rows in all). No E0 or rung-3/4/5 source item is history-only: each one
-changed a CURRENT rule.
+0005 A8-1..A8-4 follow those (245 rows); the rung-6 source row R-J1 and the 8 rows 0005 A9-1..A9-8 follow those (254
+rows in all). No E0 or rung-3/4/5/6 source item is history-only: each one changed a CURRENT rule.
 
 ## Addenda
 
@@ -1352,7 +1412,7 @@ bumps; no number, no timing). A8-1..A8-3 are maintainer rulings (R-S1, R-S2, R-S
 readings, NOT ruled. It amends C-8 and C-10; C-10's exception narrows the ADR ruling R-X5, already pointed to C-10 by
 the 0004 A-3 Amends row, so the Amends table gains no row. The map rows are in the Source map.
 
-- A8-1 R-S1 (maintainer ruling, quoted above) = "Ruled: Before any write: root ref range-checked against the pool
+- A8-1 R-S1 (maintainer ruling, quoted above) = ruled text "Before any write: root ref range-checked against the pool
   bumps; the walk bounded by the pool sizes. A failure throws a plain Error('lite-yggdrasil: clear() corrupt view
   ...'), not a RangeError token (it is not an argument error). Cold path only; hot bodies unchanged." -> C-8, C-10.
   Engine work for rung 5.
@@ -1365,3 +1425,34 @@ the 0004 A-3 Amends row, so the Amends table gains no row. The map rows are in t
 - A8-4 Coder readings, rung 5, NOT ruled -> C-8. EMPTY_ROOT fails the root check; every popped node's child refs are
   range-checked before that node's writes; "pool sizes" is implemented as the bumps (ibump internals / lbump leaves);
   the message prefix is exactly 'lite-yggdrasil: clear() corrupt view: '.
+
+OPEN (not folded, maintainer decision pending): none.
+
+### ADDENDUM 9 (2026-10-26) -- rung 6 ruling R-J1 and review readings, 0005's own
+
+Tier: DETERMINISTIC (exact pull / joinSteps / touches counts, stack sizes; no timing). A9-1 is a maintainer ruling
+(R-J1, quoted above); A9-2..A9-8 are rung-6 review readings, each checked against Yggdrasil.js (rung-6 tree, sha256
+ee348f22), NOT rulings: the Status line's ruling list gains R-J1 only. Each item names the CURRENT rule(s) it changed;
+the rule text above is already amended (same edit). The map rows are in the Source map. No item amends an ADR rule,
+so the Amends table gains no row.
+
+- A9-1 R-J1 (maintainer ruling, quoted above) = ruled text "Join pulls = 1 for the fresh internal node + 1 per popped
+  join-spine node + 2 per single / 3 per double rotation (the C-20 A6-3 split convention); append's pulls delta = the
+  seam repair's C-20 pulls + these; an exact test row pins it. No engine change." -> C-20, C-24.
+- A9-2 (review reading, NOT ruled) -> C-21. u, the short seam leaf append repairs, is always a ROOT leaf: a short seam
+  leaf exists only in a one-leaf operand (walker I-5 / 0001 T-8).
+- A9-3 (review reading, NOT ruled) -> C-3, C-10. The append 'pool' pre-check (R-E4) is evaluated whenever both operands
+  are non-empty, even when the seam merge then makes the join the identity; it throws only when the internal free
+  list is empty and the internal bump is exhausted.
+- A9-4 (review reading, NOT ruled) -> C-23. A join pushes fewer than HL entries; both stacks' H(Lmax) size is, on the
+  rung-6 tree, attained only through append's SEAM PATHS (jstack = other's first-leaf path, sstack = this's last-leaf
+  path); d == HL == 12 at B = 8 (the jsize / jsizeR rows).
+- A9-5 (review reading, NOT ruled) -> C-24. joinSteps is 0 when the two trees are already balanced (the first c,
+  b's root unless 3 w(b) < w(a), already passes I-1 against the other root).
+- A9-6 (review reading, NOT ruled) -> C-25. On append touches += d_a + d_b once; the d_b descent (other's first
+  leaf) pushes nothing, and only a repair re-walks that path into jstack, uncounted.
+- A9-7 (review proof, NOT ruled) -> C-42. Join's double rotation never sees a leaf inner node: evidence on the OPEN
+  0001 O-1 (RS-8); O-1 stays open.
+- A9-8 (a recorded fact) -> C-42. 0001 M-4 "record whether killed": the gamma-inside-join mutant SURVIVES.
+
+OPEN (not folded, maintainer decision pending): none.

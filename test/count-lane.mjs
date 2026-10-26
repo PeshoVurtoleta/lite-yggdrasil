@@ -14,8 +14,9 @@
 // golden cut before the move). 'engine' mode runs the SAME op stream and the
 // same spec-derived expectations (hits/misses/splits/merges/equalizes/seams/
 // moves, re-home, NIL, neutral seeks, reset, walker, oracle) with these
-// differences: no finger hit exists yet (C-26: every positional op is a miss);
-// the zero-counter check is replaced by per-op engine checks, every expected
+// differences: a hit (C-4) adds 0 touches (C-25 'hit' row) and a hit mutation still
+// pulls _fdepth (C-20); each positional op adds 1 to exactly one of fingerHits /
+// fingerMisses (C-26); the zero-counter check is replaced by per-op engine checks, every expected
 // value computed from the PRE/POST snapshots (leaf depths recounted from the
 // child arrays, 0003 G-10) and spec-counts formulas, never from the engine:
 //   touches  === touchesExact(C-25 row)  (insert split: d(t)+d'(t'); remove
@@ -191,7 +192,7 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
         } else {
           if (inR) exp.hits = 1; else exp.misses = 1;
           expLeaf = L[j].id;
-          x.row = SC.TOUCH_MISS; x.pLo = x.pHi = SC.pullsHot(L[j].depth);
+          x.row = inR ? SC.TOUCH_HIT : SC.TOUCH_MISS; x.pLo = x.pHi = SC.pullsHot(L[j].depth);
         }
         if (inR && s < B) chk(fj === j, 'hit-leaf', tag(op, 'finger hit leaf != routing leaf'), o);
         exp.moves = SC.insertMoves(B, m, s, p, j === L.length - 1 ? 1 : 0);
@@ -232,7 +233,7 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
         }
       } else {
         expLeaf = L[j].id;
-        x.row = SC.TOUCH_MISS; x.pLo = x.pHi = SC.pullsHot(L[j].depth);
+        x.row = inR ? SC.TOUCH_HIT : SC.TOUCH_MISS; x.pLo = x.pHi = SC.pullsHot(L[j].depth);
       }
       if (inR && !struct) exp.hits = 1; else exp.misses = 1;
       exp.moves = SC.removeMoves(m, s, p, only, rp);
@@ -243,7 +244,7 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
       const inR = fj >= 0 && fb0 <= i && i < fb0 + L[fj].len;
       if (inR) exp.hits = 1; else exp.misses = 1;
       expLeaf = L[j].id;
-      x.row = SC.TOUCH_MISS; x.a = L[j].depth;
+      x.row = inR ? SC.TOUCH_HIT : SC.TOUCH_MISS; x.a = L[j].depth;
       if (op === 'setMeasure') x.pLo = x.pHi = SC.pullsHot(L[j].depth);
       if (inR) chk(fj === j, 'hit-leaf', tag(op, 'finger hit leaf mismatch'), o);
       if (op === 'setMeasure') { const mm = r() % 9; v.setMeasure(i, D - 1, mm); or[vi].setMeasure(i, D - 1, mm); }
@@ -326,8 +327,6 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
       if (exp.merges) seenB('removeMerge');
       if (exp.equalizes) seenB('removeEqualize');
     }
-    // engine: no finger hit exists yet (C-26), every positional op is a miss
-    if (E) { exp.misses += exp.hits; exp.hits = 0; }
     const post = f.snapshot();
 
     // snapshot is a deep copy: the op did not change the pre snapshot (e.g. _fpath)
@@ -373,7 +372,8 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
       if (x.join0) chk(d.joinSteps === 0, 'join', tag(op, `joinSteps moved by ${d.joinSteps}`), o);
       if (op === 'append') chk(d.joinSteps >= 0 && d.joinSteps <= x.joinMax, 'join', tag(op, `joinSteps ${d.joinSteps} exp [0, ${x.joinMax}]`), o);
     }
-    if (off) chk(d.fingerHits === 0, 'hit', tag(op, 'finger-off op counted a hit'), o);
+    // the finger drop above runs in stub mode only (engine mode has no finger-off run), so this holds there only
+    if (off && !E) chk(d.fingerHits === 0, 'hit', tag(op, 'finger-off op counted a hit'), o);
 
     // C-3 / C-5 / C-2: where the finger went
     if (expLeaf === 'same') {

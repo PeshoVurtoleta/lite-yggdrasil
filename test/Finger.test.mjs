@@ -2,7 +2,7 @@
 // C-2 (seeks are neutral), C-3 (re-home after every positional op; structural op = cold descent to i by the element
 // rule `k < count[left]`; a throwing op re-homes nothing), C-5 (NIL / 0 / 0 on a drain), C-25/C-26 (hit / miss
 // partition), C-27/C-28 (walker I-9), C-34 (xorshift32 constants), C-35 (MF-1..MF-5, wrappers per RF-3 / A5-18),
-// C-43 M-1 (every positional op is a miss until F-R2; the core writes the finger and never reads it). Rung A-R3: the
+// C-4 hits (landed in rung F-R: the core READS the finger for the hit test; C-43 M-1 is retired). Rung A-R3: the
 // lane covers underflowing removes too (merge / equalize = structural: cold descent to min(i, length-1) over the post
 // state; drain = NIL / 0 / 0 with _fpath kept).
 //
@@ -11,7 +11,9 @@
 // Row numbers (13|4, 8|8, 5 vs 7, 14 vs 13) are quoted from C-35. Controls are state-restore wrappers that rewrite
 // the view's own finger fields around the correct build (no source patch, RF-3). ASCII only.
 
-import { test } from 'node:test';
+import { test as nodeTest } from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { SumSequence } from '../Yggdrasil.js';
 import { engineFactory } from './adapter.mjs';
@@ -19,6 +21,16 @@ import { walk } from './walker.mjs';
 import { buildMutant } from './mutant-build.mjs';
 
 const CN = SumSequence.COUNTERS;
+
+// Source-mutant plumbing (rung F-R Phase 2). In a mutant CHILD process (env YG_FINGER_CHILD = JSON spec) no test is
+// registered; the module builds the patched engine, points FACT / SEQ at it and runs ONE named row (ROWS), then exits
+// 0 = row passed, 3 = AssertionError (killed), 4 = anchor count mismatch, 5 = other throw, 6 = unknown row.
+const CHILD = process.env.YG_FINGER_CHILD || '';
+const test = CHILD ? () => {} : nodeTest;
+const ROWS = {};
+function rowTest(key, title, fn) { ROWS[key] = fn; test(title, fn); }
+let FACT = engineFactory;
+let SEQ = SumSequence;
 
 class Fail {
   constructor(cls, msg) { this.cls = cls; this.msg = msg; }
@@ -69,6 +81,21 @@ function leafLens(s, vi) {
 
 const json = (x) => JSON.stringify(x, (k, v) => (ArrayBuffer.isView(v) ? Array.from(v) : v));
 
+// The C-4 hit model (ADR 0005 C-4), written from the rule and never from the engine. F = the PRE-op finger, len = the
+// finger leaf's length. fl === NIL is always a miss. insertAt: the range test lo < i <= fb+len with the first leaf
+// (fb 0) opening at 0 (lo = -1) and every other leaf at fb (lo = fb), and len < B (a full leaf splits). removeAt:
+// fb <= i < fb+len and len > (single-leaf view ? 1 : m). setMeasure / getMeasure / entityAt: fb <= i < fb+len.
+function modelHit(name, i, F, len, NIL, B, m) {
+  if (F.fl === NIL) return false;
+  if (name === 'insertAt') {
+    const lo = F.fb === 0 ? -1 : F.fb;
+    return lo < i && i <= F.fb + len && len < B;
+  }
+  if (!(F.fb <= i && i < F.fb + len)) return false;
+  if (name === 'removeAt') return len > (F.depth === 0 ? 1 : m);
+  return true;
+}
+
 // One configured run: arena of 2 views, B, wrapper. Every op goes through R.op().
 function newRun(B, wrap, C, factory) {
   const f = (factory || engineFactory)(C || 256, { leafSize: B, dims: 1 }, 2);
@@ -76,7 +103,7 @@ function newRun(B, wrap, C, factory) {
   const R = {
     f, B, m: B >> 2, NIL, wrap, C: C || 256,
     ent: [[], []], mea: [[], []], cE: 1,
-    stats: { ins: 0, rem: 0, rd: 0, seek: 0, skip: 0, splits: 0, rstruct: 0, drains: 0, multi: 0, nilSeen: 0 },
+    stats: { hit: 0, miss: 0, ins: 0, rem: 0, rd: 0, seek: 0, skip: 0, splits: 0, rstruct: 0, drains: 0, multi: 0, nilSeen: 0 },
     cn: new Int32Array(12), cn2: new Int32Array(12),
   };
   R.chk = (cond, cls, msg) => { if (!cond) throw new Fail(cls, msg); };
@@ -101,6 +128,12 @@ function newRun(B, wrap, C, factory) {
     const hits0 = R.cn[CN.fingerHits];
     const miss0 = R.cn[CN.fingerMisses];
     const spl0 = R.cn[CN.splits];
+    const tou0 = R.cn[CN.touches];
+    const pul0 = R.cn[CN.pulls];
+    const eqm0 = R.cn[CN.merges] + R.cn[CN.equalizes] + R.cn[CN.splits];
+    // C-4 model, from the PRE-op finger and the finger leaf's length (independent of the engine)
+    const lenF = preF.fl === NIL ? 0 : pre.leaf.len[~preF.fl];
+    const hit = kind !== 'seek' && modelHit(name, i, preF, lenF, NIL, B, R.m) ? 1 : 0;
     const mrg0 = R.cn[CN.merges] + R.cn[CN.equalizes];
     run(v);
     if (modelApply) modelApply();
@@ -119,8 +152,17 @@ function newRun(B, wrap, C, factory) {
     const post = f.snapshot();
     const tag = name + '(' + i + ') n=' + n + ': ';
     // counters: M-1 + C-26
-    R.chk(dh === 0, 'hit', tag + 'fingerHits delta ' + dh + ' (M-1: every op a miss)');
-    R.chk(dm === (kind === 'seek' ? 0 : 1), 'miss', tag + 'fingerMisses delta ' + dm);
+    R.chk(dh === hit, 'hit', tag + 'fingerHits delta ' + dh + ' exp ' + hit + ' (C-4 model)');
+    R.chk(dm === (kind === 'seek' ? 0 : 1 - hit), 'miss', tag + 'fingerMisses delta ' + dm + ' exp ' + (kind === 'seek' ? 0 : 1 - hit));
+    if (hit) {
+      // C-25: a hit adds 0 touches; C-20: a hit mutation is ONE pull pass (pulls == _fdepth), a read pulls 0;
+      // a hit is never structural
+      R.chk(R.cn2[CN.touches] - tou0 === 0, 'touches', tag + 'hit touches delta ' + (R.cn2[CN.touches] - tou0));
+      const wantP = (name === 'getMeasure' || name === 'entityAt') ? 0 : preF.depth;
+      R.chk(R.cn2[CN.pulls] - pul0 === wantP, 'pulls', tag + 'hit pulls delta ' + (R.cn2[CN.pulls] - pul0) + ' exp ' + wantP);
+      R.chk(R.cn2[CN.merges] + R.cn2[CN.equalizes] + R.cn2[CN.splits] - eqm0 === 0, 'structural', tag + 'a hit changed the tree shape');
+      R.stats.hit++;
+    } else if (kind !== 'seek') R.stats.miss++;
     // other view untouched
     const o = 1 - vi;
     R.chk(json(pre.views[o]) === json(post.views[o]), 'other', tag + 'the other view changed');
@@ -133,6 +175,8 @@ function newRun(B, wrap, C, factory) {
       R.chk(v._fl === NIL && v._fb === 0 && v._fdepth === 0, 'nil',
         tag + 'drain finger ' + v._fl + '/' + v._fb + '/' + v._fdepth + ' exp ' + NIL + '/0/0 (C-5)');
       R.stats.nilSeen++;
+    } else if (hit) {
+      R.cmpFinger(vi, preF, tag + 'hit leaves the finger unchanged (C-3): ');
     } else if (kind === 'ins') {
       R.cmpFinger(vi, descend(post, vi, i), tag);
     } else if (kind === 'rem') {
@@ -256,12 +300,14 @@ function runLane(wrap, cfgs, N, factory) {
 // ---------------------------------------------------------------------------------------------------------------
 // The lane
 
-test('Finger lane: B 4 / 8 / 16 x seeds 1..3, 2000 ops each, every op checked (C-1, C-2, C-3, C-5, C-26, M-1)', () => {
+test('Finger lane: B 4 / 8 / 16 x seeds 1..3, 2000 ops each, every op checked (C-1, C-2, C-3, C-4, C-5, C-26)', () => {
   const rep = runLane(null, CFGS, 2000);
   assert.equal(rep.fail, null, rep.fail && ('B=' + rep.B + ' seed=' + rep.seed + ' [' + rep.fail.cls + '] ' + rep.fail.msg));
   for (const s of rep.stats) {
     const tag = 'B=' + s.B + ' seed=' + s.seed;
     // coverage floors (conservative; ~770 inserts per stream, leaves of >= B/4 -> many splits)
+    assert.ok(s.hit >= 150, tag + ' hits ' + s.hit); // coverage floors for the C-4 model rows of the lane
+    assert.ok(s.miss >= 150, tag + ' misses ' + s.miss);
     assert.ok(s.ins >= 300, tag + ' inserts ' + s.ins);
     assert.ok(s.splits >= 10, tag + ' structural inserts ' + s.splits);
     assert.ok(s.rem >= 30, tag + ' removes ' + s.rem);
@@ -627,3 +673,445 @@ test('Finger mutant: `if (q < c) {` -> `if (q <= c) {` is killed by the lane and
     assert.throws(() => appendRow(M), /finger leaf holds element 4|Expected values/);
   } finally { M.cleanup(); }
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// Rung F-R full surface (C-4 hit rows, C-3, C-20, C-25, C-26). One cell = a fresh view with the finger homed on a chosen
+// leaf of a chosen length; one positional op at an index relative to (fb, len); the expected hit is a LITERAL per cell
+// (the C-4 clause under test), cross-checked against modelHit. Each row asserts the answer, the counter deltas
+// (fingerHits / fingerMisses / touches / pulls / moves / splits / merges / equalizes), the post finger against the C-3
+// reading (hit: byte-identical to the pre-op finger; miss: re-home) and the walker.
+
+const NC = 12;
+function readC(v) { const a = new Int32Array(NC); v.readCounters(a); return a; }
+function delta(a, b, k) { return b[CN[k]] - a[CN[k]]; }
+
+// Model-tracked view: arena of 2 views, B, element e carries entity e and measure e + 1.
+function mkView(B, n) {
+  const f = FACT(256, { leafSize: B, dims: 1 }, 2);
+  const M = { f, v: f.views[0], B, m: B >> 2, ent: [], mea: [], nextE: 1, NIL: f.snapshot().NIL };
+  for (let k = 0; k < n; k++) mIns(M, k);
+  return M;
+}
+function mIns(M, i, mm) {
+  const e = M.nextE++;
+  const me = mm === undefined ? e + 1 : mm;
+  M.v.insertAt(i, e, me);
+  M.ent.splice(i, 0, e); M.mea.splice(i, 0, me);
+}
+function mRem(M, i) {
+  assert.equal(M.v.removeAt(i), M.ent[i]);
+  M.ent.splice(i, 1); M.mea.splice(i, 1);
+}
+function leafInfo(M, ord) {
+  const lens = leafLens(M.f.snapshot(), 0);
+  let start = 0;
+  for (let q = 0; q < ord; q++) start += lens[q];
+  return { lens, start, len: lens[ord] };
+}
+// grow / shrink leaf `ord` to `target` elements by interior non-structural ops (len < B on the way up, len > m down)
+function shapeLeaf(M, ord, target) {
+  for (let guard = 0; guard < 64; guard++) {
+    const { start, len } = leafInfo(M, ord);
+    if (len === target) return;
+    if (len < target) mIns(M, start + 1);
+    else mRem(M, start);
+  }
+  throw new Error('shapeLeaf did not converge');
+}
+// home the finger on leaf `ord` (getMeasure at its first element) and return the pre-op finger + leaf facts
+function homeOn(M, ord) {
+  const { start, len, lens } = leafInfo(M, ord);
+  M.v.getMeasure(start, 0);
+  const s = M.f.snapshot();
+  const d = descend(s, 0, start);
+  const F = fingerOf(M.v);
+  assert.equal(F.fl, d.fl, 'finger homed on leaf ' + ord);
+  assert.equal(F.fb, start);
+  assert.equal(len, s.leaf.len[~F.fl]);
+  return { F, fb: start, len, last: ord === lens.length - 1 };
+}
+
+// Runs ONE op and checks the whole row. op in insertAt / removeAt / setMeasure / getMeasure / entityAt.
+function runCellOp(M, op, i, wantHit, tag) {
+  const v = M.v;
+  const pre = M.f.snapshot();
+  const F = fingerOf(v);
+  const lenF = F.fl === M.NIL ? 0 : pre.leaf.len[~F.fl];
+  assert.equal(modelHit(op, i, F, lenF, M.NIL, M.B, M.m), wantHit, tag + ': the literal and the C-4 model agree');
+  const n = v._len;
+  const c0 = readC(v);
+  let ans;
+  const newMea = 7777;
+  const nextE = M.nextE;
+  if (op === 'insertAt') v.insertAt(i, nextE, newMea);
+  else if (op === 'removeAt') ans = v.removeAt(i);
+  else if (op === 'setMeasure') v.setMeasure(i, 0, newMea);
+  else if (op === 'getMeasure') ans = v.getMeasure(i, 0);
+  else ans = v.entityAt(i);
+  const c1 = readC(v);
+  const post = M.f.snapshot();
+  // answers (model: ent / mea arrays)
+  if (op === 'removeAt') { assert.equal(ans, M.ent[i], tag + ' removeAt answer'); M.ent.splice(i, 1); M.mea.splice(i, 1); }
+  else if (op === 'insertAt') { M.nextE++; M.ent.splice(i, 0, nextE); M.mea.splice(i, 0, newMea); }
+  else if (op === 'setMeasure') M.mea[i] = newMea;
+  else if (op === 'getMeasure') assert.equal(ans, M.mea[i], tag + ' getMeasure answer');
+  else assert.equal(ans, M.ent[i], tag + ' entityAt answer');
+  // partition (C-26)
+  assert.equal(delta(c0, c1, 'fingerHits'), wantHit ? 1 : 0, tag + ' fingerHits');
+  assert.equal(delta(c0, c1, 'fingerMisses'), wantHit ? 0 : 1, tag + ' fingerMisses');
+  const dSplit = delta(c0, c1, 'splits');
+  const dStruct = dSplit + delta(c0, c1, 'merges') + delta(c0, c1, 'equalizes');
+  const mutating = op === 'insertAt' || op === 'removeAt' || op === 'setMeasure';
+  const G = F.fl === M.NIL ? null : { fb: F.fb, len: lenF };
+  if (wantHit) {
+    assert.equal(delta(c0, c1, 'touches'), 0, tag + ' hit touches 0 (C-25)');
+    assert.equal(delta(c0, c1, 'pulls'), mutating ? F.depth : 0, tag + ' hit pulls == _fdepth on a mutation, 0 on a read (C-20)');
+    assert.equal(dStruct, 0, tag + ' hit is never structural');
+    // moves of a hit (C-18): insert s-p, remove s-1-p, others 0 (p = offset in the leaf)
+    const p = i - G.fb;
+    const wantMoves = op === 'insertAt' ? G.len - p : op === 'removeAt' ? G.len - 1 - p : 0;
+    assert.equal(delta(c0, c1, 'moves'), wantMoves, tag + ' hit moves (C-18)');
+    // C-3: a hit leaves the finger byte-identical, _fpath[0.._fdepth) included
+    assert.equal(json(fingerOf(v)), json(F), tag + ' finger unchanged by a hit');
+    assert.equal(json(Array.from(v._fpath).slice(0, F.depth)), json(F.path.slice(0, F.depth)), tag + ' _fpath unchanged by a hit');
+  } else {
+    if (pre.views[0]._root !== pre.EMPTY_ROOT && pre.views[0]._root >= 0) {
+      // a multi-leaf miss descends: touches > 0 (exact depth for a non-structural read / set / remove)
+      assert.ok(delta(c0, c1, 'touches') > 0, tag + ' miss touches > 0');
+      if (op !== 'insertAt' && dStruct === 0) {
+        assert.equal(delta(c0, c1, 'touches'), descend(pre, 0, i).depth, tag + ' non-structural miss touches == walker depth (C-25)');
+      }
+    }
+    if (mutating) assert.ok(delta(c0, c1, 'pulls') >= 1 || dStruct > 0 || op === 'removeAt', tag + ' miss mutation pulls');
+    // C-3 re-home after a miss: the same reading as the per-op lane
+    if (op === 'insertAt') {
+      const exp = descend(post, 0, i);
+      assert.equal(v._fl, exp.fl, tag + ' re-home _fl'); assert.equal(v._fb, exp.fb, tag + ' re-home _fb');
+      assert.equal(v._fdepth, exp.depth, tag + ' re-home _fdepth');
+      for (let q = 0; q < exp.depth; q++) assert.equal(v._fpath[q], exp.path[q], tag + ' re-home _fpath');
+    } else if (op === 'removeAt' && n === 1) {
+      assert.equal(v._fl, M.NIL); assert.equal(v._fb, 0); assert.equal(v._fdepth, 0);
+    } else {
+      const exp = op === 'removeAt' ? (dStruct > 0 ? descend(post, 0, Math.min(i, n - 2)) : descend(pre, 0, i)) : descend(post, 0, i);
+      assert.equal(v._fl, exp.fl, tag + ' re-home _fl'); assert.equal(v._fb, exp.fb, tag + ' re-home _fb');
+      assert.equal(v._fdepth, exp.depth, tag + ' re-home _fdepth');
+      for (let q = 0; q < exp.depth; q++) assert.equal(v._fpath[q], exp.path[q], tag + ' re-home _fpath');
+    }
+  }
+  if (op === 'insertAt' && !wantHit && lenF === M.B && G && i > G.fb && i <= G.fb + lenF) {
+    assert.equal(dSplit, 1, tag + ' a full-leaf insert splits (C-4: the split-triggering insert is a miss)');
+  }
+  assert.equal(walk(post, { B: M.B, dims: 1 }), null, tag + ' walker');
+  // content: whole-view check through the (neutral) seeks
+  let acc = 0;
+  for (let k = 0; k <= M.mea.length; k++) {
+    assert.equal(v.sumBefore(0, k), acc, tag + ' sumBefore(' + k + ')');
+    if (k < M.mea.length) acc += M.mea[k];
+  }
+  assert.equal(json(fingerOf(v)), json(fingerOf(v)));
+  assert.equal(v._len, M.mea.length);
+}
+
+// multi-leaf cells: B in {8, 16}, leaf ordinal in {first, middle, last} x len in {B-1, B, m+1, m}
+for (const B of [8, 16]) {
+  const m = B >> 2;
+  for (const ordKey of ['first', 'middle', 'last']) {
+    for (const [lname, Lf] of [['B-1', (b) => b - 1], ['B', (b) => b], ['m+1', (b, mm) => mm + 1], ['m', (b, mm) => mm]]) {
+      rowTest('multi-' + B + '-' + ordKey + '-' + lname, 'Finger hit row (C-4): multi-leaf B=' + B + ', ' + ordKey + ' leaf, len ' + lname + ': every guard side, 5 ops x {hit, miss}', () => {
+        const L = Lf(B, m);
+        const probe = mkView(B, 4 * B);
+        const nLeaves = leafLens(probe.f.snapshot(), 0).length;
+        assert.ok(nLeaves >= 3, 'multi-leaf (>= 3 leaves)');
+        const ord = ordKey === 'first' ? 0 : ordKey === 'middle' ? 1 : nLeaves - 1;
+        // case list: [op, offset kind, literal hit]
+        const cases = [];
+        const mk = (op, name, idxFn, hitFn) => cases.push({ op, name, idxFn, hitFn });
+        // insertAt (lo / hi / len clauses)
+        mk('insertAt', 'i=fb-1', (c) => c.fb - 1, () => false);
+        mk('insertAt', 'i=fb', (c) => c.fb, (c) => c.fb === 0 && L < B);
+        mk('insertAt', 'i=fb+1', (c) => c.fb + 1, () => L < B);
+        mk('insertAt', 'i=fb+len', (c) => c.fb + c.len, () => L < B);
+        mk('insertAt', 'i=fb+len+1', (c) => c.fb + c.len + 1, () => false);
+        for (const op of ['setMeasure', 'getMeasure', 'entityAt', 'removeAt']) {
+          const need = op === 'removeAt' ? L > m : true;
+          mk(op, 'i=fb-1', (c) => c.fb - 1, () => false);
+          mk(op, 'i=fb', (c) => c.fb, () => need);
+          mk(op, 'i=fb+len-1', (c) => c.fb + c.len - 1, () => need);
+          mk(op, 'i=fb+len', (c) => c.fb + c.len, () => false);
+        }
+        let ran = 0;
+        for (const cs of cases) {
+          const M = mkView(B, 4 * B);
+          shapeLeaf(M, ord, L);
+          const h = homeOn(M, ord);
+          assert.equal(h.len, L);
+          const i = cs.idxFn(h);
+          const n = M.mea.length;
+          // skip indexes that are out of the op's valid range (those are the throwing rows)
+          const maxI = cs.op === 'insertAt' ? n : n - 1;
+          if (i < 0 || i > maxI) continue;
+          // fb-1 only exists for fb >= 1; i=fb+len+1 on the last leaf is out of range (skipped above)
+          runCellOp(M, cs.op, i, cs.hitFn(h), cs.op + ' ' + cs.name + ' (fb ' + h.fb + ', len ' + h.len + ')');
+          ran++;
+        }
+        assert.ok(ran >= (ordKey === 'last' ? 12 : ordKey === 'first' ? 13 : 17), 'cells run ' + ran);
+      });
+    }
+  }
+}
+
+// single-leaf cells (_fdepth 0): insert lo / hi / len; removeAt len 2 hit, len 1 drain (miss, NIL); reads hit
+for (const B of [8, 16]) {
+  rowTest('single-' + B, 'Finger hit row (C-4): single-leaf view B=' + B + ' (_fdepth 0): insert lo / hi / len, removeAt len > 1, reads', () => {
+    for (const L of [1, 2, B - 1, B]) {
+      const base = mkView(B, L);
+      assert.ok(base.v._root < 0, 'single leaf');
+      base.v.getMeasure(0, 0);
+      assert.equal(base.v._fdepth, 0);
+      for (let i = 0; i <= L; i++) {
+        const M = mkView(B, L); M.v.getMeasure(0, 0);
+        // insertAt: first leaf (fb 0) opens at 0; hit iff len < B
+        runCellOp(M, 'insertAt', i, L < B, 'single insertAt(' + i + ') len ' + L);
+      }
+      for (let i = 0; i < L; i++) {
+        for (const op of ['setMeasure', 'getMeasure', 'entityAt']) {
+          const M = mkView(B, L); M.v.getMeasure(0, 0);
+          runCellOp(M, op, i, true, 'single ' + op + '(' + i + ') len ' + L);
+        }
+        const M = mkView(B, L); M.v.getMeasure(0, 0);
+        // removeAt: single-leaf rule len > 1 (NOT len > m)
+        runCellOp(M, 'removeAt', i, L > 1, 'single removeAt(' + i + ') len ' + L);
+      }
+    }
+    // a single-leaf len m + 1 .. 1 must still hit down to 2 even when 2 <= m (B=16: m = 4)
+    const M = mkView(B, B >> 2);
+    M.v.getMeasure(0, 0);
+    runCellOp(M, 'removeAt', 0, true, 'single removeAt len m');
+  });
+}
+
+// (regression pin: also a miss on the miss-only build; the NIL guard's teeth are the Phase 2 source mutant)
+// fl === NIL is a miss on both view shapes: fresh, after clear, after splitAt (both views), after append (both
+// views) and after a drain
+rowTest('nil', 'Finger hit row (C-4/C-5): fl === NIL is a miss on a fresh view, after clear / splitAt / append / a drain, B=8', () => {
+  const B = 8;
+  const nilMiss = (M, v, tag) => {
+    assert.equal(v._fl, M.NIL, tag + ': finger is NIL');
+    const c0 = readC(v);
+    const e = M.nextE++;
+    v.insertAt(0, e, 5);
+    const c1 = readC(v);
+    assert.equal(delta(c0, c1, 'fingerHits'), 0, tag + ' hits'); assert.equal(delta(c0, c1, 'fingerMisses'), 1, tag + ' misses');
+  };
+  { // fresh
+    const M = mkView(B, 0); nilMiss(M, M.v, 'fresh');
+  }
+  { // clear (multi-leaf and single-leaf)
+    for (const n of [4 * B, 3]) {
+      const M = mkView(B, n); M.v.clear(); nilMiss(M, M.v, 'clear n=' + n);
+    }
+  }
+  { // splitAt: both views, on a multi-leaf and a single-leaf source
+    for (const n of [4 * B, 5]) {
+      const M = mkView(B, n);
+      const out = M.f.views[1];
+      M.v.getMeasure(0, 0);
+      M.v.splitAt(Math.floor(n / 2), out);
+      assert.equal(M.v._fl, M.NIL); assert.equal(out._fl, M.NIL);
+      nilMiss(M, M.v, 'splitAt left n=' + n);
+      const M2 = mkView(B, n); const out2 = M2.f.views[1];
+      M2.v.splitAt(Math.floor(n / 2), out2);
+      nilMiss(M2, out2, 'splitAt out n=' + n);
+    }
+  }
+  { // append: both operands (multi-leaf and single-leaf)
+    for (const n of [4 * B, 5]) {
+      const M = mkView(B, n); const b = M.f.views[1];
+      for (let k = 0; k < n; k++) b.insertAt(k, 1000 + k, 1);
+      M.v.getMeasure(0, 0); b.getMeasure(0, 0);
+      M.v.append(b);
+      assert.equal(M.v._fl, M.NIL); assert.equal(b._fl, M.NIL);
+      nilMiss(M, M.v, 'append dest n=' + n);
+      nilMiss(M, b, 'append source n=' + n);
+    }
+  }
+  { // a drain (multi-leaf then single)
+    const M = mkView(B, 2 * B + 1);
+    while (M.mea.length > 0) mRem(M, M.mea.length - 1);
+    nilMiss(M, M.v, 'drain');
+  }
+});
+
+// removeAt underflow (T-6): multi-leaf len m+1 hits and len m misses (covered cell-wise above); here the structural
+// consequence, once per B: the m-leaf remove is a merge or an equalize, the m+1 remove is neither.
+for (const B of [8, 16]) {
+  rowTest('t6-' + B, 'Finger hit row (C-4, T-6): removeAt on a len m leaf is a miss that merges / equalizes; on len m+1 a hit with 0 structural, B=' + B, () => {
+    const m = B >> 2;
+    const A = mkView(B, 4 * B); shapeLeaf(A, 1, m + 1);
+    const hA = homeOn(A, 1);
+    runCellOp(A, 'removeAt', hA.fb, true, 'len m+1 hit');
+    const Z = mkView(B, 4 * B); shapeLeaf(Z, 1, m);
+    const c0 = readC(Z.v);
+    const hZ = homeOn(Z, 1);
+    const c1 = readC(Z.v);
+    void c0; void c1;
+    const c2 = readC(Z.v);
+    runCellOp(Z, 'removeAt', hZ.fb, false, 'len m miss');
+    const c3 = readC(Z.v);
+    assert.equal(delta(c2, c3, 'merges') + delta(c2, c3, 'equalizes'), 1, 'the len m remove underflows: exactly one merge or equalize');
+  });
+}
+
+// (regression pins: a throw re-homes nothing on the miss-only build too; they guard the hit path against a write before the check)
+// Throwing ops on a HITTABLE finger: the index is inside the finger leaf, so a bad value is the only failure (C-3, C-10)
+for (const B of [8, 16]) {
+  test('Finger hit row (C-3): throwing ops with the index inside the finger leaf change no finger field and no counter, B=' + B, () => {
+    const M = mkView(B, 4 * B);
+    const v = M.v;
+    const n = M.mea.length;
+    const h = homeOn(M, 1);
+    const i = h.fb + 1;
+    const bad = [
+      ['insertAt bad measure (-1)', () => v.insertAt(i, 99, -1)],
+      ['insertAt bad measure (1.5)', () => v.insertAt(i, 99, 1.5)],
+      ['insertAt index n+1', () => v.insertAt(n + 1, 99, 1)],
+      ['setMeasure bad measure', () => v.setMeasure(i, 0, -1)],
+      ['setMeasure bad dim', () => v.setMeasure(i, 5, 1)],
+      ['setMeasure index n', () => v.setMeasure(n, 0, 1)],
+      ['getMeasure index n', () => v.getMeasure(n, 0)],
+      ['getMeasure index -1', () => v.getMeasure(-1, 0)],
+      ['entityAt index n', () => v.entityAt(n)],
+      ['removeAt index n', () => v.removeAt(n)],
+      ['removeAt index 1.5', () => v.removeAt(1.5)],
+    ];
+    for (const [tag, fn] of bad) {
+      v.getMeasure(h.fb, 0); // re-home onto the leaf
+      expectThrowIdentical(v, fn, tag);
+    }
+    assert.equal(walk(M.f.snapshot(), { B, dims: 1 }), null);
+  });
+  test('Finger hit row (C-3, RF-1): headroom RangeError with the index inside the finger leaf leaves finger and counters unchanged, B=' + B, () => {
+    const f = engineFactory(256, { leafSize: B, dims: 1 }, 1);
+    const v = f.views[0];
+    const MAXV = 9007199254740991;
+    const n = 3 * B;
+    v.insertAt(0, 0, MAXV - 100);
+    for (let k = 1; k < n; k++) v.insertAt(k, k, 1);
+    v.getMeasure(1, 0); // finger on the first leaf, index 1 inside it
+    expectThrowIdentical(v, () => v.setMeasure(1, 0, MAXV - 5), 'setMeasure headroom');
+    expectThrowIdentical(v, () => v.insertAt(1, 7, MAXV - 5), 'insertAt headroom');
+  });
+}
+
+// Seeks between ops: 0 hits, 0 misses, finger unchanged (C-2, C-26), on a hittable finger
+test('Finger hit row (C-2, C-26): indexAtSum / sumBefore / total add no hit and no miss and keep a hittable finger', () => {
+  const M = mkView(8, 32);
+  const v = M.v;
+  const h = homeOn(M, 1);
+  const before = json(fingerOf(v)) + json(Array.from(v._fpath));
+  const c0 = readC(v);
+  v.indexAtSum(0, 100); v.sumBefore(0, 20); v.total(0);
+  const c1 = readC(v);
+  assert.equal(delta(c0, c1, 'fingerHits'), 0); assert.equal(delta(c0, c1, 'fingerMisses'), 0);
+  assert.equal(json(fingerOf(v)) + json(Array.from(v._fpath)), before);
+  // and the next positional op in the finger leaf still hits
+  runCellOp(M, 'getMeasure', h.fb, true, 'hit after seeks');
+});
+
+// Streams (C-34 / PLAN-E0-F ASSERTION 1, C-19): exact counts, derived in the ADR (closed form == simulation)
+rowTest('append', 'Finger stream (C-34): 1e4 appends at B=16 -> fingerHits 9231, fingerMisses 769, splits 768', () => {
+  const v = new SEQ(1e4, { leafSize: 16 });
+  for (let k = 0; k < 1e4; k++) v.insertAt(k, k, 1);
+  const c = readC(v);
+  assert.equal(c[CN.fingerHits], 9231);
+  assert.equal(c[CN.fingerMisses], 769);
+  assert.equal(c[CN.splits], 768);
+});
+rowTest('prepend', 'Finger stream (C-19): B=16, 200 insertAt(0) -> fingerHits 184, splits 15, moves 1960', () => {
+  const v = new SEQ(256, { leafSize: 16 });
+  for (let k = 0; k < 200; k++) v.insertAt(0, k, 1);
+  const c = readC(v);
+  assert.equal(c[CN.fingerHits], 184);
+  assert.equal(c[CN.splits], 15);
+  assert.equal(c[CN.moves], 1960);
+});
+
+// (regression pin: passes on the miss-only build) MF-5 (C-35, C-39): a clear() that keeps the finger. clear sets the finger NIL (C-5); the next op is a miss.
+test('Finger row: MF-5 clear() resets the finger to NIL / 0 / 0 (a wrapper that kept it would hit a freed leaf)', () => {
+  const M = mkView(8, 32);
+  M.v.getMeasure(5, 0);
+  assert.ok(M.v._fl !== M.NIL);
+  M.v.clear();
+  assert.equal(M.v._fl, M.NIL); assert.equal(M.v._fb, 0); assert.equal(M.v._fdepth, 0);
+  assert.equal(M.v._len, 0);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Rung F-R source mutants (anchors from the coder's hit test; each count is asserted by buildMutant, a mismatch FAILS).
+// Every mutant runs in a child process (spawnSync, timeout, SIGKILL): the named row(s) must FAIL on the patched engine
+// and PASS on the same path with an identity patch (anchor -> anchor). A timeout counts as killed only for a mutant
+// flagged mayHang, and only if the identity run finished in under a third of the timeout.
+const SELF = fileURLToPath(import.meta.url);
+const CHILD_TIMEOUT = 90000;
+function runChildRow(patch, row) {
+  const t0 = Date.now();
+  const r = spawnSync(process.execPath, [SELF], {
+    env: { ...process.env, YG_FINGER_CHILD: JSON.stringify({ anchor: patch[0], repl: patch[1], count: patch[2], row }) },
+    timeout: CHILD_TIMEOUT, killSignal: 'SIGKILL', encoding: 'utf8',
+  });
+  return { status: r.status, signal: r.signal, out: (r.stdout || '') + (r.stderr || ''), ms: Date.now() - t0 };
+}
+const MUTS = [
+  { name: 'loNoWiden', anchor: 'fb - ((fb - 1) >>> 31) < at', repl: 'fb < at', count: 1, rows: ['prepend', 'multi-8-first-B-1'] },
+  { name: 'hiStrict', anchor: 'at <= fb + (len = llen[~ref]) && len < ar.B', repl: 'at < fb + (len = llen[~ref]) && len < ar.B', count: 1, rows: ['append', 'multi-8-middle-B-1'] },
+  { name: 'removeGeM', anchor: 'len > (this._fdepth === 0 ? 1 : ar.m)', repl: 'len >= (this._fdepth === 0 ? 1 : ar.m)', count: 1, rows: ['t6-8', 'multi-8-middle-m'] },
+  { name: 'nilDropped', anchor: 'ref !== YG_NIL && ', repl: '', count: 5, rows: ['nil'], equivalent: true },
+  { name: 'hitTouchesDepth', anchor: 'cn[YG_TOUCHES] += depth & (h - 1);', repl: 'cn[YG_TOUCHES] += depth;', count: 5, rows: ['multi-8-middle-B-1'] },
+  { name: 'loWiden', anchor: 'fb - ((fb - 1) >>> 31) < at', repl: 'fb - 1 < at', count: 1, rows: ['multi-8-middle-B-1'] },
+  { name: 'elemHiWiden', anchor: 'at < fb + llen[~ref]', repl: 'at <= fb + llen[~ref]', count: 3, rows: ['multi-8-first-B-1', 'multi-8-middle-B-1'] },
+];
+// nilDropped is an EQUIVALENT mutant: YG_NIL is 0 and a live leaf ref is ~leaf < 0, so with the guard dropped a NIL
+// finger evaluates llen[~0] = llen[-1] = undefined, every range comparison is false, and the op still misses. The row
+// below pins that (survives on every NIL path of the nil row, exit 0, anchor count 5 asserted by buildMutant); it
+// cannot be killed by any behavioral row, and says so rather than hiding it.
+for (const mu of MUTS) {
+  for (const row of mu.rows) {
+    test('Finger source mutant ' + mu.name + (mu.equivalent ? ' is EQUIVALENT on row ' : ' is killed by row ') + row + ' (identity patch passes it)', (t) => {
+      const ok = runChildRow([mu.anchor, mu.anchor, mu.count], row);
+      assert.equal(ok.status, 0, 'identity patch must pass ' + row + ': ' + ok.out);
+      const bad = runChildRow([mu.anchor, mu.repl, mu.count], row);
+      assert.notEqual(bad.status, 4, 'anchor count mismatch (expected ' + mu.count + '): ' + bad.out);
+      if (mu.equivalent) {
+        assert.equal(bad.status, 0, 'equivalent mutant (llen[-1] is undefined, comparisons false) must behave as the original: ' + bad.out);
+        t.diagnostic(mu.name + '/' + row + ': EQUIVALENT: identity ' + ok.ms + ' ms, mutant ' + bad.ms + ' ms, both exit 0');
+        return;
+      }
+      const timedOut = bad.status === null && bad.signal === 'SIGKILL';
+      if (timedOut) {
+        assert.ok(mu.mayHang && ok.ms * 3 < CHILD_TIMEOUT, 'a timeout counts as killed only for a mayHang mutant with a fast identity run');
+      } else {
+        assert.ok(bad.status === 3 || bad.status === 5, 'killed (exit 3 assertion / 5 crash), got ' + bad.status + ': ' + bad.out);
+      }
+      t.diagnostic(mu.name + '/' + row + ': identity ' + ok.ms + ' ms exit 0; mutant ' + bad.ms + ' ms exit ' + bad.status + ' ' + bad.out.split('\n')[0].slice(0, 160));
+    });
+  }
+}
+
+if (CHILD) {
+  const spec = JSON.parse(CHILD);
+  let M;
+  try {
+    M = await buildMutant(new URL('../Yggdrasil.js', import.meta.url).pathname, [[spec.anchor, spec.repl, spec.count]]);
+  } catch (e) { console.log('COUNT ' + e.message); process.exit(4); }
+  FACT = mutantFactory(M);
+  SEQ = M.SumSequence;
+  let code = 0;
+  try {
+    if (!ROWS[spec.row]) { console.log('UNKNOWN ROW ' + spec.row); code = 6; } else { ROWS[spec.row](); console.log('ROWPASS'); }
+  } catch (e) {
+    console.log('ROWFAIL ' + String((e && e.message) || e).split('\n')[0]);
+    code = e instanceof assert.AssertionError ? 3 : 5;
+  }
+  M.cleanup();
+  process.exit(code);
+}

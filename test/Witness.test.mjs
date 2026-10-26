@@ -199,6 +199,7 @@ for (const row of rows) {
     const pre = shapeOf(sn0, root._root);
     o.preShape = pre.shape; o.preSizes = pre.sizes;
     const c0 = new Int32Array(12), c1 = new Int32Array(12);
+    o.fl0 = root._fl; // C-5: append left the finger NIL on the result view
     root.readCounters(c0);
     if (row.kind === 'rm') { const e = root.removeAt(row.at); model.splice(row.at, 1); o.removed = e === 1000 + row.at; }
     else { root.insertAt(row.at, 99999, 1); model.splice(row.at, 0, 99999); }
@@ -207,6 +208,8 @@ for (const row of rows) {
     const sn1 = f.snapshot();
     const post = shapeOf(sn1, root._root);
     o.postShape = post.shape; o.postSizes = post.sizes;
+    o.fh = c1[SumSequence.COUNTERS.fingerHits] - c0[SumSequence.COUNTERS.fingerHits];
+    o.fm = c1[SumSequence.COUNTERS.fingerMisses] - c0[SumSequence.COUNTERS.fingerMisses];
     o.d = {};
     for (const nm of NAMES) o.d[nm] = c1[SumSequence.COUNTERS[nm]] - c0[SumSequence.COUNTERS[nm]];
     let ok = root.length === model.length;
@@ -270,6 +273,9 @@ function failures(row, o, useMut) {
   if (useMut) { exd.rotSingle = row.mutRot[0]; exd.rotDouble = row.mutRot[1]; }
   for (const nm of Object.keys(exd)) if (o.d[nm] !== exd[nm]) f.push('counter:' + nm);
   if (o.answers !== true) f.push('answers');
+  // C-4 / C-5 / C-26: every row's op is a MISS (the pre-shape is append-built, so the finger is NIL, and the trigger
+  // is structural anyway: a full leaf splits, an m-entry leaf underflows), so touches above is d(w) + d'(t'), never 0
+  if (o.fl0 !== 0 || o.fh !== 0 || o.fm !== 1) f.push('finger-miss');
   return f;
 }
 
@@ -291,6 +297,7 @@ for (const row of ROWS) {
     assert.equal(J(o.postSizes), J(ex.sizes), 'post leaf sizes');
     assert.deepEqual(o.d, ex.d, 'counters touched by the op (touches, pulls, moves, splits, merges, equalizes, rotSingle, rotDouble)');
     assert.equal(o.answers, true, 'entityAt answers against the plain-array model');
+    assert.deepEqual([o.fl0, o.fh, o.fm], [0, 0, 1], 'NIL finger before the op; the op is one miss, 0 hits (C-4, C-5, C-26)');
     if (row.kind === 'rm') assert.equal(o.removed, true, 'removeAt returned the removed entity');
     assert.deepEqual(failures(row, o, false), []);
   });

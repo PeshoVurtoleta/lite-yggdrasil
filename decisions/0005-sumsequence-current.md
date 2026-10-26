@@ -10,6 +10,7 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
 - ADDENDUM 8 (0005's own, rung 5 rulings R-S1..R-S3): folded in at d2bf49a
 - ADDENDUM 9 (0005's own, rung 6 ruling R-J1 and review readings): folded in at aee3c83 + rung-6 tree
 - ADDENDUM 10 (0005's own, rung 7 review readings): written against cf0b700 (rung-7 tree, Yggdrasil.js 1637bf1a)
+- ADDENDUM 11 (0005's own, rung 8 review readings): written against a70c6cb + rung-8 tree (Yggdrasil.js 43276f1e)
 - Re-consolidated at ADDENDUM 9 (A4..A9 were past the B1 consolidation): the D8 nits are folded (the A8-1 quote form,
   the C-8 guard tag, the Status and legend wrapping, long headings split into a heading + a Sources line).
 
@@ -18,7 +19,7 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
   ADDENDUM 4 reading, an E0 reading / merge ruling M-1..M-8 folded by ADDENDUM 5, the r3 review reading Q4 folded by
   ADDENDUM 6, a rung-4 reading A7-1..A7-5 folded by ADDENDUM 7, a rung-5 coder reading A8-4 folded by ADDENDUM 8, or
   a rung-6 review reading A9-2..A9-8 folded by ADDENDUM 9, or a rung-7 review reading A10-1..A10-11 folded by
-  ADDENDUM 10)
+  ADDENDUM 10, or a rung-8 review reading A11-1..A11-8 folded by ADDENDUM 11)
 - Date: 2026-10-26
 - Session: SumSequence CURRENT consolidation (docs unit B1)
 - Provenance of this text: consolidated from .handoff/PLAN-G-A.md (body, rulings, ADDENDA 1-3), .handoff/PLAN-G-B.md
@@ -26,8 +27,8 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
   pass) from .handoff/PLAN-E0.md (the merge: M-1..M-8, R-E1..R-E4; its reconciliations win over the six plans) and its
   six plans PLAN-E0-A / -F / -K / -S / -V / -G. Rule ids cite those files by name (Sources legend);
   the plan files are gitignored and archived at release. The rung ladder lives in PLAN-E0.md, never here.
-- Precedence: ADDENDUM 10 > ADDENDUM 9 > ADDENDUM 8 > ADDENDUM 7 > ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 > ADDENDUM 3 >
-  ADDENDUM 2 > ADDENDUM 1 > body. Every rule below is the FINAL rule, stated in full.
+- Precedence: ADDENDUM 11 > ADDENDUM 10 > ADDENDUM 9 > ADDENDUM 8 > ADDENDUM 7 > ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 >
+  ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 > body. Every rule below is the FINAL rule, stated in full.
   A superseded rule is not repeated here (it lives in the plan files and the Source map says where it went).
 - Binding: this file is binding for every agent. ADRs 0001..0004 keep their ruled text; where this file amends an
   item, the ADR carries a pointer block (the Amends table below). Two texts for one rule would be two specs.
@@ -104,6 +105,8 @@ AskUserQuestion, 2026-10-26 (rung 6 burst):
 
 ## Sources legend
 
+- 0005 A11-1..A11-8 = this file's own ADDENDUM 11 (below; rung-8 review readings, NOT ruled; tags R8-n). Every A11
+  item names the CURRENT rules it changed and every changed rule cites its A11 ids.
 - 0005 A10-1..A10-11 = this file's own ADDENDUM 10 (below; rung-7 review readings, NOT ruled; tags RD-n, S3-n, H3).
   Every A10 item names the CURRENT rules it changed and every changed rule cites its A10 ids.
 - 0005 A9-1..A9-8 = this file's own ADDENDUM 9 (below; the ruling R-J1, quoted above, and the rung-6 review readings
@@ -154,13 +157,15 @@ AskUserQuestion, 2026-10-26 (rung 6 burst):
 
 ### C-3 Re-home after every positional op
 Sources: G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-4 -> 0005 A9-3 ->
-  0005 A10-2
+  0005 A10-2 -> 0005 A11-1
 
 - Every positional op re-homes the finger after its last write, reads included (their descent writes the path).
   Non-structural op: fl / fb := the leaf the op touched. Structural op (split, merge, equalize, first-leaf
   creation): a cold descent to i re-homes (removeAt uses min(i, length-1)). A view emptied by the op: fl := NIL.
-- Landing order (M-1, A5-5): the engine's core WRITES the finger (re-home + NIL, C-43) and never reads it until the
-  hit test (C-4) lands; every positional op is a miss until then. This is an order of landing, not a second rule.
+- Landing order (M-1, A5-5; history): the engine's core wrote the finger (re-home + NIL, C-43) and did not read it
+  before the hit test (C-4), so every positional op was a miss. The hit test landed in rung F-R
+  (A11-1, review reading, NOT ruled): the core now READS the finger for it, and a hit leaves _fl, _fb, _fdepth and
+  _fpath equal by value (the same ref, at - k, depth). This was an order of landing, not a second rule.
 - A throwing op re-homes nothing: a RangeError (for setMeasure the headroom one, RF-1, C-10) leaves _fl, _fb, _fdepth
   and _fpath unchanged. One exemption (R-P1, R-P2, A6-2, A6-4): the R-E4 'pool' throw (the cold allocator /
   ygSplit; unreachable under C-15) leaves the finger invalidated (_fl = NIL, _fb = 0, _fdepth = 0, set before the
@@ -177,7 +182,7 @@ Sources: G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-
 - The keyed-fence variant (B-17 part c: a stale fence after equalize, I-6) is DEFERRED to the SumMap brief
   (C-42); the carried rule is this structural re-home plus a keyed copy of MF-4.
 
-### C-4 Hit (G-A HIT-1 -> G-A-D7 lo formula -> 0005 A5-17)
+### C-4 Hit (G-A HIT-1 -> G-A-D7 lo formula -> 0005 A5-17 -> 0005 A11-1..A11-3)
 
 - Hit iff fl !== NIL and the index lies in the leaf's range and no split, merge, equalize or free is needed, decided
   before the first write. Range: insertAt i in (fb, fb+len] and, for the first leaf (fb = 0), [0, len]; every other
@@ -188,12 +193,31 @@ Sources: G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-
   `L === 1 ? len > 1 : len > m`).
 - A hit adds 0 to touches. The split-triggering insert is a MISS. This replaces 0003 G-12 "in range + epoch valid +
   no split / merge / equalize needed" and the 0001 Table 3 hit wording.
+- Landed (A11-1, review reading, NOT ruled; rung F-R): insertAt, removeAt, setMeasure, getMeasure and entityAt run the
+  hit test after every C-10 check and before the first write, NIL tested first. A hit skips the descent, adds 0 to
+  touches, adds _fdepth to pulls on a mutation and rewrites the finger with the same values (ref === _fl, at - k ===
+  _fb, depth === _fdepth). Structural work (first leaf, split, T-6) is on the miss branch only. The tail adds
+  `touches += depth & (h - 1)` and 1 to slot `YG_MISSES - h` (h = 1 on a hit). removeAt at n === 1 drains before the
+  test and counts a miss.
+- NIL guard is textual (A11-2, review reading, NOT ruled; R8-1, coder and reviewer agree): dropping `ref !== YG_NIL &&`
+  (5 sites) is behaviorally EQUIVALENT: llen[~0] = llen[-1] is undefined on an Int32Array, fb + undefined is NaN, so the
+  upper-bound compare (at <= fb + len / at < fb + len) is false and the op misses (removeAt's `_fdepth === 0 ? 1 : m`
+  term is never evaluated). The guard stays: it is the C-4 text, the C-10 census "NIL" term, and it keeps the hot site
+  free of an out-of-bounds typed-array load. Its only gate is textual: test/Finger.test.mjs pins it as an
+  equivalent-mutant row whose identity build asserts anchor count 5.
+- removeAt threshold (A11-3, review reading, NOT ruled; reviewer mutant R6): `_fdepth === 0 ? 1` is equivalent to
+  `? 0`, because the n === 1 drain runs before the test, so on a single-leaf view len === n >= 2 at the test. The
+  rule text keeps `? 1` (it matches the stub).
 
-### C-5 Ownership and NIL writes (G-A B-18 -> G-B XG-1)
+### C-5 Ownership and NIL writes (G-A B-18 -> G-B XG-1 -> 0005 A11-5)
 
 - Invariant: fl !== NIL implies the leaf is live and owned by THIS view (not free, not another view's).
 - splitAt (both views), append (both views) and clear set the finger NIL. Draining the last element of a view sets
   NIL (C-3). A moved-from view therefore never walks foreign nodes.
+- Empty view (A11-5, review reading, NOT ruled; review check 2): insertAt's empty-root (ygFirstLeaf) check sits on the
+  miss branch. An empty view always has fl === NIL (born NIL; drain, splitAt with either side empty, append's source
+  and clear write NIL; the 'pool' throw writes NIL / 0 / 0), so the NIL test sends it to the miss branch; walker I-9a
+  checks it after every op.
 
 ### Cursor
 
@@ -288,7 +312,7 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   (1 internal), throw RangeError with the token 'pool'; under C-15 it never fires (0004 A-5's only capacity failure
   stays live + 1 > C). RV-5's proposed Error('pool') is superseded by R-E4 (consistent with R-X5 "RangeError
   everywhere"). The append check is evaluated whenever both operands are non-empty, whatever the seam repair then does
-  (A9-3, review reading, NOT ruled; C-3). (A10-2, review reading, NOT ruled; C-3).
+  (A9-3, review reading, NOT ruled; C-3). splitAt's pre-check: see C-3 (A10-2, review reading, NOT ruled).
 - Dims 1..3 (RV-2, A5-30, R-Q1, A6-1): the extra-slot and headroom branches carry `| (dims > 1)` and send dims > 1 to
   one cold re-check. R-Q1 adds one hot branch, the dims > 1 test guarding the fused inline typeof of slots
   1..dims-1 (C-44), so the dims=1 census below is 15 (RV-2's 14 is superseded). No census gate exists: the reviewer
@@ -411,13 +435,14 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   sR; equalize: uLeft ? sR : ceil(t/2). Mid-leaf cut: s-p moves; a cut on a leaf boundary: 0.
 - Closes 0001 O-4 (the ROADMAP "<= 15 leaf moves" is replaced by these formulas).
 
-### C-19 No front gap; prepends do not mirror moves (G-B B-19)
+### C-19 No front gap; prepends do not mirror moves (G-B B-19 -> 0005 A11-8)
 
 - No front gap exists (a gap costs one load and one add on every in-leaf access of every hot op). "Prepends mirror"
   (0003 G-12) holds for splits, hits, misses and leaves only. prepMoves(N) = N <= B ? N(N-1)/2 :
   B(B-1)/2 + S*B + (S-1)*T(m,B) + T(m,m+r), with S = S(N) (0001 Table 3), r = (N-B-1) mod (B-m+1) and
   T(a,b) = the sum of s for a <= s < b. N=200 at B=16, m=4: 1960 moves, 15 splits, 184 hits (closed form ==
-  simulation, node v26.8.2, untimed, 2026-10-26).
+  simulation, node v26.8.2, untimed, 2026-10-26; engine-measured, A11-8, review reading, NOT ruled: 200 insertAt(0) at
+  B = 16 give fingerHits 184, splits 15, moves 1960; node v26.8.2, untimed, 2026-10-27).
 
 ### C-20 Hot pull pass (G-B B-25 -> 0005 A6-3 -> 0005 A9-1 -> 0005 A10-7)
 
@@ -482,7 +507,7 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   undefined weights (3 * w is NaN) after the dropped ss[HL-1] write.
 - Amends 0001 T-10 and 0003 G-13.
 
-### C-24 COUNTERS (R-D2 -> 0005 A5-15 -> 0005 A9-1, A9-5)
+### C-24 COUNTERS (R-D2 -> 0005 A5-15 -> 0005 A9-1, A9-5 -> 0005 A11-4)
 
 - The counter indexes are a static frozen class field SumSequence.COUNTERS; the export list is unchanged. Closes
   0003 O-3. Counters stay per view (R-X2) and clear() keeps them (C-8).
@@ -493,6 +518,8 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
 - Join counters (A9-1, A9-5): a join's pulls are counted per C-20 (R-J1). joinSteps (A9-5, review reading, NOT ruled)
   is 0 when the two trees are already balanced (the first c, b's root unless 3 w(b) < w(a), already passes I-1
   against the other root, so the push loop does not run).
+- Slot dependence (A11-4, review reading, NOT ruled; R8-2): the positional tail indexes `YG_MISSES - h`, so it depends
+  on fingerHits = slot 8 = fingerMisses - 1 (this layout); test/Counters.test.mjs gates it (deep-equals COUNTERS).
 
 ### C-25 Touches
 Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 0005 A5-3, A5-14, A5-24, A5-25 ->
@@ -525,12 +552,19 @@ Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 000
   SpecCounts.test.mjs has one row per table row. The control is a stub whose touches counter adds 2 per level: it
   FAILS touchesExact. Owners: table -> 0001 (answers 0003 O-1 k(op) = 0); definition -> 0003 G-11, counters row 0.
 
-### C-26 Hit / miss partition (G-A-D6 -> G-B-D7 -> 0005 A5-5)
+### C-26 Hit / miss partition (G-A-D6 -> G-B-D7 -> 0005 A5-5 -> 0005 A11-1, A11-6)
 
 - Each POSITIONAL op (insertAt, removeAt, setMeasure, getMeasure, entityAt) adds 1 to exactly one of fingerHits /
   fingerMisses; every other op (seeks, indexAtSum, sumBefore, total, next, splitAt, append, clear) adds 0. Amends
   0003 G-12 ("each op") and counters row 8/9. On every finger-off run op the fingerHits delta is 0.
-- Until the hit test lands (M-1, C-43) every positional op counts one miss, which satisfies the partition trivially.
+- The hit test landed in rung F-R (A11-1, review reading, NOT ruled; M-1, C-43): until then every positional op counted
+  one miss, which satisfied the partition trivially; now the tail adds 1 to fingerHits on a hit and to fingerMisses
+  otherwise (C-4).
+- Coverage of the finger-off delta (A11-6, review reading, NOT ruled; H2 and reviewer): test/count-lane.mjs engine mode
+  never drops the finger (the finger-off drop is stub mode only, at HEAD too), so "on every finger-off run op the
+  fingerHits delta is 0" is gated on the stub only. The engine's NIL-finger rows are test/Finger.test.mjs's NIL row
+  (insertAt only). Engine finger-off coverage is owned by the G-B2 engine lanes (brief:
+  .handoff/r8-briefs/helper-lanes.md, gitignored) and A1 (C-34, test:lanes).
 
 ### Harness
 
@@ -727,7 +761,8 @@ Sources: G-B-D6 -> G-B B2-3 -> G-B B2-5 -> 0005 A4-1, A4-2, A4-5, A4-10..A4-12, 
 
 ### Gates
 
-### C-34 A1: finger on == finger off (G-A A1 -> G-A-D1 -> G-A A2-7 -> G-A A3-1..A3-3 -> 0005 A5-1)
+### C-34 A1: finger on == finger off
+Sources: G-A A1 -> G-A-D1 -> G-A A2-7 -> G-A A3-1..A3-3 -> 0005 A5-1 -> 0005 A11-7, A11-8
 
 - Streams: xorshift32 (x^=x<<13; x^=x>>>17; x^=x<<5; x>>>0), three independent states op 0x9E3779B9^s, index
   0x85EBCA6B^s, measure 0xC2B2AE35^s; seeds s in {1,2,3} x B in {8,16}, arena(4096, {dims:1}, 3); 1e4 executed ops;
@@ -741,6 +776,13 @@ Sources: G-B-D6 -> G-B B2-3 -> G-B B2-5 -> 0005 A4-1, A4-2, A4-5, A4-10..A4-12, 
   views; indexAtSum and clear draw no index. Measure r % 1000 with 5% zeros; indexAtSum y = measure draw r %
   (total + 1). splitAt+append = splitAt(i, view 2); append(view 2).
 - Comparison and finger-off write follow C-27 verbatim. 10,000 appends at B=16 give 9231/769 hits/misses.
+- Engine-measured (A11-8, review reading, NOT ruled; node v26.8.2, untimed, 2026-10-27): 1e4 insertAt(length) at B = 16
+  give fingerHits 9231, fingerMisses 769, splits 768; 200 insertAt(0) at B = 16 give fingerHits 184, splits 15, moves
+  1960 (C-19) -- equal to the closed-form figures (768 splits: C-30; 184 / 15 / 1960: C-19), now measured on the engine
+  and not only on the leaf model.
+- Golden stream (A11-7, review reading, NOT ruled; R8-3): the rung-8 coder's golden stream (1e4 DRAWS, 10328 executed at
+  B8 s1) gives fingerHits 2062 against the leaf model's 2069 (B8 s1, floors bullet below; its streams count 1e4 executed
+  ops). Informational, above the 2000 floor; reconcile when the A1 lane (test:lanes) lands.
 - Floors per stream, counted on the finger-on run (deterministic: below a floor the test FAILS, never re-run):
   splits >= 100, merges >= 25, equalizes >= 25 (COUNTERS deltas across insertAt / removeAt only; seam repairs from
   splitAt+append excluded), hit-after-structural >= 25 (the immediately next stream op is a positional op on the
@@ -858,14 +900,16 @@ Sources: G-A XG-2 -> G-A XG-4 -> G-A-D11 -> G-A TASKS 5-8 -> DB1 P-10 -> 0005 A4
 
 ### Engine build (E0)
 
-### C-43 Engine landing contracts (PLAN-E0 M-1 -> M-2 -> M-3 -> M-4 -> M-5 -> 0005 A5-5..A5-8 -> 0005 A7-2)
+### C-43 Engine landing contracts
+Sources: PLAN-E0 M-1 -> M-2 -> M-3 -> M-4 -> M-5 -> 0005 A5-5..A5-8 -> 0005 A7-2 -> 0005 A11-1
 
 - Orchestrator merge rulings, not maintainer rulings; they bind the engine build. The rung ladder is PLAN-E0.md's.
 - M-1 (A5-5): the finger WRITE side lives in the engine core. From the rung that adds each positional op, the op is a
-  miss, re-homes (C-3, by the A4-10 (a) element rule on a structural op) and writes NIL / 0 / 0 where C-5 says; the
-  core never READS the finger. One later finger rung adds only the hit test (C-4) and the C-26 split, and no structural
-  code. Until then on == off holds trivially and the sweep landing works; the re-home / NIL / neutral part of
-  Finger.test.mjs is written alongside the trunk insert-side rung (M-1).
+  miss, re-homes (C-3, by the A4-10 (a) element rule on a structural op) and writes NIL / 0 / 0 where C-5 says; the core
+  did not READ the finger before rung F-R (history; it now reads it for the C-4 hit test, A11-1). One later finger rung
+  adds only the hit test (C-4) and the C-26 split, and no structural code (rung F-R landed it so, A11-1, review reading,
+  NOT ruled: structural work is on the miss branch only). Until then on == off holds trivially and the sweep landing
+  works; the re-home / NIL / neutral part of Finger.test.mjs is written alongside the trunk insert-side rung (M-1).
 - M-2 (A5-6): `new SumSequence(C, o)` is `arena(C, o, 1)` through ONE init, with pools sized for k views (C-15) and the
   full constructor validation (C-11, C-14, C-16) from its first version. After it, the only arena-specific addition is
   the k >= 2 clear free-walk (0004 A-6); its teeth: an O(1) pool reset while another view is live fails I-7 'shared';
@@ -1256,6 +1300,14 @@ Each source item maps to a C-id or reads "history-only". Rule text is not repeat
 | 0005 A10-9 | C-32 |
 | 0005 A10-10 | C-23 |
 | 0005 A10-11 | C-25 |
+| 0005 A11-1 | C-3, C-4, C-26, C-43 |
+| 0005 A11-2 | C-4 |
+| 0005 A11-3 | C-4 |
+| 0005 A11-4 | C-24 |
+| 0005 A11-5 | C-5 |
+| 0005 A11-6 | C-26 |
+| 0005 A11-7 | C-34 |
+| 0005 A11-8 | C-19, C-34 |
 
 Count note: this map has 128 rows: G-A 61 (body 13, D-1..D-3 3, R-D1..R-D3 3, TASKS 0-8 9, A1..A5 5, RISK 3, G-A-D1..D11
 11, A2-1..A2-8 8, A3-1..A3-5 5, plus the shared R-D4 row), G-B 39 (O-4, B-19, B-25, B-26, B-27, B-29, B-32, XG-1;
@@ -1268,8 +1320,9 @@ The 4 rung-3/4 source rows (R-Q1, R-P1, R-P2, r3 review Q4) and the 4 rows 0005 
 rows); the 5 rows 0005 A7-1..A7-5 follow them (238 rows); the 3 rung-5 source rows R-S1..R-S3 and the 4 rows
 0005 A8-1..A8-4 follow those (245 rows); the rung-6 source row R-J1 and the 8 rows 0005 A9-1..A9-8 follow those (254
 rows in all); the 11 rows 0005 A10-1..A10-11 follow those (265 rows; the rung-7 readings carry their RD / S3 / H3 tag
-in the ADDENDUM 10 item, no separate source row). No E0 or rung-3/4/5/6 source item is history-only: each one changed
-a CURRENT rule.
+in the ADDENDUM 10 item, no separate source row); the 8 rows 0005 A11-1..A11-8 follow those (273 rows; the rung-8
+readings carry their R8 tag in the ADDENDUM 11 item, no separate source row). No E0 or rung-3/4/5/6 source item is
+history-only: each one changed a CURRENT rule.
 
 ## Addenda
 
@@ -1519,8 +1572,8 @@ stays at ADDENDUM 9).
 - A10-1 (RD-1; review reading, NOT ruled) -> C-25. splitAt (ygSplitSeam): the repair touches are exact, d(c) once plus
   d(w) per repair (dv = the depth of w in the result tree before the repair); C-25's table row stays a bound.
 - A10-2 (RD-2; review reading, NOT ruled) -> C-3, C-10. splitAt: the 'pool' pre-check is decided after a
-  descent that writes nothing but the arena scratch sstack; sstack is scratch (not in the C-27 snapshot, never read
-  before written), so C-3's "changes nothing" covers the snapshot and the counters.
+  descent that writes nothing but the arena sstack (scratch: not in the C-27 snapshot, never read before written), so
+  C-3's "changes nothing" covers the snapshot and the counters.
 - A10-3 (RD-3; review reading, NOT ruled) -> C-21. ygSplitCut: for a mid-leaf cut (p > 0; a boundary cut never
   repairs), rX = (the post-join result root is internal) & (the cut part < m); it reads no weight and no leaf.
 - A10-4 (RD-4; review reading, NOT ruled) -> C-15. ygSplitCut / ygRepair: C-15 holds; a boundary cut frees exactly 1
@@ -1546,5 +1599,39 @@ stays at ADDENDUM 9).
   on undefined weights (3 * w is NaN) after the dropped ss[HL-1] write). Narrows A9-4's append-only wording.
 - A10-11 (review reading, NOT ruled) -> C-25. ASSERTION 1 tail measured: touches 2 (d(c) 1 + d(w) 1), pulls 2,
   joinSteps 0, moves 10.
+
+OPEN (not folded, maintainer decision pending): none.
+
+### ADDENDUM 11 (2026-10-27) -- rung 8 review readings, 0005's own
+
+Tier: DETERMINISTIC (exact hit / miss / touches / pulls counts; the engine-measured figures are counts, not timings).
+A11-1..A11-8 are rung-8 (F-R, finger hits) review readings, each checked against Yggdrasil.js (a70c6cb + rung-8 tree,
+sha256 43276f1e; review r1 APPROVED, npm test 703/703), NOT rulings and NOT ruled: the Status line's ruling list is
+unchanged. Each item names the CURRENT rule(s) it changed; the rule text above is already amended (same edit). The map
+rows are in the Source map. No item amends an ADR rule, so the Amends table gains no row. This is not a
+re-consolidation (the "consolidated through" line stays at ADDENDUM 9).
+
+- A11-1 (F-R landing; review reading, NOT ruled) -> C-3, C-4, C-26, C-43. The hit test landed: insertAt / removeAt /
+  setMeasure / getMeasure / entityAt run it after every C-10 check and before the first write, NIL tested first. A hit
+  skips the descent, touches += 0, pulls += _fdepth on a mutation, and rewrites the finger with the same values (ref
+  === _fl, at - k === _fb, depth === _fdepth); structural work is on the miss branch only; the tail is
+  `touches += depth & (h - 1)` and slot `YG_MISSES - h` += 1 (h = 1 on a hit). The core now reads the finger.
+- A11-2 (R8-1; review reading, NOT ruled) -> C-4. Dropping the NIL guard (5 sites) is behaviorally equivalent (an
+  undefined load makes the upper-bound compare false); the guard stays as the C-4 text and the C-10 census term; the
+  only gate is test/Finger.test.mjs's equivalent-mutant row (identity build, anchor count 5).
+- A11-3 (reviewer mutant R6; review reading, NOT ruled) -> C-4. removeAt's `_fdepth === 0 ? 1` is equivalent to
+  `? 0` (the n === 1 drain runs first); the rule text keeps `? 1`.
+- A11-4 (R8-2; review reading, NOT ruled) -> C-24. The tail's `YG_MISSES - h` depends on fingerHits = slot 8 =
+  fingerMisses - 1; test/Counters.test.mjs gates it.
+- A11-5 (review check 2; review reading, NOT ruled) -> C-5. An empty view always has fl === NIL, so insertAt's
+  empty-root (ygFirstLeaf) check on the miss branch is reached; walker I-9a checks it after every op.
+- A11-6 (H2 and reviewer; review reading, NOT ruled) -> C-26. count-lane.mjs engine mode never drops the finger, so
+  the finger-off fingerHits delta 0 is gated on the stub only; engine coverage is Finger.test's NIL row (insertAt
+  only), the G-B2 engine lanes and A1 (C-34, test:lanes).
+- A11-7 (R8-3; review reading, NOT ruled) -> C-34. The coder's golden stream (1e4 draws, 10328 executed at B8 s1)
+  gives fingerHits 2062 against the leaf-model 2069; informational, above the 2000 floor; reconcile when A1 lands.
+- A11-8 (review reading, NOT ruled; engine, node v26.8.2, untimed, 2026-10-27) -> C-19, C-34. ASSERTION 1: 1e4
+  insertAt(length) at B = 16 give fingerHits 9231, fingerMisses 769, splits 768; 200 insertAt(0) at B = 16 give
+  fingerHits 184, splits 15, moves 1960 -- equal to C-34 / C-19's figures.
 
 OPEN (not folded, maintainer decision pending): none.

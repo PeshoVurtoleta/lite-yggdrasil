@@ -645,7 +645,8 @@ test('A5 ASCII-only (U+00D7 and U+00B5 excepted) in stubs.mjs, exhaustive.mjs an
   assert.ok(bad.test('caf\xE9'), 'control: a non-ASCII letter is caught');
 });
 
-test('A5 Yggdrasil.js is untouched (sha256 06ad5a70)', () => {
-  const h = createHash('sha256').update(readFileSync(HERE('../Yggdrasil.js'))).digest('hex');
-  assert.equal(h.slice(0, 8), '06ad5a70');
+test('M-6 test/exhaustive.mjs parity pin (sha256 fce39b1a)', () => {
+  // 0005 C-46 M-6: byte-identical to HEAD until the cursor-suffix batch (C-31).
+  const h = createHash('sha256').update(readFileSync(HERE('./exhaustive.mjs'))).digest('hex');
+  assert.equal(h.slice(0, 8), 'fce39b1a');
 });

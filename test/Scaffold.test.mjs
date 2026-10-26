@@ -146,8 +146,8 @@ function comparePackList(pkg, packList) {
 function checkExports(pkg, ns) {
   const out = [];
   const keys = Object.keys(ns).sort();
-  if (keys.length !== 1 || keys[0] !== 'VERSION') {
-    out.push('exports must be exactly [VERSION], got ' + JSON.stringify(keys));
+  if (keys.length !== 2 || keys[0] !== 'SumSequence' || keys[1] !== 'VERSION') {
+    out.push('exports must be exactly [SumSequence, VERSION], got ' + JSON.stringify(keys));
   }
   if (ns.VERSION !== pkg.version) {
     out.push('VERSION ' + JSON.stringify(ns.VERSION) + ' !== package.json version ' +
@@ -186,7 +186,7 @@ function checkVersionSites(pkg, files) {
 // The names Yggdrasil.d.ts declares must equal the module's runtime exports.
 function checkDtsExports(files, ns) {
   const dts = files.has('Yggdrasil.d.ts') ? files.get('Yggdrasil.d.ts').toString('utf8') : '';
-  const declared = [...dts.matchAll(/export declare const (\w+)/g)].map((m) => m[1]).sort();
+  const declared = [...dts.matchAll(/export declare (?:const|class) (\w+)/g)].map((m) => m[1]).sort();
   const actual = Object.keys(ns).sort();
   return JSON.stringify(declared) === JSON.stringify(actual)
     ? []
@@ -317,7 +317,7 @@ for (const [name, fn] of Object.entries(CHECKS)) {
 }
 test('fixture baseline: comparePackList / checkExports / checkDtsExports pass on clean inputs', () => {
   assert.deepEqual(comparePackList(goodPkg(), [...SHIPPED, 'package.json']), []);
-  assert.deepEqual(checkExports(goodPkg(), { VERSION: '0.0.0' }), []);
+  assert.deepEqual(checkExports(goodPkg(), { SumSequence: class SumSequence {}, VERSION: '0.0.0' }), []);
   assert.deepEqual(checkDtsExports(goodFiles(), { VERSION: '0.0.0' }), []);
 });
 
@@ -428,7 +428,12 @@ const CONTROLS = [
   ['checkExports', 'fake namespace with an extra export', () =>
     checkExports(goodPkg(), { VERSION: '0.0.0', Tree: function Tree() {} })],
   ['checkExports', 'VERSION differs from package.json version', () =>
-    checkExports(goodPkg(), { VERSION: '0.0.1' })],
+    checkExports(goodPkg(), { SumSequence: class SumSequence {}, VERSION: '0.0.1' })],
+  ['checkDtsExports', '.d.ts missing SumSequence', () => {
+    const f = goodFiles();
+    f.set('Yggdrasil.d.ts', Buffer.from('export declare const VERSION: string;\n'));
+    return checkDtsExports(f, { SumSequence: class SumSequence {}, VERSION: '0.0.0' });
+  }],
   ['checkDtsExports', '.d.ts declares an extra Ghost', () => {
     const f = goodFiles();
     f.set('Yggdrasil.d.ts', Buffer.from('export declare const VERSION: string;\nexport declare const Ghost: number;\n'));
@@ -470,5 +475,5 @@ test('meta: every check has a must-fail control', () => {
   const covered = new Set(CONTROLS.map((c) => c[0]));
   for (const n of names) assert.ok(covered.has(n), 'no must-fail control for ' + n);
   for (const c of covered) assert.ok(names.includes(c), 'control for unregistered check ' + c);
-  assert.equal(CONTROLS.length, 30, 'control count changed: update this pin deliberately');
+  assert.equal(CONTROLS.length, 31, 'control count changed: update this pin deliberately');
 });

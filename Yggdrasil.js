@@ -3,12 +3,14 @@
  *
  * MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
- * Pre-release engine build (rung A-R1b of the E0 ladder): SumSequence init,
- * layout, pools, constructor validation, counters and getters (A-R1a), plus the
- * one-leaf ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
- * seeks indexAtSum / sumBefore and clear() on a root-leaf view, with their C-10
- * checks. A full-leaf insert (split, rung A-R2) and a multi-leaf underflow
- * (rung A-R3) fail closed. Nothing is released between rungs.
+ * Pre-release engine build (rung A-R2 of the E0 ladder): SumSequence init,
+ * layout, pools, constructor validation, counters and getters (A-R1a), the
+ * positional ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
+ * seeks indexAtSum / sumBefore and clear(), with their C-10 checks (A-R1b), and
+ * the trunk insert side (A-R2): positional descents into _fpath, the Table 3
+ * leaf split, the hot pull pass, the cold weight pull with H-Y rotations and
+ * the structural re-home. A multi-leaf remove that underflows (rung A-R3)
+ * fails closed. Nothing is released between rungs.
  *
  * Layout (0005 C-44). Every view owns, in this order: _root, _len, _fl, _fb,
  * _fdepth, _fpath, _cv, _n, then the hoisted refs _hdr, _left, _right, _weight,
@@ -35,7 +37,11 @@ const YG_LFREE = 2;
 const YG_IBUMP = 3;
 const YG_IFREE = 4;
 const YG_TOUCHES = 0;             // counter slots (C-24)
+const YG_PULLS = 1;
 const YG_MOVES = 2;
+const YG_SPLITS = 3;
+const YG_ROTS = 6;
+const YG_ROTD = 7;
 const YG_MISSES = 9;
 // 2^53-1, the measure / total bound (0002 M-1, M-4). The one non-Smi constant.
 const YG_MAX = 9007199254740991;
@@ -331,16 +337,245 @@ function ygDrain(v, id) {
   v._n[YG_MISSES] += 1;
 }
 
-// A full-leaf insert needs the Table 3 split (rung A-R2). Until then it fails
-// closed: called before any write.
-function ygSplit() {
-  ygFail('split', 'a full leaf needs the leaf split, not built yet (rung A-R2)');
+// ---- trunk: structural path (cold; C-18..C-20, C-23, C-25, T-2) ----------------
+
+// Weight pull of one internal node: weight (leaf count, T-1), count and every
+// dim's sum, each RECOMPUTED from the two children (C-45 / I-2). One pull.
+function ygPullW(v, x) {
+  const l = v._left[x];
+  const r = v._right[x];
+  const weight = v._weight;
+  const count = v._count;
+  const llen = v._llen;
+  weight[x] = (l < 0 ? 1 : weight[l]) + (r < 0 ? 1 : weight[r]);
+  count[x] = (l < 0 ? llen[~l] : count[l]) + (r < 0 ? llen[~r] : count[r]);
+  const dims = v._ar.dims;
+  for (let d = 0; d < dims; d++) {
+    const S = v._sums[d];
+    const LS = v._lsum[d];
+    S[x] = (l < 0 ? LS[~l] : S[l]) + (r < 0 ? LS[~r] : S[r]);
+  }
+}
+
+// One H-Y rotation at x (gamma = 2, strict: single iff w(inner) < 2*w(outer),
+// T-2). x keeps its id as the subtree top, so the parent's link and the path
+// above stay valid; the lower node(s) are reused. Returns the pulls it ran.
+function ygRotate(v, x, wl, wr) {
+  const left = v._left;
+  const right = v._right;
+  const weight = v._weight;
+  const cn = v._n;
+  if (wr > wl) {
+    const y = right[x];
+    const yl = left[y];
+    const yr = right[y];
+    if ((yl < 0 ? 1 : weight[yl]) < 2 * (yr < 0 ? 1 : weight[yr])) {
+      // single left: (A, (yl, yr)) -> ((A, yl), yr)
+      left[y] = left[x];
+      right[y] = yl;
+      left[x] = y;
+      right[x] = yr;
+      ygPullW(v, y);
+      ygPullW(v, x);
+      cn[YG_ROTS] += 1;
+      return 2;
+    }
+    // double left: (A, ((zl, zr), yr)) -> ((A, zl), (zr, yr))
+    const z = yl;
+    const zl = left[z];
+    const zr = right[z];
+    left[z] = left[x];
+    right[z] = zl;
+    left[y] = zr;
+    left[x] = z;
+    right[x] = y;
+    ygPullW(v, z);
+    ygPullW(v, y);
+    ygPullW(v, x);
+    cn[YG_ROTD] += 1;
+    return 3;
+  }
+  const y = left[x];
+  const yl = left[y];
+  const yr = right[y];
+  if ((yr < 0 ? 1 : weight[yr]) < 2 * (yl < 0 ? 1 : weight[yl])) {
+    // single right: ((yl, yr), C) -> (yl, (yr, C))
+    left[y] = yr;
+    right[y] = right[x];
+    left[x] = yl;
+    right[x] = y;
+    ygPullW(v, y);
+    ygPullW(v, x);
+    cn[YG_ROTS] += 1;
+    return 2;
+  }
+  // double right: ((yl, (zl, zr)), C) -> ((yl, zl), (zr, C))
+  const z = yr;
+  const zl = left[z];
+  const zr = right[z];
+  right[y] = zl;
+  left[z] = zr;
+  right[z] = right[x];
+  left[x] = y;
+  right[x] = z;
+  ygPullW(v, y);
+  ygPullW(v, z);
+  ygPullW(v, x);
+  cn[YG_ROTD] += 1;
+  return 3;
+}
+
+// Structural re-home (C-3, 0005 A4-10 (a)): a cold descent to element i by the
+// element rule (i < count[left] goes left), writing _fpath[0..d') and
+// _fl / _fb / _fdepth. Returns d' (its pushes are touches, C-25).
+function ygHome(v, i) {
+  const left = v._left;
+  const right = v._right;
+  const count = v._count;
+  const llen = v._llen;
+  const fpath = v._fpath;
+  let ref = v._root;
+  let q = i;
+  let depth = 0;
+  while (ref >= 0) {
+    fpath[depth] = ref;
+    depth++;
+    const l = left[ref];
+    const c = l < 0 ? llen[~l] : count[l];
+    if (q < c) {
+      ref = l;
+    } else {
+      q -= c;
+      ref = right[ref];
+    }
+  }
+  v._fl = ref;
+  v._fb = i - q;
+  v._fdepth = depth;
+  return depth;
+}
+
+// Insert into a full leaf: the Table 3 split (C-18 sizes and moves; C-19 no
+// front gap). The left part stays in leaf id, the fresh leaf f is the right
+// part. Then one fresh internal node u = (id, f) replaces the leaf ref, the
+// cold weight pull runs over _fpath[depth-1..0] with the T-2 balance check
+// (pulls <= 4(H+1), C-20), and the structural re-home descends to at.
+// touches = depth + d' (C-25, p = 2). Both pools are checked read-only before
+// the first write (R-E4); under C-15 neither check fires.
+function ygSplit(v, at, e, id, p, depth) {
+  const ar = v._ar;
+  const hdr = v._hdr;
+  if ((hdr[YG_LFREE] === YG_END) & !(hdr[YG_LBUMP] < ar.Lmax)) ygFail('pool', 'leaf pool exhausted');
+  if ((hdr[YG_IFREE] === YG_END) & !(hdr[YG_IBUMP] < ar.Lmax - 1)) ygFail('pool', 'internal pool exhausted');
+  // ---- first write ----
+  const f = ygAllocLeaf(v);
+  const u = ygAllocInt(v);
+  const B = ar.B;
+  const m = ar.m;
+  const n = v._len;
+  const fb = at - p;
+  let a; // the left part's size (Table 3 via C-18)
+  if ((p === B) & (fb + B === n)) a = B + 1 - m; // append split (last leaf)
+  else if ((p === 0) & (fb === 0)) a = m; // prepend split (first leaf)
+  else a = 2 * p <= B ? (B >> 1) + 1 : B >> 1; // interior: the new element's own half
+  const bo = id << ar.shift;
+  const bf = f << ar.shift;
+  const nr = B + 1 - a;
+  // Virtual sequence c[0..B]: old[0..p), new, old[p..B). Right part c[a..B]
+  // first (it reads old slots the left shift overwrites), then the left shift.
+  const ent = v._ent;
+  for (let t = 0; t < nr; t++) {
+    const j = a + t;
+    ent[bf + t] = j === p ? e : ent[bo + (j < p ? j : j - 1)];
+  }
+  if (p < a) {
+    for (let j = a - 1; j > p; j--) ent[bo + j] = ent[bo + j - 1];
+    ent[bo + p] = e;
+  }
+  const sx = ar.sx;
+  const dims = ar.dims;
+  for (let d = 0; d < dims; d++) {
+    const col = v._meas[d];
+    for (let t = 0; t < nr; t++) {
+      const j = a + t;
+      if (j === p) col[bf + t] = sx[d];
+      else col[bf + t] = col[bo + (j < p ? j : j - 1)];
+    }
+    if (p < a) {
+      for (let j = a - 1; j > p; j--) col[bo + j] = col[bo + j - 1];
+      col[bo + p] = sx[d];
+    }
+    const LS = v._lsum[d];
+    let s = 0;
+    for (let j = 0; j < a; j++) s += col[bo + j];
+    LS[id] = s; // recount (C-45)
+    s = 0;
+    for (let j = 0; j < nr; j++) s += col[bf + j];
+    LS[f] = s;
+  }
+  const llen = v._llen;
+  llen[id] = a;
+  llen[f] = nr;
+  const left = v._left;
+  const right = v._right;
+  const weight = v._weight;
+  left[u] = ~id;
+  right[u] = ~f;
+  ygPullW(v, u);
+  const fpath = v._fpath;
+  if (depth === 0) {
+    v._root = u;
+  } else {
+    const par = fpath[depth - 1];
+    if (left[par] === ~id) left[par] = u;
+    else right[par] = u;
+  }
+  hdr[YG_LIVE] += 1;
+  v._len = n + 1;
+  let pulls = 1;
+  for (let q = depth - 1; q >= 0; q--) {
+    const x = fpath[q];
+    ygPullW(v, x);
+    pulls++;
+    const xl = left[x];
+    const xr = right[x];
+    const wl = xl < 0 ? 1 : weight[xl];
+    const wr = xr < 0 ? 1 : weight[xr];
+    if ((3 * wl < wr) | (3 * wr < wl)) pulls += ygRotate(v, x, wl, wr);
+  }
+  const d2 = ygHome(v, at);
+  const cn = v._n;
+  cn[YG_TOUCHES] += depth + d2;
+  cn[YG_PULLS] += pulls;
+  cn[YG_MOVES] += p < a ? B - p : B - a;
+  cn[YG_SPLITS] += 1;
+  cn[YG_MISSES] += 1;
 }
 
 // A remove that underflows a leaf of a multi-leaf view needs T-6 (rung A-R3).
-// Unreachable on one leaf; fails closed before any write.
-function ygUnderflow() {
-  ygFail('underflow', 'a leaf underflow needs the T-6 repair, not built yet (rung A-R3)');
+// Until then a READ-ONLY descent (element rule; no _fpath / finger write)
+// finds the leaf and fails closed before any write. Called only when the root
+// is internal (a root leaf never underflows).
+function ygUnderflow(v, at) {
+  const left = v._left;
+  const right = v._right;
+  const count = v._count;
+  const llen = v._llen;
+  let ref = v._root;
+  let k = at;
+  while (ref >= 0) {
+    const l = left[ref];
+    const cl = l < 0 ? llen[~l] : count[l];
+    if (k < cl) {
+      ref = l;
+    } else {
+      k -= cl;
+      ref = right[ref];
+    }
+  }
+  if (llen[~ref] === v._ar.m) {
+    ygFail('underflow', 'a leaf underflow needs the T-6 repair, not built yet (rung A-R3)');
+  }
 }
 
 // ---- the view ---------------------------------------------------------------------
@@ -423,10 +658,14 @@ export class SumSequence {
   }
 
   // ---- positional ops (C-10, C-12; finger writes M-1, C-3, C-5) --------------------
-  // Root-leaf view: the touched leaf is ~_root, fb 0, depth 0, so touches add
-  // d = 0 and pulls 0 (A-R2 adds the descent and the pull pass). Every op is a
-  // finger miss (the core never READS the finger until the hit test, C-4).
-  // Counters are bumped after the loops (0003 G-5 / G-7).
+  // ONE descent from _root writing this._fpath[0..d): insertAt by the T-5
+  // insert rule (k <= count[left] goes left), every other op by the element
+  // rule (k < count[left]). A root-leaf view runs no loop (d = 0). Then the
+  // leaf work and, for a non-structural mutation, ONE hot pull pass over
+  // _fpath (count + sums recomputed from the children, no weight read; pulls
+  // == d, C-20, C-45). Every op is a finger miss (the core never READS the
+  // finger until the hit test, C-4) and re-homes to the touched leaf; touches
+  // += d (C-25). Counters are bumped after the loops (0003 G-5 / G-7).
 
   insertAt(i, e, m0, m1, m2, m3) {
     const n = this._len;
@@ -454,13 +693,35 @@ export class SumSequence {
       ygFirstLeaf(this, e);
       return;
     }
-    const id = ~r;
+    const left = this._left;
+    const right = this._right;
+    const count = this._count;
     const llen = this._llen;
+    const fpath = this._fpath;
+    let ref = r;
+    let k = at;
+    let depth = 0;
+    while (ref >= 0) {
+      fpath[depth] = ref;
+      depth++;
+      const l = left[ref];
+      const cl = l < 0 ? llen[~l] : count[l];
+      if (k <= cl) {
+        ref = l;
+      } else {
+        k -= cl;
+        ref = right[ref];
+      }
+    }
+    const id = ~ref;
     const len = llen[id];
-    if (len === ar.B) ygSplit();
-    // ---- first write ----
+    if (len === ar.B) {
+      ygSplit(this, at, e, id, k, depth);
+      return;
+    }
+    // ---- leaf write ----
     const base = id << ar.shift;
-    const p = base + at;
+    const p = base + k;
     const end = base + len;
     const ent = this._ent;
     for (let j = end; j > p; j--) ent[j] = ent[j - 1];
@@ -476,14 +737,28 @@ export class SumSequence {
       lsum[d][id] = s;
     }
     llen[id] = len + 1;
+    const sums = this._sums;
+    for (let q = depth - 1; q >= 0; q--) {
+      const u = fpath[q];
+      const l = left[u];
+      const rr = right[u];
+      count[u] = (l < 0 ? llen[~l] : count[l]) + (rr < 0 ? llen[~rr] : count[rr]);
+      for (let d = 0; d < dims; d++) {
+        const S = sums[d];
+        const LS = lsum[d];
+        S[u] = (l < 0 ? LS[~l] : S[l]) + (rr < 0 ? LS[~rr] : S[rr]);
+      }
+    }
     hdr[YG_LIVE] += 1;
     this._len = n + 1;
-    this._fl = r;
-    this._fb = 0;
-    this._fdepth = 0;
+    this._fl = ref;
+    this._fb = at - k;
+    this._fdepth = depth;
     const cn = this._n;
+    cn[YG_TOUCHES] += depth;
+    cn[YG_PULLS] += depth;
     cn[YG_MISSES] += 1;
-    cn[YG_MOVES] += len - at;
+    cn[YG_MOVES] += len - k;
   }
 
   removeAt(i) {
@@ -492,25 +767,46 @@ export class SumSequence {
     if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
     const at = i >>> 0;
     const r = this._root;
-    const id = ~r;
     const ar = this._ar;
-    const base = id << ar.shift;
     const ent = this._ent;
-    const e = ent[base + at];
     if (n === 1) {
-      ygDrain(this, id);
-      return e;
+      const e1 = ent[~r << ar.shift];
+      ygDrain(this, ~r);
+      return e1;
     }
+    if (r >= 0) ygUnderflow(this, at);
+    const left = this._left;
+    const right = this._right;
+    const count = this._count;
     const llen = this._llen;
+    const fpath = this._fpath;
+    let ref = r;
+    let k = at;
+    let depth = 0;
+    while (ref >= 0) {
+      fpath[depth] = ref;
+      depth++;
+      const l = left[ref];
+      const cl = l < 0 ? llen[~l] : count[l];
+      if (k < cl) {
+        ref = l;
+      } else {
+        k -= cl;
+        ref = right[ref];
+      }
+    }
+    // ---- leaf write ----
+    const id = ~ref;
     const len = llen[id];
-    if ((len === ar.m) & (n > len)) ygUnderflow();
-    // ---- first write ----
-    const p = base + at;
+    const base = id << ar.shift;
+    const p = base + k;
+    const e = ent[p];
     const last = base + len - 1;
     for (let j = p; j < last; j++) ent[j] = ent[j + 1];
     const meas = this._meas;
     const lsum = this._lsum;
-    for (let d = 0; d < ar.dims; d++) {
+    const dims = ar.dims;
+    for (let d = 0; d < dims; d++) {
       const col = meas[d];
       for (let j = p; j < last; j++) col[j] = col[j + 1];
       let s = 0;
@@ -518,14 +814,28 @@ export class SumSequence {
       lsum[d][id] = s;
     }
     llen[id] = len - 1;
+    const sums = this._sums;
+    for (let q = depth - 1; q >= 0; q--) {
+      const u = fpath[q];
+      const l = left[u];
+      const rg = right[u];
+      count[u] = (l < 0 ? llen[~l] : count[l]) + (rg < 0 ? llen[~rg] : count[rg]);
+      for (let d = 0; d < dims; d++) {
+        const S = sums[d];
+        const LS = lsum[d];
+        S[u] = (l < 0 ? LS[~l] : S[l]) + (rg < 0 ? LS[~rg] : S[rg]);
+      }
+    }
     this._hdr[YG_LIVE] -= 1;
     this._len = n - 1;
-    this._fl = r;
-    this._fb = 0;
-    this._fdepth = 0;
+    this._fl = ref;
+    this._fb = at - k;
+    this._fdepth = depth;
     const cn = this._n;
+    cn[YG_TOUCHES] += depth;
+    cn[YG_PULLS] += depth;
     cn[YG_MISSES] += 1;
-    cn[YG_MOVES] += len - 1 - at;
+    cn[YG_MOVES] += len - 1 - k;
     return e;
   }
 
@@ -543,24 +853,55 @@ export class SumSequence {
     if (!((m >= 0) & (m <= YG_MAX))) ygFail('measure', 'must be in [0, 2^53-1]');
     if (!Number.isInteger(m)) ygFail('measure', 'must be an integer');
     const r = this._root;
-    const t = r < 0 ? this._lsum[dd][~r] : this._sums[dd][r];
+    const sc = this._sums[dd];
+    const ls = this._lsum[dd];
+    const t = r < 0 ? ls[~r] : sc[r];
     if (m > YG_MAX - t) {
       ar.sx[0] = m;
       ygSetHeadroom(this, at, dd);
     }
     // ---- first write ----
-    const id = ~r;
-    const base = id << ar.shift;
+    const left = this._left;
+    const right = this._right;
+    const count = this._count;
+    const llen = this._llen;
+    const fpath = this._fpath;
+    let ref = r;
+    let k = at;
+    let depth = 0;
+    while (ref >= 0) {
+      fpath[depth] = ref;
+      depth++;
+      const l = left[ref];
+      const cl = l < 0 ? llen[~l] : count[l];
+      if (k < cl) {
+        ref = l;
+      } else {
+        k -= cl;
+        ref = right[ref];
+      }
+    }
+    const id = ~ref;
+    const b0 = id << ar.shift;
     const col = this._meas[dd];
-    col[base + at] = m + 0;
-    const end = base + this._llen[id];
+    col[b0 + k] = m + 0;
+    const end = b0 + llen[id];
     let s = 0;
-    for (let j = base; j < end; j++) s += col[j];
-    this._lsum[dd][id] = s;
-    this._fl = r;
-    this._fb = 0;
-    this._fdepth = 0;
-    this._n[YG_MISSES] += 1;
+    for (let j = b0; j < end; j++) s += col[j];
+    ls[id] = s;
+    for (let q = depth - 1; q >= 0; q--) {
+      const u = fpath[q];
+      const l = left[u];
+      const rt = right[u];
+      sc[u] = (l < 0 ? ls[~l] : sc[l]) + (rt < 0 ? ls[~rt] : sc[rt]);
+    }
+    this._fl = ref;
+    this._fb = at - k;
+    this._fdepth = depth;
+    const cn = this._n;
+    cn[YG_TOUCHES] += depth;
+    cn[YG_PULLS] += depth;
+    cn[YG_MISSES] += 1;
   }
 
   getMeasure(i, d) {
@@ -572,12 +913,33 @@ export class SumSequence {
     if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
-    const r = this._root;
-    const x = this._meas[d >>> 0][(~r << ar.shift) + at];
-    this._fl = r;
-    this._fb = 0;
-    this._fdepth = 0;
-    this._n[YG_MISSES] += 1;
+    const left = this._left;
+    const right = this._right;
+    const count = this._count;
+    const llen = this._llen;
+    const fpath = this._fpath;
+    let ref = this._root;
+    let k = at;
+    let depth = 0;
+    while (ref >= 0) {
+      fpath[depth] = ref;
+      depth++;
+      const l = left[ref];
+      const cl = l < 0 ? llen[~l] : count[l];
+      if (k < cl) {
+        ref = l;
+      } else {
+        k -= cl;
+        ref = right[ref];
+      }
+    }
+    const x = this._meas[d >>> 0][(~ref << ar.shift) + k];
+    this._fl = ref;
+    this._fb = at - k;
+    this._fdepth = depth;
+    const cn = this._n;
+    cn[YG_TOUCHES] += depth;
+    cn[YG_MISSES] += 1;
     return x;
   }
 
@@ -585,12 +947,34 @@ export class SumSequence {
     const n = this._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
     if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
-    const r = this._root;
-    const e = this._ent[(~r << this._ar.shift) + (i >>> 0)];
-    this._fl = r;
-    this._fb = 0;
-    this._fdepth = 0;
-    this._n[YG_MISSES] += 1;
+    const at = i >>> 0;
+    const left = this._left;
+    const right = this._right;
+    const count = this._count;
+    const llen = this._llen;
+    const fpath = this._fpath;
+    let ref = this._root;
+    let k = at;
+    let depth = 0;
+    while (ref >= 0) {
+      fpath[depth] = ref;
+      depth++;
+      const l = left[ref];
+      const cl = l < 0 ? llen[~l] : count[l];
+      if (k < cl) {
+        ref = l;
+      } else {
+        k -= cl;
+        ref = right[ref];
+      }
+    }
+    const e = this._ent[(~ref << this._ar.shift) + k];
+    this._fl = ref;
+    this._fb = at - k;
+    this._fdepth = depth;
+    const cn = this._n;
+    cn[YG_TOUCHES] += depth;
+    cn[YG_MISSES] += 1;
     return e;
   }
 

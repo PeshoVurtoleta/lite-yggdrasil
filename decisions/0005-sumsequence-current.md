@@ -1,11 +1,12 @@
 # 0005 -- SumSequence CURRENT: the binding rules of the 0.1.0 spec closure
 
 consolidated through ADDENDUM 3 at da45c50 / PLAN-G-A e2b52b3f / PLAN-G-B 03f0bf88 / DB1-plans 4f60e9a1; ADDENDUM 4
-(0005's own) folded in at 6514d58; ADDENDUM 5 (0005's own, E0 planner pass) folded in at f5d95af
+(0005's own) folded in at 6514d58; ADDENDUM 5 (0005's own, E0 planner pass) folded in at f5d95af; ADDENDUM 6
+(0005's own, rung 3 rulings) folded in at fabc0a9
 
-- Status: CURRENT, consolidated (not RULED: the maintainer rulings are R-D1..R-D4 and R-E1..R-E5
-  below; every other rule is a planner rule that survived DB-1 review rounds r1..r3, an ADDENDUM 4 reading, or an E0
-  reading / merge ruling M-1..M-8 folded by ADDENDUM 5)
+- Status: CURRENT, consolidated (not RULED: the maintainer rulings are R-D1..R-D4, R-E1..R-E5, R-Q1, R-P1 and R-P2
+  below; every other rule is a planner rule that survived DB-1 review rounds r1..r3, an ADDENDUM 4 reading, an E0
+  reading / merge ruling M-1..M-8 folded by ADDENDUM 5, or the r3 review reading Q4 folded by ADDENDUM 6)
 - Date: 2026-10-26
 - Session: SumSequence CURRENT consolidation (docs unit B1)
 - Provenance of this text: consolidated from .handoff/PLAN-G-A.md (body, rulings, ADDENDA 1-3), .handoff/PLAN-G-B.md
@@ -13,8 +14,8 @@ consolidated through ADDENDUM 3 at da45c50 / PLAN-G-A e2b52b3f / PLAN-G-B 03f0bf
   pass) from .handoff/PLAN-E0.md (the merge: M-1..M-8, R-E1..R-E4; its reconciliations win over the six plans) and its
   six plans PLAN-E0-A / -F / -K / -S / -V / -G. Rule ids cite those files by name (Sources legend);
   the plan files are gitignored and archived at release. The rung ladder lives in PLAN-E0.md, never here.
-- Precedence: ADDENDUM 5 > ADDENDUM 4 > ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 > body. Every rule below is the FINAL
-  rule, stated in full.
+- Precedence: ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 > ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 >
+  body. Every rule below is the FINAL rule, stated in full.
   A superseded rule is not repeated here (it lives in the plan files and the Source map says where it went).
 - Binding: this file is binding for every agent. ADRs 0001..0004 keep their ruled text; where this file amends an
   item, the ADR carries a pointer block (the Amends table below). Two texts for one rule would be two specs.
@@ -47,8 +48,29 @@ AskUserQuestion, 2026-10-26 (D5 burst; raised by the D5 doc review as a conflict
 - R-E5: (S RS-2 vs 0001 T-7 "after join") = "Before join (RS-2)" -> append's seam repair runs on the two operands
   before the join; amends the order in 0001 T-7 (pointer row T-7 -> C-21).
 
+AskUserQuestion, 2026-10-26 (rung 3 A-R2 burst):
+
+- R-Q1: (ygSlots m1..m3 at dims > 1: C-44 stages them in sx, but staging in the Float64Array first would coerce before
+  the typeof check) = "Inline typeof, stage sx (Recommended)" -> a fused `typeof m1..m3 !== 'number'` check under
+  dims > 1, then store sx[1..3] before the cold re-check, which reads sx. Amends RV-2 / the C-10 census +1 hot branch
+  (14 -> 15 at dims = 1). Lands in rung 4's coder round.
+- R-P1: (the pool RangeError inside ygSplit fires after the descent wrote _fpath[0..d); C-3 says a throwing op leaves
+  _fpath unchanged) = "Amend C-3 exemption (Recommended)" -> C-3 gains: the R-E4 allocator throw (unreachable under
+  C-15) may leave _fpath[0..d) rewritten; _fl / _fb / _fdepth unchanged. No engine change.
+  (Superseded in part by R-P2 below: the _fl / _fb / _fdepth clause.)
+
+AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
+
+- R-P2: (the review of D6 found that R-P1's exempted state, _fpath[0..d) rewritten with _fl / _fb / _fdepth kept, fails
+  walker I-9(e) when the paths differ, and once the C-4 hit test lands a hit would run the pull pass over that stale
+  path) = "Drop fl to NIL on throw (Recommended)" -> the cold R-E4 'pool' throw path sets _fl = NIL, _fb = 0,
+  _fdepth = 0 before throwing (the next positional op is a miss; I-9 holds; no stale-path hit); one cold store, no hot
+  cost; _fpath may stay rewritten. Supersedes the R-P1 exemption's "_fl / _fb / _fdepth unchanged".
+
 ## Sources legend
 
+- 0005 A6-1..A6-4 = this file's own ADDENDUM 6 (below; the rulings R-Q1, R-P1 and R-P2 and the r3 review reading Q4).
+  Every A6 item names the CURRENT rules it changed and every changed rule cites its A6 ids.
 - 0005 A5-1..A5-34 = this file's own ADDENDUM 5 (below; the E0 engine planner pass). Every A5 item names its source and
   the CURRENT rules it changed, and every changed rule cites its A5 ids.
 - E0 = PLAN-E0 (M-1..M-8 are ORCHESTRATOR merge rulings, not maintainer rulings; R-E1..R-E5 are the maintainer rulings
@@ -87,7 +109,7 @@ AskUserQuestion, 2026-10-26 (D5 burst; raised by the D5 doc review as a conflict
   The finger stores positions (leaf, first index, depth, path) and nothing summed: it caches no prefix sum.
 - ROADMAP wording "indexAtSum / sumBefore ... (or a finger hit)" is therefore false; seeks are "one descent".
 
-### C-3 Re-home after every positional op (G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16)
+### C-3 Re-home after every positional op (G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4)
 
 - Every positional op re-homes the finger after its last write, reads included (their descent writes the path).
   Non-structural op: fl / fb := the leaf the op touched. Structural op (split, merge, equalize, first-leaf
@@ -95,7 +117,10 @@ AskUserQuestion, 2026-10-26 (D5 burst; raised by the D5 doc review as a conflict
 - Landing order (M-1, A5-5): the engine's core WRITES the finger (re-home + NIL, C-43) and never reads it until the
   hit test (C-4) lands; every positional op is a miss until then. This is an order of landing, not a second rule.
 - A throwing op re-homes nothing: a RangeError (for setMeasure the headroom one, RF-1, C-10) leaves _fl, _fb, _fdepth
-  and _fpath unchanged.
+  and _fpath unchanged. One exemption (R-P1, R-P2, A6-2, A6-4): the R-E4 'pool' throw (the cold allocator /
+  ygSplit; unreachable under C-15) leaves the finger invalidated (_fl = NIL, _fb = 0, _fdepth = 0, set before the
+  throw, so the next positional op is a miss and I-9 holds) and may leave _fpath[0..d) rewritten by the descent. Every
+  other throw changes nothing.
 - Standing gate: A1 (C-34). Mutants MF-2 and MF-4 (C-35) are the teeth.
 - The keyed-fence variant (B-17 part c: a stale fence after equalize, I-6) is DEFERRED to the SumMap brief
   (C-42); the carried rule is this structural re-home plus a keyed copy of MF-4.
@@ -179,7 +204,7 @@ AskUserQuestion, 2026-10-26 (D5 burst; raised by the D5 doc review as a conflict
 - Replaces any int32-range guard (RESEARCH :306-308 becomes `(e & 0x3FFFFFFF) === e`, [0, 2^30-1]).
 - Amends 0002 M-5 (entity added to the check set). The cursor sentinel -1 cannot collide with an entity.
 
-### C-10 Check order (G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16, A5-20, A5-26, A5-30)
+### C-10 Check order (G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16, A5-20, A5-26, A5-30 -> 0005 A6-1)
 
 - Check order, all before the first write: i, e, measures (M-3 each, slots < dims), extra slots, capacity, headroom.
   The capacity RangeError message carries the token 'capacity' and is checked between extra slots and headroom.
@@ -193,9 +218,11 @@ AskUserQuestion, 2026-10-26 (D5 burst; raised by the D5 doc review as a conflict
   (1 internal), throw RangeError with the token 'pool'; under C-15 it never fires (0004 A-5's only capacity failure
   stays live + 1 > C). RV-5's proposed Error('pool') is superseded by R-E4 (consistent with R-X5 "RangeError
   everywhere").
-- Dims 1..3 (RV-2, A5-30): the extra-slot and headroom branches carry `| (dims > 1)` and send dims > 1 to one cold
-  re-check, so the dims=1 census below stays 14 (the alternative census 15 is not adopted). No census gate exists:
-  the reviewer counts, backed by a bytecode golden of the hot functions.
+- Dims 1..3 (RV-2, A5-30, R-Q1, A6-1): the extra-slot and headroom branches carry `| (dims > 1)` and send dims > 1 to
+  one cold re-check. R-Q1 adds one hot branch, the dims > 1 test guarding the fused inline typeof of slots
+  1..dims-1 (C-44), so the dims=1 census below is 15 (RV-2's 14 is superseded). No census gate exists: the reviewer
+  counts, backed by a
+  bytecode golden of the hot functions.
 - Operand check (RS-6, A5-26): a private `#` brand, then `_hdr` identity (0004 A-3's _hdr check alone passes a forged
   object). Order: not a view, self, another arena, non-empty out; then (append only) headroom. Index before operand
   stays as below.
@@ -211,8 +238,8 @@ AskUserQuestion, 2026-10-26 (D5 burst; raised by the D5 doc review as a conflict
   at dims=1 is a RangeError with the snapshot unchanged).
 - The extra-slot check is ONE fused branch: ((m1 !== undefined) & (dims < 2)) | ((m2 !== undefined) & (dims < 3)) |
   ((m3 !== undefined) & (dims < 4)) -> RangeError. No variadic or rest form exists on this path.
-- Branch census of an insertAt hit at dims=1 is 14: i 2, entity 2, m0 3, extra-slot 1, capacity 1, headroom 1,
-  finger 3 (NIL, lo, hi), structural 1.
+- Branch census of an insertAt hit at dims=1 is 15 (R-Q1, A6-1): i 2, entity 2, m0 3, extra-slot 1, dims > 1 typeof
+  guard 1, capacity 1, headroom 1, finger 3 (NIL, lo, hi), structural 1.
 
 ### C-11 Options (G-A B-21 -> G-A-D9 -> G-B-D3 -> 0005 A5-31)
 
@@ -317,11 +344,15 @@ AskUserQuestion, 2026-10-26 (D5 burst; raised by the D5 doc review as a conflict
   T(a,b) = the sum of s for a <= s < b. N=200 at B=16, m=4: 1960 moves, 15 splits, 184 hits (closed form ==
   simulation, node v26.8.2, untimed, 2026-10-26).
 
-### C-20 Hot pull pass (G-B B-25)
+### C-20 Hot pull pass (G-B B-25 -> 0005 A6-3)
 
 - A non-structural insert / remove / setMeasure is ONE pull pass (count and sums only): no weight read, no balance
-  check; pulls == depth. Weights and the T-2 balance check run only in cold rebalance (split, merge), pulls <=
-  4(H+1). An equalize changes no weight: pulls == |anc(u) U anc(v)|. Amends 0001 T-2 and 0003 counters row 1.
+  check; pulls == depth. Weights and the T-2 balance check run only in cold rebalance (split, merge), where
+  pulls <= 4(H+1); a split pulls >= 1 (A6-3: a review reading of the r3 B1 lane, not a ruling; 1 for the fresh node,
+  +1 per ancestor, +2 / 3 per single / double rotation); a merge may pull 0 (T-6 splices parent(u): at depth 1 no
+  internal node remains).
+  An equalize changes no weight: pulls == |anc(u) U anc(v)|.
+  Amends 0001 T-2 and 0003 counters row 1.
 
 ### C-21 Seam repair counts (G-B B-26 -> 0005 A5-8, A5-24)
 
@@ -718,7 +749,7 @@ AskUserQuestion, 2026-10-26 (D5 burst; raised by the D5 doc review as a conflict
   one-leaf ops, seeks and clear, with their checks, follow.
 - M-5 (A5-8): repair(u, v, uLeft) and the T-6 helpers take (stack, depth) and accept u / v in different trees (C-21).
 
-### C-44 Engine internal layout, the adapter contract (PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11)
+### C-44 Engine internal layout, the adapter contract (PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6-1)
 
 - Each view has own fields in this order: _root, _len, _fl, _fb, _fdepth, _fpath, _cv, _n, then hoisted column refs,
   and _ar (the shared arena record). _ar keys: C, B, shift, m, dims, Lmax, HL, views, sx. The header hdr is an
@@ -726,6 +757,9 @@ AskUserQuestion, 2026-10-26 (D5 burst; raised by the D5 doc review as a conflict
 - Internal columns: left, right, weight, count, inext, sums[d]. Leaf columns: llen, lnext, ent, meas[d] (each
   Lmax * B), lsum[d] (engine-only, not in the snapshot). The m0..m3 of a new element are staged in _ar.sx
   (Float64Array(4)), never passed as arguments (zero-box).
+  At dims > 1 insertAt's public measure arguments of slots 1..dims-1 (slots < dims, C-10) are
+  typeof-checked inline BEFORE any store into sx (one fused `(typeof m1 !== 'number') | ...` branch under dims > 1;
+  R-Q1, A6-1), then stored into sx[1..dims-1]; the cold re-check / slot helper reads sx and takes no measure arguments.
 - The engine adapter engineFactory(C, {leafSize, dims}, count, cfg) -> {views, snapshot()} reads the RA-1 fields (each
   view's hoisted column refs; the constants in views[0]._ar); snapshot() follows the walker header (C-27) exactly,
   every array a deep copy; any cfg key is a RangeError 'cfg' (the engine takes none). NIL = 0 and
@@ -1006,7 +1040,7 @@ Each source item maps to a C-id or reads "history-only". Rule text is not repeat
 | PLAN-E0-S RS-7 | C-13 |
 | PLAN-E0-S RS-8 | C-42 |
 | PLAN-E0-V RV-1 | C-14 |
-| PLAN-E0-V RV-2 | C-10 |
+| PLAN-E0-V RV-2 | C-10 (census 14 superseded by R-Q1) |
 | PLAN-E0-V RV-3 | C-11 |
 | PLAN-E0-V RV-4 | C-11 |
 | PLAN-E0-V RV-5 | C-10, C-15, C-36 (superseded by R-E4: Error becomes RangeError) |
@@ -1052,6 +1086,14 @@ Each source item maps to a C-id or reads "history-only". Rule text is not repeat
 | 0005 A5-32 | C-14 |
 | 0005 A5-33 | C-37, C-42 |
 | 0005 A5-34 | C-31 |
+| R-Q1 | C-10, C-44 |
+| R-P1 | C-3 |
+| R-P2 | C-3 |
+| r3 review Q4 | C-20 |
+| 0005 A6-1 | C-10, C-44 |
+| 0005 A6-2 | C-3 |
+| 0005 A6-3 | C-20 |
+| 0005 A6-4 | C-3 |
 
 Count note: this map has 128 rows: G-A 61 (body 13, D-1..D-3 3, R-D1..R-D3 3, TASKS 0-8 9, A1..A5 5, RISK 3, G-A-D1..D11
 11, A2-1..A2-8 8, A3-1..A3-5 5, plus the shared R-D4 row), G-B 39 (O-4, B-19, B-25, B-26, B-27, B-29, B-32, XG-1;
@@ -1059,8 +1101,9 @@ TASKS 0-7; ASSERTIONS 1-6; RISK; D1..D8; B2-1..B2-6; B3-1..B3-2) and DB1 28 (P-0
 (45/24/28) = G-A body 13 + A1..A5 5 + D-1..D-3 3 + G-A-D1..D11 11 + A2 8 + A3 5; G-B body 8 + D1..D8 8 + B2 6 + B3 2;
 DB1 28. The 31 extra rows are G-A R-D1..R-D4, TASKS 0-8, RISK 1-3 and G-B TASKS 0-7, ASSERTIONS 1-6, RISK. The 14
 rows 0005 A4-1..A4-14 follow the DB1 rows (142 rows). The 49 E0 source rows (PLAN-E0 R-E1..R-E4 4, R-E5 (D5) 1,
-M-1..M-8 8, RA 6, RF 3, RK 6, RS 8, RV 8, G R 5) and the 34 rows 0005 A5-1..A5-34 follow the A4 rows (225 rows
-in all). No E0 source item is history-only: each one changed a CURRENT rule.
+M-1..M-8 8, RA 6, RF 3, RK 6, RS 8, RV 8, G R 5) and the 34 rows 0005 A5-1..A5-34 follow the A4 rows (225 rows).
+The 4 rung-3/4 source rows (R-Q1, R-P1, R-P2, r3 review Q4) and the 4 rows 0005 A6-1..A6-4 follow the A5 rows (233
+rows in all). No E0 or rung-3 source item is history-only: each one changed a CURRENT rule.
 
 ## Addenda
 
@@ -1198,3 +1241,28 @@ already amended (same edit). The map rows are in the Source map.
 OPEN (not folded, maintainer decision pending): none. RS-2 contradicted the order in ruled 0001 T-7; the D5 review
 raised it and the maintainer ruled R-E5 (quoted above). No other E0 reading contradicts R-D1..R-D4 or the
 ruled text of ADRs 0001..0004 (R-Y01, R-X1, R-X2, R-X5, R-Y05, R-Y09, R-Y15).
+
+### ADDENDUM 6 (2026-10-26) -- rung 3 rulings and review readings, 0005's own
+
+Tier: every rule named here is DETERMINISTIC (a branch count by reviewer reading plus a bytecode golden, a finger
+state row, a pull-count lane). No number below is an engine timing. A6-1, A6-2 and A6-4 are maintainer
+rulings (R-Q1, R-P1, R-P2, quoted above); A6-3 is a review reading, not a ruling. A6-4 is engine work for rung 4. Each
+item names the CURRENT rule(s) it changed; the rule text above is already amended (same edit). The map rows are in the
+Source map. No ruling here amends an ADR rule (they amend 0005 rules and a plan rule, RV-2),
+so the Amends table gains no row.
+
+- A6-1 R-Q1 (maintainer ruling, quoted above) -> C-10, C-44. At dims > 1 insertAt's slots 1..dims-1 are
+  typeof-checked inline (one fused branch) before the store into sx[1..dims-1]; the cold re-check reads sx. This adds
+  one hot branch: the dims=1 census is 15 (supersedes A5-30's 14). Lands in rung 4's coder round.
+- A6-2 R-P1 (maintainer ruling, quoted above) -> C-3. The R-E4 'pool' throw (unreachable under C-15) may leave
+  _fpath[0..d) rewritten; _fl, _fb and _fdepth are unchanged. No engine change. (Superseded in part by A6-4.)
+- A6-3 Q4 (r3 reviewer nit; a review reading, NOT a maintainer ruling) -> C-20. A split pulls
+  >= 1 and <= 4(H+1) (a merge may pull 0: splicing a root parent(u)
+  leaves no internal node); the Core.test B1 lane asserts >= 1 (1 for the fresh
+  node + 1 per ancestor + 2 / 3 per single / double rotation).
+- A6-4 R-P2 (maintainer ruling, quoted above) -> C-3. The cold R-E4 'pool' throw path sets _fl = NIL, _fb = 0,
+  _fdepth = 0 before throwing; the next positional op is a miss, I-9 holds, no stale-path hit once C-4 lands. _fpath
+  may stay rewritten. One cold store, no hot cost. Supersedes A6-2's "_fl, _fb and _fdepth unchanged". Engine work
+  for rung 4.
+
+OPEN (not folded, maintainer decision pending): none.

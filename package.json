@@ -26,7 +26,8 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "test:types": "tsc -p test/types/tsconfig.json",
-    "verify": "npm test && npm run test:types"
+    "test:lanes": "node test/engine-lanes.mjs",
+    "verify": "npm test && npm run test:types && npm run test:lanes"
   },
   "keywords": [
     "sum-tree",

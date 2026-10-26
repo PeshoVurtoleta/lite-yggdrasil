@@ -2,11 +2,14 @@
 
 consolidated through ADDENDUM 3 at da45c50 / PLAN-G-A e2b52b3f / PLAN-G-B 03f0bf88 / DB1-plans 4f60e9a1; ADDENDUM 4
 (0005's own) folded in at 6514d58; ADDENDUM 5 (0005's own, E0 planner pass) folded in at f5d95af; ADDENDUM 6
-(0005's own, rung 3 rulings) folded in at fabc0a9
+(0005's own, rung 3-4 rulings) folded in at fabc0a9; ADDENDUM 7 (0005's own, rung 4 readings) folded in at d2bf49a;
+ADDENDUM 8 (0005's own, rung 5 rulings R-S1..R-S3) folded in at d2bf49a
 
-- Status: CURRENT, consolidated (not RULED: the maintainer rulings are R-D1..R-D4, R-E1..R-E5, R-Q1, R-P1 and R-P2
-  below; every other rule is a planner rule that survived DB-1 review rounds r1..r3, an ADDENDUM 4 reading, an E0
-  reading / merge ruling M-1..M-8 folded by ADDENDUM 5, or the r3 review reading Q4 folded by ADDENDUM 6)
+- Status: CURRENT, consolidated (not RULED: the maintainer rulings are R-D1..R-D4, R-E1..R-E5, R-Q1, R-P1, R-P2,
+  R-S1, R-S2 and R-S3 below; every other rule is a planner rule that survived DB-1 review rounds r1..r3, an
+  ADDENDUM 4 reading, an E0
+  reading / merge ruling M-1..M-8 folded by ADDENDUM 5, or the r3 review reading Q4 folded by ADDENDUM 6, or a
+  rung-4 reading A7-1..A7-5 folded by ADDENDUM 7, or a rung-5 coder reading A8-4 folded by ADDENDUM 8)
 - Date: 2026-10-26
 - Session: SumSequence CURRENT consolidation (docs unit B1)
 - Provenance of this text: consolidated from .handoff/PLAN-G-A.md (body, rulings, ADDENDA 1-3), .handoff/PLAN-G-B.md
@@ -14,7 +17,7 @@ consolidated through ADDENDUM 3 at da45c50 / PLAN-G-A e2b52b3f / PLAN-G-B 03f0bf
   pass) from .handoff/PLAN-E0.md (the merge: M-1..M-8, R-E1..R-E4; its reconciliations win over the six plans) and its
   six plans PLAN-E0-A / -F / -K / -S / -V / -G. Rule ids cite those files by name (Sources legend);
   the plan files are gitignored and archived at release. The rung ladder lives in PLAN-E0.md, never here.
-- Precedence: ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 > ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 >
+- Precedence: ADDENDUM 8 > ADDENDUM 7 > ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 > ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 >
   body. Every rule below is the FINAL rule, stated in full.
   A superseded rule is not repeated here (it lives in the plan files and the Source map says where it went).
 - Binding: this file is binding for every agent. ADRs 0001..0004 keep their ruled text; where this file amends an
@@ -67,8 +70,29 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   _fdepth = 0 before throwing (the next positional op is a miss; I-9 holds; no stale-path hit); one cold store, no hot
   cost; _fpath may stay rewritten. Supersedes the R-P1 exemption's "_fl / _fb / _fdepth unchanged".
 
+AskUserQuestion, 2026-10-26 (rung 5 burst):
+
+- R-S1: (clear()'s k >= 2 free-walk (0004 A-6) trusts C-8 and, on a forged / corrupt root, loops forever; should it fail
+  closed?) = "Cold guard, throw Error (Recommended)". Option text: "Before any write: root ref range-checked against
+  the pool bumps; the walk bounded by the pool sizes. A failure throws a plain Error('lite-yggdrasil: clear() corrupt
+  view ...'), not a RangeError token (it is not an argument error). Cold path only; hot bodies unchanged."
+- R-S2: (R-S1 said "Before any write: root ref range-checked ...; the walk bounded by the pool sizes." Today a
+  walk-bound failure (cycle / child out of range deep in the tree) throws MID-walk, after live -= _len and some frees
+  already ran. Which reading of R-S1 holds?) = "Mid-walk throw OK (Recommended)". Option text: "Only the root / _len
+  checks are before any write. A mid-walk failure throws after partial frees: the view was already corrupt and the
+  arena is not trusted after it. Documented in C-8 as such. No code change."
+- R-S3: (The guard cannot see a ref INSIDE the bumps that names another view's node, a free node, or a node shared
+  within the view; clear() then frees it (corrupting the other view). Detect it?) = "Out of scope, document
+  (Recommended)". Option text: "C-8 says plainly what is NOT detected. Forged private state is beyond the guard; the
+  walker (test-side) catches it. No code change."
+
 ## Sources legend
 
+- 0005 A8-1..A8-4 = this file's own ADDENDUM 8 (below; the rulings R-S1..R-S3, quoted above). Every A8 item names the
+  CURRENT rules
+  it changed and every changed rule cites its A8 ids.
+- 0005 A7-1..A7-5 = this file's own ADDENDUM 7 (below; orchestrator / reviewer readings from rung 4, no ruling).
+  Every A7 item names the CURRENT rules it changed and every changed rule cites its A7 ids.
 - 0005 A6-1..A6-4 = this file's own ADDENDUM 6 (below; the rulings R-Q1, R-P1 and R-P2 and the r3 review reading Q4).
   Every A6 item names the CURRENT rules it changed and every changed rule cites its A6 ids.
 - 0005 A5-1..A5-34 = this file's own ADDENDUM 5 (below; the E0 engine planner pass). Every A5 item names its source and
@@ -109,7 +133,7 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   The finger stores positions (leaf, first index, depth, path) and nothing summed: it caches no prefix sum.
 - ROADMAP wording "indexAtSum / sumBefore ... (or a finger hit)" is therefore false; seeks are "one descent".
 
-### C-3 Re-home after every positional op (G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4)
+### C-3 Re-home after every positional op (G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-4)
 
 - Every positional op re-homes the finger after its last write, reads included (their descent writes the path).
   Non-structural op: fl / fb := the leaf the op touched. Structural op (split, merge, equalize, first-leaf
@@ -120,7 +144,7 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   and _fpath unchanged. One exemption (R-P1, R-P2, A6-2, A6-4): the R-E4 'pool' throw (the cold allocator /
   ygSplit; unreachable under C-15) leaves the finger invalidated (_fl = NIL, _fb = 0, _fdepth = 0, set before the
   throw, so the next positional op is a miss and I-9 holds) and may leave _fpath[0..d) rewritten by the descent. Every
-  other throw changes nothing.
+  other throw changes nothing. The splitAt / append 'pool' pre-checks fire before any write and change nothing (A7-4).
 - Standing gate: A1 (C-34). Mutants MF-2 and MF-4 (C-35) are the teeth.
 - The keyed-fence variant (B-17 part c: a stale fence after equalize, I-6) is DEFERRED to the SumMap brief
   (C-42); the carried rule is this structural re-home plus a keyed copy of MF-4.
@@ -177,7 +201,7 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   measure(d) each return a boxed double (b = 1, C-13).
 - Closes RESEARCH Q-3. A cursor walk gives O(log n + k) reads at 0 B (this is why readRange is not in v0.1, C-12).
 
-### C-8 clear() restores the constructed state, `_n` excepted (G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13)
+### C-8 clear() restores the constructed state, `_n` excepted (G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-4)
 
 - clear() restores the view to its constructed state exactly: _len 0, _root === EMPTY_ROOT, _fl NIL, _cv false,
   header bump 0 and live 0 once every view has cleared. The diagnostic counters `_n` are EXCLUDED (0003 G-8, X-8:
@@ -191,6 +215,15 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
 - Drain (RA-4, A5-13): a removeAt that takes the arena to live 0 resets both pools to construction order exactly as
   clear() does (0004 A-6 states the reset only for clear(); the stubs reset on every transition to live 0). With
   k >= 2 views, live 0 means every view is empty.
+- Corrupt-view guard (R-S1, R-S2, R-S3, A8-1..A8-4; the EMPTY_ROOT, child and bump clauses are a reading, A8-4): the
+  k >= 2 clear() free-walk (0004 A-6) range-checks the root ref (leaf ref ~root < leaf bump; internal 0 <= root <
+  internal bump; EMPTY_ROOT fails) and _len <= live before any write, range-checks every child ref and bounds the walk
+  by the bumps; a failure throws a plain Error whose message starts 'lite-yggdrasil: clear() corrupt view: ' (not a
+  RangeError, no C-10 token). Cold path only; hot bodies unchanged.
+- Mid-walk failure (R-S2): only the root / _len checks run before any write; a mid-walk failure throws AFTER live -=
+  _len and the frees already made (the view keeps _root / _len); the arena is not trusted after it.
+- Not detected (R-S3): a ref inside the bumps that names another view's node, a free node or a node shared inside the
+  view (the walk frees it); the test-side walker catches these.
 
 ### Entity, signatures, options
 
@@ -204,10 +237,16 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
 - Replaces any int32-range guard (RESEARCH :306-308 becomes `(e & 0x3FFFFFFF) === e`, [0, 2^30-1]).
 - Amends 0002 M-5 (entity added to the check set). The cursor sentinel -1 cannot collide with an entity.
 
-### C-10 Check order (G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16, A5-20, A5-26, A5-30 -> 0005 A6-1)
+### C-10 Check order (G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16, A5-20, A5-26, A5-30 -> 0005 A6-1 -> 0005 A7-3 -> 0005 A8-1)
 
 - Check order, all before the first write: i, e, measures (M-3 each, slots < dims), extra slots, capacity, headroom.
   The capacity RangeError message carries the token 'capacity' and is checked between extra slots and headroom.
+- Measure checks (R-Q1, A7-3): at dims > 1 insertAt checks slot 0 in full first, then runs the typeof of EVERY slot
+  1..dims-1 before any range / integer check of those slots (m1 = -1 with m2 = '5' reports "must be a number"; m0 = -1
+  with m1 = '5' reports the range error), token 'measure'.
+- One exception to R-X5 "RangeError everywhere" (ADR 0002 / 0004 ruling; narrowed by the later ruling R-S1, A8-1):
+  the corrupt-view guard of clear() throws a plain Error, not a RangeError and not a C-10 token (C-8; it is not an
+  argument error).
 - M-3 (A5-7): no op exists without its checks. Each op's C-10 checks ride the rung that adds the op (C-43); an op added
   without them is REJECTED at review.
 - setMeasure (RF-1, A5-16; wins over the V-R3 form `m > MAX - (t - m_old)`): checks i, dim, m, then headroom as the
@@ -354,7 +393,7 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   An equalize changes no weight: pulls == |anc(u) U anc(v)|.
   Amends 0001 T-2 and 0003 counters row 1.
 
-### C-21 Seam repair counts (G-B B-26 -> 0005 A5-8, A5-24)
+### C-21 Seam repair counts (G-B B-26 -> 0005 A5-8, A5-24 -> 0005 A7-2)
 
 - splitAt repairs rL + rR in 0..2, where rX = [result X has >= 2 leaves and its seam leaf < m]; the joins inside a
   split do no repair. append repairs [both non-empty and min(a,b) < m] in 0..1, repairing u = the short seam leaf
@@ -365,7 +404,9 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   merged away makes the join the identity. rX is decided from the result's leaf count and its seam leaf size,
   without a seam search (so "0 repairs: d(c)" is exact); a boundary cut never repairs.
 - Helpers (M-5, A5-8): repair(u, v, uLeft) and the T-6 helpers take (stack, depth) and accept u and v in different
-  trees (C-43), so append's seam repair needs no core hunk.
+  trees (C-43), so append's seam repair needs no core hunk. A7-2: repair takes TWO (stack, depth) pairs, a shared-
+  prefix count sh and the owner view vu; it never writes _len, hdr live or the finger (the caller does). It fits the
+  two-tree seam of splitAt / append with sh = 0.
 - Amends 0001 T-7, 0004 A-4 ("one seam repair") and 0003 counters row 11.
 
 ### C-22 Edge hysteresis row (G-B B-27)
@@ -390,12 +431,13 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   out._n delta is 0 (RS-1). joinSteps = internal nodes pushed on the join stack, at most HB(Lmax) per join (RS-5;
   0003 row 10 cites a bound that 0001 never stated).
 
-### C-25 Touches (DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 0005 A5-3, A5-14, A5-24, A5-25)
+### C-25 Touches (DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 0005 A5-3, A5-14, A5-24, A5-25 -> 0005 A7-1)
 
 - touches = internal nodes PUSHED onto a descent's path stack: the main descent, the neighbour walk from sibling(u),
   the F-3 re-home, the seam search, and a cursor leaf crossing. Never the leaf itself, never pulls, rotations or join
   spine steps. k(op) = 0 for every op. Bound: touches <= p*HB(Lmax). Exact values come from walker-recounted depths d
-  and d' (0003 G-10).
+  and d' (0003 G-10). A7-1: d(v) is the depth of the neighbour leaf v; the main descent pushes d(u), the T-6 walk
+  pushes d(v) - d(u) more.
 - Readings (A5-3, A5-14, A5-24, A5-25): a seek on an empty view adds 0 and runs no descent (RA-5); a seek to the end
   still pays d(t) although the cursor ends invalid (R-E3); splitAt at i in {0, length}, or on an empty view, has no
   leaf c: touches 0, no descent (RS-3; the stub short-circuits); append's seam repair is counted before the join
@@ -479,7 +521,7 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   splits; an `import` fixture added to spec-counts FAILS the 0003 G-9 gate.
 - GC: spec-counts exports 0 B/op over 1e5 calls, maxMajor 0; an object-returning mutant FAILS.
 
-### C-31 Lanes (G-B B-32 -> G-B-D1 -> B2-1 -> B2-6 -> DB1 P-01 -> 0005 A4-2, A4-5, A4-6, A4-11..14, A5-1, A5-23, A5-34)
+### C-31 Lanes (G-B B-32 -> G-B-D1 -> B2-1 -> B2-6 -> DB1 P-01 -> 0005 A4-2, A4-5, A4-6, A4-11..14, A5-1, A5-23, A5-34 -> 0005 A7-5)
 
 - Shape-only BFS stays the state generator, closed under insertAt / removeAt / splitAt + append at every position,
   with walker and oracle after every op. At EVERY state, for each j in {NIL, 0..L-1}: replay the witness; j = NIL ->
@@ -523,8 +565,7 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   indexAtSum y = sumBefore(0, i), a clear entry's i = the view index); sweepLane and deepLane take `cap`.
 - Driver contract (0005 A4-13): for every pair the driver builds the finger-ON arena first, then the finger-OFF arena.
   The test's off-only wrapper controls rely on this order.
-- Engine-time coverage (0005 A4-14): under CAPS the sweep's b.clear() always runs on an empty b, so a clear on a
-  non-empty view is covered only at engine size.
+- Engine-time coverage: see C-32 (0005 A4-14, A7-5).
 - Cursor suffixes, the 2^22 runs and the nMax / nSweep 9/15 and 7/12 figures stay with the engine group.
 - Where the lanes run (R-E1, G R-3, A5-1): the CAPS-size lanes run on the engine adapter in npm test; the ENGINE-size
   lanes (2^22 applications, nMax 9 / 15, nSweep 7 / 12, 2e4 deep) run in `npm run test:lanes` (test/engine-lanes.mjs,
@@ -540,7 +581,7 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   /^balance/}; if the first engine run shows no failure at n <= 6, the B-1b row moves to test:lanes at nMax 9 with an
   addendum (CAPS never raised). The unpatched build passes through the same path.
 
-### C-32 Deep lane, coverage (G-B-D6 -> G-B B2-3 -> G-B B2-5 -> 0005 A4-1, A4-2, A4-5, A4-10..A4-12, A4-14, A5-1)
+### C-32 Deep lane, coverage (G-B-D6 -> G-B B2-3 -> G-B B2-5 -> 0005 A4-1, A4-2, A4-5, A4-10..A4-12, A4-14, A5-1 -> 0005 A7-5)
 
 - Deep lane: xorshift32 with separate op / index / measure streams (G-A's constants and seeds, C-34); B=4 n in
   [8, 48], B=8 n in [16, 96]; two-view ops included; finger on / off in lockstep; walker + oracle after every op.
@@ -730,7 +771,7 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
 
 ### Engine build (E0)
 
-### C-43 Engine landing contracts (PLAN-E0 M-1 -> M-2 -> M-3 -> M-4 -> M-5 -> 0005 A5-5..A5-8)
+### C-43 Engine landing contracts (PLAN-E0 M-1 -> M-2 -> M-3 -> M-4 -> M-5 -> 0005 A5-5..A5-8 -> 0005 A7-2)
 
 - Orchestrator merge rulings, not maintainer rulings; they bind the engine build. The rung ladder is PLAN-E0.md's.
 - M-1 (A5-5): the finger WRITE side lives in the engine core. From the rung that adds each positional op, the op is a
@@ -747,7 +788,8 @@ AskUserQuestion, 2026-10-26 (rung 4 A-R3 burst; raised by the D6 doc review):
   REJECTED at review. Until every op carries them the engine is fail-open: nothing is released in between.
 - M-4 (A5-7): init, layout, pools, constructor validation, counters and getters (no ops) land before the first op; the
   one-leaf ops, seeks and clear, with their checks, follow.
-- M-5 (A5-8): repair(u, v, uLeft) and the T-6 helpers take (stack, depth) and accept u / v in different trees (C-21).
+- M-5 (A5-8, A7-2): repair(u, v, uLeft) and the T-6 helpers take (stack, depth) and accept u / v in different trees
+  (C-21); repair takes two (stack, depth) pairs + sh + vu and leaves _len, hdr live and the finger to its caller.
 
 ### C-44 Engine internal layout, the adapter contract (PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6-1)
 
@@ -1094,6 +1136,18 @@ Each source item maps to a C-id or reads "history-only". Rule text is not repeat
 | 0005 A6-2 | C-3 |
 | 0005 A6-3 | C-20 |
 | 0005 A6-4 | C-3 |
+| 0005 A7-1 | C-25 |
+| 0005 A7-2 | C-21, C-43 |
+| 0005 A7-3 | C-10 |
+| 0005 A7-4 | C-3 |
+| 0005 A7-5 | C-31, C-32 |
+| R-S1 | C-8, C-10 |
+| R-S2 | C-8 |
+| R-S3 | C-8 |
+| 0005 A8-1 | C-8, C-10 |
+| 0005 A8-2 | C-8 |
+| 0005 A8-3 | C-8 |
+| 0005 A8-4 | C-8 |
 
 Count note: this map has 128 rows: G-A 61 (body 13, D-1..D-3 3, R-D1..R-D3 3, TASKS 0-8 9, A1..A5 5, RISK 3, G-A-D1..D11
 11, A2-1..A2-8 8, A3-1..A3-5 5, plus the shared R-D4 row), G-B 39 (O-4, B-19, B-25, B-26, B-27, B-29, B-32, XG-1;
@@ -1103,7 +1157,9 @@ DB1 28. The 31 extra rows are G-A R-D1..R-D4, TASKS 0-8, RISK 1-3 and G-B TASKS 
 rows 0005 A4-1..A4-14 follow the DB1 rows (142 rows). The 49 E0 source rows (PLAN-E0 R-E1..R-E4 4, R-E5 (D5) 1,
 M-1..M-8 8, RA 6, RF 3, RK 6, RS 8, RV 8, G R 5) and the 34 rows 0005 A5-1..A5-34 follow the A4 rows (225 rows).
 The 4 rung-3/4 source rows (R-Q1, R-P1, R-P2, r3 review Q4) and the 4 rows 0005 A6-1..A6-4 follow the A5 rows (233
-rows in all). No E0 or rung-3 source item is history-only: each one changed a CURRENT rule.
+rows); the 5 rows 0005 A7-1..A7-5 follow them (238 rows); the 3 rung-5 source rows R-S1..R-S3 and the 4 rows
+0005 A8-1..A8-4 follow those (245 rows in all). No E0 or rung-3/4/5 source item is history-only: each one
+changed a CURRENT rule.
 
 ## Addenda
 
@@ -1159,7 +1215,6 @@ rule(s) it changed; the rule text above is already amended (same edit). The map 
   coverage misses exactly the 4 rot cells per B (expected: it never rotates). Engine numbers (2^22, 9/15, 7/12, 2e4,
   the 2e4 deep run, positive coverage, cursor suffixes, C-20 / C-25 exactness, W-DEL / W-INS / W-TIE) stay DEFERRED
   to the engine group.
-
 - A4-13 Driver order -> C-31, C-33: the lane driver builds the finger-ON arena first, then the finger-OFF arena, for
   every pair; this is a driver contract (the test's off-only wrapper controls rely on it).
 - A4-14 Engine-time coverage (not gated on the stub) -> C-31, C-32: under CAPS, clear only ever runs on an empty b
@@ -1242,7 +1297,7 @@ OPEN (not folded, maintainer decision pending): none. RS-2 contradicted the orde
 raised it and the maintainer ruled R-E5 (quoted above). No other E0 reading contradicts R-D1..R-D4 or the
 ruled text of ADRs 0001..0004 (R-Y01, R-X1, R-X2, R-X5, R-Y05, R-Y09, R-Y15).
 
-### ADDENDUM 6 (2026-10-26) -- rung 3 rulings and review readings, 0005's own
+### ADDENDUM 6 (2026-10-26) -- rung 3-4 rulings and review readings, 0005's own
 
 Tier: every rule named here is DETERMINISTIC (a branch count by reviewer reading plus a bytecode golden, a finger
 state row, a pull-count lane). No number below is an engine timing. A6-1, A6-2 and A6-4 are maintainer
@@ -1266,3 +1321,47 @@ so the Amends table gains no row.
   for rung 4.
 
 OPEN (not folded, maintainer decision pending): none.
+
+### ADDENDUM 7 (2026-10-26) -- rung 4 readings and D6 nits, 0005's own
+
+Tier: DETERMINISTIC (rule wording; no number, no timing). Every item is an orchestrator or reviewer READING, not a
+maintainer ruling: the ruling list stays R-D1..R-D4, R-E1..R-E5, R-Q1, R-P1, R-P2 (Status line, unchanged). Each item
+names the CURRENT rule(s) it changed; the rule text above is already amended (same edit). The map rows are in the
+Source map. No item amends an ADR rule, so the Amends table gains no row.
+
+- A7-1 (rung 4 review reading; touchDu mutant killed) -> C-25. d(v) is the depth of the neighbour leaf v: the main
+  descent pushes d(u), the T-6 walk pushes d(v) - d(u) more.
+- A7-2 (rung 4 reading) -> C-21, C-43 (M-5). repair takes two (stack, depth) pairs, a shared-prefix count sh and
+  the owner view vu; it never writes _len, hdr live or the finger (the caller does). It fits the two-tree seam with
+  sh = 0.
+- A7-3 (R-Q1 consequence, a reading) -> C-10. At dims > 1 insertAt checks slot 0 in full first, then runs the typeof
+  of EVERY slot 1..dims-1 before any range / integer check of those slots (m1 = -1 with m2 = '5' reports "must be a
+  number"; m0 = -1 with m1 = '5' reports the range error), token 'measure'.
+- A7-4 (D6 r2 nits) -> C-3. The header and the ADDENDUM 6 title say "rung 3-4 rulings", the source-map count
+  note says "rung-3/4", and C-3 states that the splitAt / append 'pool' pre-checks fire before any write and change
+  nothing (R-E4 consistency).
+- A7-5 (cosmetic) -> C-31, C-32. The blank line between A4-12 and A4-13 is gone; the A4-14 clear-gap text lives in C-32
+  only and C-31 points to it.
+
+OPEN (not folded, maintainer decision pending): none.
+
+### ADDENDUM 8 (2026-10-26) -- rung 5 rulings R-S1..R-S3 and coder readings, 0005's own
+
+Tier: DETERMINISTIC (a cold guard: a throw on a root / child ref outside the bumps, _len > live, or a walk past the
+bumps; no number, no timing). A8-1..A8-3 are maintainer rulings (R-S1, R-S2, R-S3, quoted above); A8-4 is a set of coder
+readings, NOT ruled. It amends C-8 and C-10; C-10's exception narrows the ADR ruling R-X5, already pointed to C-10 by
+the 0004 A-3 Amends row, so the Amends table gains no row. The map rows are in the Source map.
+
+- A8-1 R-S1 (maintainer ruling, quoted above) = "Ruled: Before any write: root ref range-checked against the pool
+  bumps; the walk bounded by the pool sizes. A failure throws a plain Error('lite-yggdrasil: clear() corrupt view
+  ...'), not a RangeError token (it is not an argument error). Cold path only; hot bodies unchanged." -> C-8, C-10.
+  Engine work for rung 5.
+- A8-2 R-S2 (maintainer ruling, quoted above) -> C-8. Only the root / _len checks run before any write; a mid-walk
+  failure throws AFTER live -= _len and the frees already made (the view keeps _root / _len); the arena is not trusted
+  after it. No code change.
+- A8-3 R-S3 (maintainer ruling, quoted above) -> C-8. Not detected: a ref inside the bumps that names another view's
+  node, a free node or a node shared inside the view (the walk frees it); the test-side walker catches these. No code
+  change.
+- A8-4 Coder readings, rung 5, NOT ruled -> C-8. EMPTY_ROOT fails the root check; every popped node's child refs are
+  range-checked before that node's writes; "pool sizes" is implemented as the bumps (ibump internals / lbump leaves);
+  the message prefix is exactly 'lite-yggdrasil: clear() corrupt view: '.

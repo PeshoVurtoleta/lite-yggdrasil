@@ -1,8 +1,8 @@
 # lite-yggdrasil -- PRE-BUILD roadmap
 
 > **STATE (2026-10-25): S0 in progress (2026-10-25): Y-01, Y-02, Y-04, Y-05, Y-09, Y-13, Y-15 RULED; ADRs
-> 0001-0004; scaffolding at 0.0.0 (npm test green). 22 design bugs logged (RESEARCH
-> section 6 B-9..B-30); the 13 from the DB-1 review (B-17..B-29) are carried to the SumSequence planner.** D7 is RULED (both, distinct). Nothing
+> 0001-0004; scaffolding at 0.0.0 (npm test green). 24 design bugs logged (RESEARCH
+> section 6 B-9..B-32); the 13 from the DB-1 review (B-17..B-29) are carried to the SumSequence planner.** D7 is RULED (both, distinct). Nothing
 > is published; git repo initialized (e14e2f3).
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
@@ -133,11 +133,12 @@ Swap in the splice witness and the foils of RESEARCH.md section 4.1.
 
 What makes it public and honest:
 - **Scenario tier** (RESEARCH 4.2): S1 virtual list 1M rows, S2 editor line index, S3 timeline,
-  S4 order book, S5 booking, S6 multi-order data table. Each scenario lands with the member that
-  enables it (S1-S2 with 0.1, S4-depth with 0.2, S3-active / S5 with 0.3, S4-cancel / S6 with 0.4).
+  S4 order book, S5 booking, S6 multi-order data table, S7 weighted pick (fixed n, live reweighting).
+  Each scenario lands with the member that enables it (S1-S2 and S7 with 0.1, S4-depth with 0.2, S3-active / S5 with 0.3, S4-cancel / S6 with 0.4).
 - **Counts beside every time.** Exact op counts are printed next to each timing, so a reader on a
   different machine can verify the work bit-for-bit even when the times differ.
-- **The loss table is mandatory** (RESEARCH 4.3): static data, resize-only, point lookup, tiny n --
+- **The loss table is mandatory** (RESEARCH 4.3): static data, resize-only (S7), the blocked array below its crossover (S1 /
+  S2), point lookup, tiny n --
   each with its measured crossover n. A report with no loss rows fails review.
 - **Provenance on every table**: date, host, CPU, Node, load average start / end, quiet-lock state
   (QUIET / NOISY = PRELIMINARY), run count, commit + main-file sha. Numbers enter README / llms.txt /
@@ -149,6 +150,9 @@ What makes it public and honest:
 - **Rivals at a pinned version** (`sorted-btree`, `@flatten-js/interval-tree`, lite-logn) as
   devDependencies, their versions printed in the header; a rival that cannot answer a query gets
   `n/a` with the reason.
+- **Hand-written rivals** with no npm package (the blocked array for SumSequence, RESEARCH 4.1) live
+  in benchmark/, follow the same fairness rules (typed arrays, tuned parameters printed, zero allocation
+  in their hot loop) and are reviewed like engine code.
 
 ---
 
@@ -210,9 +214,9 @@ before any engine code; DB-5..DB-12 become gates in the member's session.
  S0 settle (Y-01, Y-02, Y-04, Y-05, Y-09, Y-13, Y-14; git init by maintainer)
    |
    v
- SumSequence 0.1.0 --> Bench-ADOPT (copy + wire, scenarios S1, S2) --> SumMap 0.2.0 (+ S4-depth)
-                                                                          |
-                                                                          v
+ SumSequence 0.1.0 --> Bench-ADOPT (copy + wire, scenarios S1, S2, S7) --> GO / NO-GO --> SumMap 0.2.0 (+ S4-depth)
+                                                                                             |
+                                                                                             v
                                     Yggdrasil pool 0.4.0 (+ S4-cancel, S6) <-- IntervalMap 0.3.0 (+ S3, S5)
                                           |
                                           v
@@ -223,8 +227,14 @@ What blocks what:
 - S0 settles the trunk (Y-01) and measures (Y-05): every member depends on both.
 - SumSequence brings up every gate (oracle, walker, exhaustive small-scope, counts, metamorphic,
   torture) -- it is load-bearing beyond its own release, like lite-logn's BinaryHeap.
-- Bench-ADOPT follows the first member so the public numbers exist from 0.1 on (S1 + S2 need only
+- Bench-ADOPT follows the first member so the public numbers exist from 0.1 on (S1, S2 and S7 need only
   SumSequence); each later member extends the scenarios it enables.
+- GO / NO-GO checkpoint (added 2026-10-25, lite-pick review): SumMap is greenlit only by a maintainer
+  decision on SumSequence's S1 / S2 numbers against the blocked array AND Fenwick-rebuild (RESEARCH
+  4.1). It reads REPORTED numbers from a run log of that cycle with provenance; it is not a test gate
+  (ADR 0003 G-1: no timing ... gates anything, in verify or at /release); a PRELIMINARY / PENDING
+  log is labelled so in the decision. NO-GO = the program stops at SumSequence (or is rescoped),
+  and the README says where the trunk wins and loses.
 - The pool (0.4) needs SumMap and IntervalMap realms to be worth shipping.
 
 ---
@@ -328,7 +338,7 @@ DONE WHEN
 ```
 
 ===============================================================================
-# Bench-ADOPT -- repo-only -- copy + wire Bench v2, scenarios S1 and S2, the loss table
+# Bench-ADOPT -- repo-only -- copy + wire Bench v2, scenarios S1, S2 and S7, the blocked-array rival, the loss table
 ===============================================================================
 
 ```markdown
@@ -344,8 +354,11 @@ depends_on: [SumSequence]
 TASKS
   - Copy Harness / Matrix / Report / Template / METHODOLOGY from LiteLogN/benchmark; adapt
     METHODOLOGY to the splice witness and the foils of RESEARCH 4.1.
-  - Scenarios S1 (virtual list 1M rows) and S2 (editor line index) with counts beside times.
-  - Loss table rows (static, resize-only, tiny n) with measured crossover n.
+  - Scenarios S1 (virtual list 1M rows), S2 (editor line index) and S7 (weighted pick, fixed n, live
+    reweighting) with counts beside times.
+  - The blocked-array rival (RESEARCH 4.1: written in benchmark/, chunk size tuned per n and printed).
+  - Loss table rows (static, resize-only on S7, tiny n, blocked array below its crossover) with measured
+    crossover n; the result feeds the GO / NO-GO checkpoint (section 5).
   - README "Benchmarks" generated from results.json + a test pinning README == generator output.
   - Runs under quiet-lock; NOISY / BUSY = PRELIMINARY / PENDING, never retried in a loop.
 

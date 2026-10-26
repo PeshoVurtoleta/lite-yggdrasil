@@ -138,13 +138,28 @@ the foils below.
 
 | Facade        | Primary foil (fair, O(n))                         | Strong rival (fair, competent)           | Counter-foil (where WE should lose) |
 |---------------|---------------------------------------------------|------------------------------------------|-------------------------------------|
-| SumSequence   | `Array.splice` + prefix-sum rebuild               | Fenwick + rebuild on insert (LiteVirtual today) | Fenwick on a FIXED-length, resize-only workload |
+| SumSequence   | `Array.splice` + prefix-sum rebuild               | blocked array (sqrt decomposition, below); Fenwick + rebuild on insert (LiteVirtual today) | Fenwick on a FIXED-length, resize-only workload (S7) |
 | SumMap        | sorted typed array + binary search + shift        | `sorted-btree` (npm), lite-logn Treap / Scapegoat (count seek only) | native `Map` for point get / set |
 | IntervalMap   | linear scan of an interval array                  | `@flatten-js/interval-tree`, lite-logn IntervalTree once shipped | static sorted-by-start array for read-only data |
 | Yggdrasil pool| `Map` + k sorted arrays synced by hand            | k independent SumMaps + a `Map` id index | a single SumMap when only one order is needed |
 
 A rival that cannot answer a query (Treap seek-by-sum, `Map` successor) gets the cell `n/a` with
 the reason, never a number and never 0.
+
+**The blocked array is the SumSequence rival to beat** (added 2026-10-25 from the lite-pick review,
+B-31). Many engineers would write it for S1 / S2: rows in chunks of ~1K (about sqrt n at 1M), each chunk
+holding its own sums. insertAt = a scan of the n / chunk chunk counts to find the chunk, O(chunk)
+element moves, plus a chunk split (O(chunk) copy + O(n / chunk) directory shift) when the chunk is
+full -- O(n / chunk + chunk) in all; indexAtSum = a scan of the chunk sums, then one chunk; splitAt /
+append = O(n / chunk + chunk) when both sequences draw chunks from one shared pool (the ADR 0004
+model the trunk gets; the rival gets it too) -- per-sequence typed arrays make it O(moved) (B-9). It is flat and cache-friendly, and
+it is the height-1 end of the R-7 fanout spectrum, so it also tests whether the binary trunk earns its
+constant. Expected (hypothesis, to be MEASURED): it wins below some n and loses above it; that
+crossover n (or "none up to n = <max measured>") is a headline number and the README states it. Fair-rival rules: written in benchmark/
+(no npm package exists), chunk size tuned per n and printed in the report header, typed arrays,
+zero allocation in its hot loop. Its counts (chunk entries scanned + elements moved + splits per insert; chunk sums + elements
+scanned per seek)
+are printed beside ours.
 
 ### 4.2 The scenario tier (the "advanced problems" made visible)
 
@@ -161,12 +176,18 @@ rival and Yggdrasil, with exact op counts printed next to the times:
   cancel-by-order-id across price-time and id realms (pool, v0.4).
 - S5 **Calendar / booking**: insert with overlap check, release, "free slots in [a, b)" (v0.3).
 - S6 **Data table, 3 maintained sort orders under updates** vs re-sort-on-change (pool, v0.4).
+- S7 **Weighted pick, fixed n, live reweighting** (the lite-pick pattern: setMeasure + indexAtSum
+  of an integer draw y in [0, total) vs Fenwick set + search; an integer y < 2^30 stays off the boxing lane --
+  a fractional or >= 2^30 draw boxes while ADR 0002 O-1 is open): the real-world case of the "resize-only: Fenwick wins"
+  loss row (v0.1).
 
 ### 4.3 The "where it loses" table (published, not hidden)
 
 Expected losses, stated as hypotheses to be MEASURED and printed with the crossover n:
 - static data: a prefix-sum array + binary search beats any tree for read-only seeks;
-- resize-only (no inserts): Fenwick wins (smaller constant, one array);
+- resize-only (no inserts): Fenwick wins (smaller constant, one array) -- shown on S7;
+- S1 / S2 below some n: the blocked array wins (expected; section 4.1) -- the crossover n is
+  measured and stated in the README, not hidden;
 - point lookups by key: `Map` wins (O(1), no order);
 - tiny n (expected below ~64-256): a plain array splice wins;
 - split / join on a 2-element sequence: overhead dominates.
@@ -251,6 +272,8 @@ by every design review; a class seen twice becomes a standing gate.
 | B-28 | (S3) No stated MAX_CAPACITY / dims cap: Int32 count overflows near 2^31; indices >= 2^30 leave Smi range. | DB-1 | DB-7 |
 | B-29 | (S3) ADR 0003 G-13 can never fail (stack size = H(Lmax) by T-10, so G-13 reduces to "H is monotone"); "H(L) <= log_{4/3}(L) - 1.4" is false at L = 1. | DB-1 | DB-8 |
 | B-30 | (S3) ROADMAP 3.1 asked for torture / perf / bench scripts on day 1 with no engine: green on nothing. | pre-read (S0) | DB-8 (a gate with no subject cannot fail) -> ruled: scripts land with their subject |
+| B-31 | (S2) The strongest competent SumSequence rival -- the blocked array (sqrt decomposition) -- was missing from the foil table and the loss table, so the benchmark plan could only beat O(n) foils and Fenwick-rebuild. | external review (lite-pick session, 2026-10-25) | DB-1 applied to the benchmark plan: ask "what would a competent engineer write instead?" before fixing the foil list |
+| B-32 | (S2) ADR 0001's DB-2 canonical state (shape + leaf sizes) merges states that differ in finger / cursor / pool free-list order, so the exhaustive run can miss the B-17 / B-18 classes; a raw epoch in the signature would instead make nearly every state distinct. | external review of a Canopy blueprint + doc-truth review (2026-10-25), RESEARCH Q-6 | DB-4 applied to the state merge: a merge is sound only if it distinguishes every field the next op reads |
 
 Standing rules from repeated classes (2026-10-25). Class seen twice becomes a standing gate / law
 (DB-12). FINGER (B-3, B-17): every op stream is run with the finger enabled and disabled and must give
@@ -276,6 +299,13 @@ listing the proof's assumptions and checking each one is.
   typed arrays, split / join.
 - **Yggdrasil pool** (0.4.0) -- stable entity ids (raw int32 or a lite-arena handle, Y-12), several
   realms, per-realm back-pointers, remove(id) from all realms.
+  Candidate (external review, 2026-10-25): a `realmMask` Int32 column per entity, bit r set while the
+  id is in realm r (at most 30 realms, bits 0..29, so the mask stays a Smi across a call -- the
+  same reason R-8 picks 30 bits), so remove(id) visits only the realms that
+  hold it (lowest-set-bit loop, deterministic order); plus an id-liveness bitset so a double remove
+  or an unknown id fails closed. NOT a fix for B-22 (that is v0.1 argument validation: typeof + an
+  int32-range integer guard (-2^31 <= x <= 2^31 - 1) on the caller's int32 id; an integer test alone
+  passes B-22's 2^31 witness, which an Int32 column stores as -2^31).
 
 ### Tier 2 -- strong candidates
 - **Lazy range measure update** (shift every clip in a range by dt; collapse a section) -- a lazy tag
@@ -289,11 +319,70 @@ listing the proof's assumptions and checking each one is.
 - R-7 **B+ internal fanout** vs the binary trunk: shallower and cache-friendlier, harder split / join.
 - R-8 **Epoch persistence**: birth / death epoch per node, free only when no live snapshot falls in
   [birth, death); leaves copied whole; secondary realms not versioned (a documented limit); fixed
-  arena fills faster (fail closed).
+  arena fills faster (fail closed). A proposed 30-bit live-snapshot mask (`spanMask = (1 << d) -
+  (1 << b)` ANDed with the live mask) is WRONG as stated: epochs are monotone counters and snapshot
+  slots are reused, so bit order stops matching time order after the first reuse; the single AND is
+  only correct for at most 30 epochs ever; past that `1 << d` wraps mod 32 and the AND can read
+  0, silently freeing a node a live snapshot still reads. A ring with renumbering could rescue it, at the cost
+  of the one-instruction claim.
+- R-9 **Prefix bit-directory as a lookup aid (SumMap, keys spread over the uint32 range)**: the "Canopy" of an
+  early blueprint -- a bit directory over the top 16 key bits (65,536 prefixes: 4 levels of 32-ary words;
+  lite-fastbit32's two-level FastBit1024 covers only 1,024). As a ROUTER above the
+  trunk it is declined (below). If explored at all, it is a read-only table BESIDE the single BB<3,2>
+  trunk mapping each populated prefix to the lowest trunk node covering it (a leaf id only when the
+  prefix holds at most one leaf of keys), to skip the top trunk levels on random point lookups.
+  Every leaf split / merge / equalize changes which leaf owns which prefixes, so maintenance is not
+  O(1); "saves 6-8 levels" needs a count before it is believed. Gate: measured lookups saved vs
+  directory maintenance on a split / merge stream.
 
 ### Declined (do not reopen without new evidence)
 - SWAR key signatures in leaves: help equality only, not ordered seek; BigInt64Array lanes allocate.
 - A user callback monoid in the pull loop: a polymorphic call site deopts; fixed kinds only.
+- A prefix bit-directory as the top-level ROUTER ("Canopy", 2026-10-25): sharding the key space into
+  up to 65,536 sub-trees breaks every summary op (successor / predecessor across buckets
+  is what a bit directory does well) -- sumBelow / keyAtSum / rank / select need a summary
+  over the directory (in effect a Fenwick over the buckets) and splitAt / join become O(buckets).
+  The lookup-aid variant is R-9.
+- Per-view arena OWNERSHIP bitsets (2026-10-25): after splitAt every leaf on the right side changes
+  owner, so maintaining the masks makes splitAt / append O(leaves moved), not O(log n) -- it breaks the
+  ADR 0004 headline (A-4). B-18 stays OPEN (ADR 0004 DB-1 findings): A-6's O(1) reset with A-7
+  bumping epochs only on splitAt / append IS the B-18 case (b.clear() resets the pools; a's next
+  insert takes the leaf b's still-valid finger names). Its fix is a clear()-time epoch bump / finger
+  reset for the SumSequence planner, not ownership bits; the wrap / Smi-range parts are counter
+  width, not ownership.
+- A per-leaf positive-measure mask for zero-height skipping: the strict seek (I-4) already skips
+  zero measures and tree-level sums skip collapsed runs; inside <= B slots (16 default, up to 32 by ADR 0001
+  T-5) the saving is expected to be small (unmeasured)
+  and the mask is one more column every insert / remove / split / merge must shift. Reopen only for
+  a consumer that needs "next visible row" iteration.
+- From an external review (2026-10-26), each checked against the ruled ADRs:
+  - clear() zeroing the diagnostic counters: contradicts ADR 0003 G-8 (RULED, R-Y09) -- clear() keeps
+    the counters, resetCounters() zeroes them.
+  - An epoch stepped by a large odd constant "so a wrap collision is astronomically unlikely": any odd
+    step k has period exactly 2^32 in a 32-bit counter, the same as k = 1, so it buys nothing. B-18's
+    fix stays with the SumSequence planner (finger reset on splitAt / append / clear plus an epoch that
+    cannot re-match).
+  - A "sticky finger" that skips the fence check after a sequential call: the fence check is what
+    B-3 and B-17 are about (a class seen twice); skipping it saves only the range test (nominal: one or two compares) and does not change the
+    hit count. Sequential walks use the cursor (Y-11), not the finger.
+  - A zero-copy view of a leaf range: a `subarray()` allocates per call, and it hands the caller
+    writable engine storage -- one write breaks every cached sum (fail open). The candidate instead is
+    a copy-out read into caller typed arrays (O(log n + k) expected, 0 B).
+  - A construction `profile` preset ("virtual-list", "editor", ...): the finger policy and the summary
+    kinds are fixed by design, so a preset could bundle only B and dims -- a string option that hides
+    parameters from README examples.
+  - A rest-parameter insert for dims > 1: a rest array allocates per call (ROADMAP 3.6: 0 B/op on insertAt).
+    The non-allocating dims > 1 form stays OPEN (B-24): a caller-preallocated Float64Array,
+    or fixed positional measure arguments (dims <= 4, Y-10 lean).
+  - A capacity ceiling chosen to keep "height + spine + counters" in Smi range (e.g. 2^26): counters
+    are Int32 that wrap by design (ADR 0003 G-5) and height <= H(2^29) = 67; the binding limits are
+    indices and the count column (B-28; lean: MAX_CAPACITY <= 2^30 - 1) and ADR 0001 T-9's
+    Lmax <= 2^29, which binds first at B = 4 / 8 (C <= m x (2^29 - K)).
+  - A quantile-helper "numerical stability near 2^53" concern: every partial sum is exact by
+    ADR 0002 M-6, so the sums cannot drift; the one rounding step is the helper's own q -> target conversion
+    (q * total rounds, ulp 1 in [2^52, 2^53), and can move a strict seek by one element) -- a rule the
+    helper spec must state (e.g. an integer rank target), not a trunk concern; the 2^53 - 1 bound (M-4)
+    is the fail-closed total check.
 
 ---
 
@@ -337,3 +426,12 @@ listing the proof's assumptions and checking each one is.
 - Q-3 Cursor API: one preallocated cursor per instance vs a caller-owned cursor object created once.
 - Q-4 Id source for the pool: raw int32 vs lite-arena handle (generation checks cost a load per op).
 - Q-5 Whether IntervalMap needs a min-start summary for "free slots in [a, b)" (S5).
+- Q-6 DB-2 state signature (external review, 2026-10-25): de-duplication is already RULED -- ADR 0001
+  (DB-2 B values) defines DB-2 as a BFS over canonical states (shape + leaf sizes); test code may
+  allocate (a `Set` of canonical serializations). TRAP, against that ruled signature: shape + leaf
+  sizes merges states that differ in finger / cursor / free-list order and hides exactly the B-17
+  finger class (and B-18's reused leaf). Either the signature is the full engine state (shape, leaf
+  sizes, pool free heads; per view root, finger leaf + a finger-valid bit, cursor), each epoch
+  reduced to that valid bit (a raw monotone epoch makes nearly every state distinct), or the
+  shape-only BFS runs finger-disabled and every reached state's witness stream is replayed finger-on
+  (FINGER standing rule). Logged as B-32 against ADR 0001. "Depth 14-16 in milliseconds" is unmeasured.

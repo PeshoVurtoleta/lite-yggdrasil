@@ -3,14 +3,15 @@
  *
  * MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
- * Pre-release engine build (rung A-R2 of the E0 ladder): SumSequence init,
+ * Pre-release engine build (rung A-R3 of the E0 ladder): SumSequence init,
  * layout, pools, constructor validation, counters and getters (A-R1a), the
  * positional ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
- * seeks indexAtSum / sumBefore and clear(), with their C-10 checks (A-R1b), and
+ * seeks indexAtSum / sumBefore and clear(), with their C-10 checks (A-R1b),
  * the trunk insert side (A-R2): positional descents into _fpath, the Table 3
  * leaf split, the hot pull pass, the cold weight pull with H-Y rotations and
- * the structural re-home. A multi-leaf remove that underflows (rung A-R3)
- * fails closed. Nothing is released between rungs.
+ * the structural re-home, and the remove side (A-R3): the T-6 neighbour walk,
+ * the one repair (merge / equalize), the delete rebalance and the drain.
+ * splitAt / append are not built yet. Nothing is released between rungs.
  *
  * Layout (0005 C-44). Every view owns, in this order: _root, _len, _fl, _fb,
  * _fdepth, _fpath, _cv, _n, then the hoisted refs _hdr, _left, _right, _weight,
@@ -40,6 +41,8 @@ const YG_TOUCHES = 0;             // counter slots (C-24)
 const YG_PULLS = 1;
 const YG_MOVES = 2;
 const YG_SPLITS = 3;
+const YG_MERGES = 4;
+const YG_EQUALIZES = 5;
 const YG_ROTS = 6;
 const YG_ROTD = 7;
 const YG_MISSES = 9;
@@ -173,8 +176,19 @@ function ygInit(C, o, k) {
 
 // ---- pools (cold; C-15, R-E4) ---------------------------------------------------
 
+// Every R-E4 'pool' throw (R-P2, 0005 A6-4, C-3): the finger is invalidated
+// (NIL / 0 / 0) before the throw, so the next positional op is a miss and I-9
+// holds; _fpath may stay rewritten by the op's descent. Unreachable under C-15.
+function ygPoolFail(v, detail) {
+  v._fl = YG_NIL; // R-P2 (C-3)
+  v._fb = 0;
+  v._fdepth = 0;
+  ygFail('pool', detail);
+}
+
 // Leaf allocator: free list first, then bump. Returns the leaf id (a ref is
-// ~id). Exhaustion is RangeError 'pool' (R-E4); by the C-15 slack it never fires.
+// ~id). Exhaustion is RangeError 'pool' (R-E4, R-P2); by the C-15 slack it
+// never fires.
 function ygAllocLeaf(v) {
   const hdr = v._hdr;
   const next = v._lnext;
@@ -183,7 +197,7 @@ function ygAllocLeaf(v) {
     hdr[YG_LFREE] = next[id];
   } else {
     id = hdr[YG_LBUMP];
-    if (!(id < v._ar.Lmax)) ygFail('pool', 'leaf pool exhausted');
+    if (!(id < v._ar.Lmax)) ygPoolFail(v, 'leaf pool exhausted');
     hdr[YG_LBUMP] = id + 1;
   }
   next[id] = YG_END;
@@ -205,7 +219,7 @@ function ygAllocInt(v) {
     hdr[YG_IFREE] = next[id];
   } else {
     id = hdr[YG_IBUMP];
-    if (!(id < v._ar.Lmax - 1)) ygFail('pool', 'internal pool exhausted');
+    if (!(id < v._ar.Lmax - 1)) ygPoolFail(v, 'internal pool exhausted');
     hdr[YG_IBUMP] = id + 1;
   }
   next[id] = YG_END;
@@ -245,22 +259,17 @@ function ygMeasure(m) {
   if (!Number.isInteger(m)) ygFail('measure', 'must be an integer');
 }
 
-// insertAt's one cold re-check for the slots m1..m3 (RV-2): reached on a
-// present extra slot, or on every insert at dims > 1. C-10 order: the measures
-// of slots < dims, then the extra slots; then the validated slots are staged in
-// sx (scratch, not state).
-function ygSlots(ar, m1, m2, m3) {
+// insertAt's one cold re-check for the slots 1..dims-1 (RV-2, R-Q1 / A6-1):
+// reached on a present extra slot, or on every insert at dims > 1. It takes
+// no measure argument: insertAt typeof-checked slots 1..dims-1 inline and
+// staged them in sx (scratch, not state, C-44); this reads sx. C-10 order:
+// the measures of slots < dims (range, integer), then the extra slots (xs = 1
+// iff a slot >= dims is not undefined, computed in insertAt).
+function ygSlots(ar, xs) {
   const dims = ar.dims;
-  if (dims > 1) ygMeasure(m1);
-  if (dims > 2) ygMeasure(m2);
-  if (dims > 3) ygMeasure(m3);
-  if (((m1 !== undefined) & (dims < 2)) | ((m2 !== undefined) & (dims < 3)) | ((m3 !== undefined) & (dims < 4))) {
-    ygFail('extra', 'slot beyond dims must be undefined');
-  }
   const sx = ar.sx;
-  if (dims > 1) sx[1] = m1 + 0;
-  if (dims > 2) sx[2] = m2 + 0;
-  if (dims > 3) sx[3] = m3 + 0;
+  for (let d = 1; d < dims; d++) ygMeasure(sx[d]);
+  if (xs !== 0) ygFail('extra', 'slot beyond dims must be undefined');
 }
 
 // insertAt headroom over every dim, from the staged sx (M-4: m_d > MAX - t_d).
@@ -461,12 +470,13 @@ function ygHome(v, i) {
 // cold weight pull runs over _fpath[depth-1..0] with the T-2 balance check
 // (pulls <= 4(H+1), C-20), and the structural re-home descends to at.
 // touches = depth + d' (C-25, p = 2). Both pools are checked read-only before
-// the first write (R-E4); under C-15 neither check fires.
+// the first write (R-E4); a failing check drops the finger to NIL / 0 / 0
+// (R-P2); under C-15 neither check fires.
 function ygSplit(v, at, e, id, p, depth) {
   const ar = v._ar;
   const hdr = v._hdr;
-  if ((hdr[YG_LFREE] === YG_END) & !(hdr[YG_LBUMP] < ar.Lmax)) ygFail('pool', 'leaf pool exhausted');
-  if ((hdr[YG_IFREE] === YG_END) & !(hdr[YG_IBUMP] < ar.Lmax - 1)) ygFail('pool', 'internal pool exhausted');
+  if ((hdr[YG_LFREE] === YG_END) & !(hdr[YG_LBUMP] < ar.Lmax)) ygPoolFail(v, 'leaf pool exhausted');
+  if ((hdr[YG_IFREE] === YG_END) & !(hdr[YG_IBUMP] < ar.Lmax - 1)) ygPoolFail(v, 'internal pool exhausted');
   // ---- first write ----
   const f = ygAllocLeaf(v);
   const u = ygAllocInt(v);
@@ -552,30 +562,188 @@ function ygSplit(v, at, e, id, p, depth) {
   cn[YG_MISSES] += 1;
 }
 
-// A remove that underflows a leaf of a multi-leaf view needs T-6 (rung A-R3).
-// Until then a READ-ONLY descent (element rule; no _fpath / finger write)
-// finds the leaf and fails closed before any write. Called only when the root
-// is internal (a root leaf never underflows).
-function ygUnderflow(v, at) {
-  const left = v._left;
-  const right = v._right;
+// ---- remove side: T-6 underflow, repair, delete rebalance (cold; C-18, C-20, C-21, C-25, M-5) ----
+
+// Count + sums pull of one internal node, no weight read or write (C-20: an
+// equalize, and the neighbour side of a merge, change no leaf count). Each
+// value RECOMPUTED from the two children (C-45 / I-2). One pull.
+function ygPullC(v, x) {
+  const l = v._left[x];
+  const r = v._right[x];
   const count = v._count;
   const llen = v._llen;
-  let ref = v._root;
-  let k = at;
-  while (ref >= 0) {
-    const l = left[ref];
-    const cl = l < 0 ? llen[~l] : count[l];
-    if (k < cl) {
-      ref = l;
+  count[x] = (l < 0 ? llen[~l] : count[l]) + (r < 0 ? llen[~r] : count[r]);
+  const dims = v._ar.dims;
+  for (let d = 0; d < dims; d++) {
+    const S = v._sums[d];
+    const LS = v._lsum[d];
+    S[x] = (l < 0 ? LS[~l] : S[l]) + (r < 0 ? LS[~r] : S[r]);
+  }
+}
+
+// Recount one leaf's sum in every dim from its slots (C-45).
+function ygRecount(v, id) {
+  const ar = v._ar;
+  const b = id << ar.shift;
+  const end = b + v._llen[id];
+  for (let d = 0; d < ar.dims; d++) {
+    const col = v._meas[d];
+    let s = 0;
+    for (let j = b; j < end; j++) s += col[j];
+    v._lsum[d][id] = s;
+  }
+}
+
+// Move len slots (entity + every measure column) from slot `from` to slot
+// `to`; overlap-safe (copyWithin), allocation-free.
+function ygMove(v, to, from, len) {
+  if (len === 0) return;
+  v._ent.copyWithin(to, from, from + len);
+  const dims = v._ar.dims;
+  for (let d = 0; d < dims; d++) v._meas[d].copyWithin(to, from, from + len);
+}
+
+// The ONE repair(u, w, uLeft) (T-6; T-7 seams of rung S-R2 reuse it, M-5,
+// C-21). u is a leaf of any size s in [0, m-1], w its neighbour leaf, uLeft = 1
+// iff u precedes w in sequence order. (su, du): the path to u, su[du-1] =
+// parent(u) (du = 0: u is vu's root leaf). (sv, dv): the path to w. The first
+// sh entries are nodes both paths share: one tree (T-6) sh = du, the neighbour
+// walk wrote sv[du..dv) after it; two trees (a seam) sh = 0. vu is the view
+// whose tree holds u (its _root moves when the merge splices a root parent(u)
+// or frees a root leaf u); v reads the columns and counts. t = s(u) + s(w):
+//   merge (2t <= B): w takes the pair's t elements in order; u and parent(u)
+//     are freed (leaf + internal pools), sibling(u) replaces parent(u); then
+//     the delete rebalance: weight pull with the T-2 check (ygRotate, H-Y
+//     gamma = 2) up u's spine su[du-2..0] (C-20 cold rebalance).
+//   equalize: left leaf floor(t/2), right ceil(t/2); no weight changes, so
+//     pulls == |anc(u) U anc(w)| (C-20).
+// Returns the C-18 rep moves: merge uLeft ? (sL ? t : 0) : sR; equalize
+// uLeft ? sR : ceil(t/2). _len, hdr live and the finger are the caller's.
+function ygRepair(v, vu, u, w, uLeft, su, du, sv, dv, sh) {
+  const ar = v._ar;
+  const shift = ar.shift;
+  const llen = v._llen;
+  const lid = uLeft !== 0 ? u : w;
+  const rid = uLeft !== 0 ? w : u;
+  const sL = llen[lid];
+  const sR = llen[rid];
+  const t = sL + sR;
+  const bl = lid << shift;
+  const br = rid << shift;
+  const merge = 2 * t <= ar.B;
+  let rep;
+  if (merge) {
+    if (uLeft !== 0) {
+      ygMove(v, br + sL, br, sR);
+      ygMove(v, br, bl, sL);
+      rep = sL > 0 ? t : 0;
     } else {
-      k -= cl;
-      ref = right[ref];
+      ygMove(v, bl + sL, br, sR);
+      rep = sR;
     }
+    llen[w] = t;
+    ygRecount(v, w);
+  } else {
+    const h = t >> 1;
+    if (sL < h) {
+      ygMove(v, bl + sL, br, h - sL);
+      ygMove(v, br, br + h - sL, sR - (h - sL));
+      rep = sR;
+    } else {
+      ygMove(v, br + sL - h, br, sR);
+      ygMove(v, br, bl + h, sL - h);
+      rep = sR + sL - h;
+    }
+    llen[lid] = h;
+    llen[rid] = t - h;
+    ygRecount(v, lid);
+    ygRecount(v, rid);
   }
-  if (llen[~ref] === v._ar.m) {
-    ygFail('underflow', 'a leaf underflow needs the T-6 repair, not built yet (rung A-R3)');
+  // w's own path below the shared part: count + sums (its leaf count is kept)
+  let pulls = 0;
+  for (let q = dv - 1; q >= sh; q--) {
+    ygPullC(v, sv[q]);
+    pulls++;
   }
+  const cn = v._n;
+  if (merge) {
+    ygFreeLeaf(v, u);
+    if (du === 0) {
+      vu._root = YG_EMPTY_ROOT;
+    } else {
+      const left = v._left;
+      const right = v._right;
+      const weight = v._weight;
+      const par = su[du - 1];
+      const sib = left[par] === ~u ? right[par] : left[par];
+      if (du === 1) {
+        vu._root = sib;
+      } else {
+        const g = su[du - 2];
+        if (left[g] === par) left[g] = sib;
+        else right[g] = sib;
+      }
+      ygFreeInt(v, par); // merge frees parent(u)
+      for (let q = du - 2; q >= 0; q--) {
+        const x = su[q];
+        ygPullW(v, x);
+        pulls++;
+        const xl = left[x];
+        const xr = right[x];
+        const lw = xl < 0 ? 1 : weight[xl];
+        const rw = xr < 0 ? 1 : weight[xr];
+        if ((3 * lw < rw) | (3 * rw < lw)) pulls += ygRotate(v, x, lw, rw); // T-2, delete side
+      }
+    }
+    cn[YG_MERGES] += 1;
+  } else {
+    for (let q = du - 1; q >= 0; q--) {
+      ygPullC(v, su[q]); // equalize: no weight change
+      pulls++;
+    }
+    cn[YG_EQUALIZES] += 1;
+  }
+  cn[YG_PULLS] += pulls;
+  return rep;
+}
+
+// removeAt from a leaf u of a multi-leaf view that holds exactly m elements
+// (C-18 "remove that underflows"), reached from the hot body after its descent
+// wrote _fpath[0..D), D >= 1, and before any write. Removes the element at
+// in-leaf position p; the T-6 neighbour walk from sibling(u) writes
+// _fpath[D..dv), exactly the path to the in-order neighbour w on u's sibling
+// side (its pushes are touches); repair(u, w); then the structural re-home: a
+// cold descent to min(i, length-1) by the element rule (C-3).
+// touches = d(w) + d'(t') (C-25), moves = (m-1-p) + rep (C-18), one miss.
+function ygUnder(v, at, id, p, D) {
+  const ar = v._ar;
+  const base = id << ar.shift;
+  const len = v._llen[id];
+  const e = v._ent[base + p];
+  ygMove(v, base + p, base + p + 1, len - 1 - p);
+  v._llen[id] = len - 1;
+  const left = v._left;
+  const right = v._right;
+  const fpath = v._fpath;
+  const par = fpath[D - 1];
+  const uLeft = left[par] === ~id ? 1 : 0;
+  let ref = uLeft !== 0 ? right[par] : left[par];
+  let dv = D;
+  while (ref >= 0) {
+    fpath[dv] = ref;
+    dv++;
+    ref = uLeft !== 0 ? left[ref] : right[ref];
+  }
+  const rep = ygRepair(v, v, id, ~ref, uLeft, fpath, D, fpath, dv, D);
+  const n = v._len;
+  v._hdr[YG_LIVE] -= 1;
+  v._len = n - 1;
+  const d2 = ygHome(v, Math.min(at, n - 2));
+  const cn = v._n;
+  cn[YG_TOUCHES] += dv + d2;
+  cn[YG_MISSES] += 1;
+  cn[YG_MOVES] += len - 1 - p + rep;
+  return e;
 }
 
 // ---- the view ---------------------------------------------------------------------
@@ -663,7 +831,9 @@ export class SumSequence {
   // rule (k < count[left]). A root-leaf view runs no loop (d = 0). Then the
   // leaf work and, for a non-structural mutation, ONE hot pull pass over
   // _fpath (count + sums recomputed from the children, no weight read; pulls
-  // == d, C-20, C-45). Every op is a finger miss (the core never READS the
+  // == d, C-20, C-45). The only branch to cold structural code: insertAt into
+  // a full leaf (ygSplit), removeAt from a leaf of length m when the view has
+  // >= 2 leaves (ygUnder, T-6). Every op is a finger miss (the core never READS the
   // finger until the hit test, C-4) and re-homes to the touched leaf; touches
   // += d (C-25). Counters are bumped after the loops (0003 G-5 / G-7).
 
@@ -678,15 +848,24 @@ export class SumSequence {
     if (!Number.isInteger(m0)) ygFail('measure', 'must be an integer');
     const ar = this._ar;
     const dims = ar.dims;
-    if (((m1 !== undefined) & (dims < 2)) | ((m2 !== undefined) & (dims < 3)) | ((m3 !== undefined) & (dims < 4)) |
-        (dims > 1)) {
-      ygSlots(ar, m1, m2, m3);
+    const sx = ar.sx;
+    if (dims > 1) {
+      // R-Q1 (A6-1, C-44): typeof of slots 1..dims-1 before any store into sx
+      if ((typeof m1 !== 'number') | ((dims > 2) & (typeof m2 !== 'number')) |
+          ((dims > 3) & (typeof m3 !== 'number'))) {
+        ygFail('measure', 'must be a number');
+      }
+      sx[1] = m1 + 0;
+      if (dims > 2) sx[2] = m2 + 0;
+      if (dims > 3) sx[3] = m3 + 0;
     }
+    const xs = ((m1 !== undefined) & (dims < 2)) | ((m2 !== undefined) & (dims < 3)) |
+        ((m3 !== undefined) & (dims < 4));
+    if (xs | (dims > 1)) ygSlots(ar, xs);
     const hdr = this._hdr;
     if (!(hdr[YG_LIVE] < ar.C)) ygFail('capacity', 'live + 1 > C');
     const r = this._root;
     const t0 = r === YG_EMPTY_ROOT ? 0 : r < 0 ? this._lsum[0][~r] : this._sums[0][r];
-    const sx = ar.sx;
     sx[0] = m0 + 0; // staged (scratch, not state; -0 -> +0, 0002 M-2)
     if ((m0 > YG_MAX - t0) | (dims > 1)) ygHeadroomIns(this);
     if (r === YG_EMPTY_ROOT) {
@@ -774,7 +953,6 @@ export class SumSequence {
       ygDrain(this, ~r);
       return e1;
     }
-    if (r >= 0) ygUnderflow(this, at);
     const left = this._left;
     const right = this._right;
     const count = this._count;
@@ -795,9 +973,10 @@ export class SumSequence {
         ref = right[ref];
       }
     }
-    // ---- leaf write ----
     const id = ~ref;
     const len = llen[id];
+    if ((len === ar.m) & (depth !== 0)) return ygUnder(this, at, id, k, depth);
+    // ---- leaf write ----
     const base = id << ar.shift;
     const p = base + k;
     const e = ent[p];

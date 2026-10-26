@@ -2,7 +2,9 @@
 // C-2 (seeks are neutral), C-3 (re-home after every positional op; structural op = cold descent to i by the element
 // rule `k < count[left]`; a throwing op re-homes nothing), C-5 (NIL / 0 / 0 on a drain), C-25/C-26 (hit / miss
 // partition), C-27/C-28 (walker I-9), C-34 (xorshift32 constants), C-35 (MF-1..MF-5, wrappers per RF-3 / A5-18),
-// C-43 M-1 (every positional op is a miss until F-R2; the core writes the finger and never reads it).
+// C-43 M-1 (every positional op is a miss until F-R2; the core writes the finger and never reads it). Rung A-R3: the
+// lane covers underflowing removes too (merge / equalize = structural: cold descent to min(i, length-1) over the post
+// state; drain = NIL / 0 / 0 with _fpath kept).
 //
 // Oracle independence: the model is two plain arrays per view; the expected finger (leaf ref, fb, depth, path) is
 // computed by this file's own root-to-leaf descent over a deep-copied snapshot, never by the engine's descent.
@@ -74,7 +76,7 @@ function newRun(B, wrap, C, factory) {
   const R = {
     f, B, m: B >> 2, NIL, wrap, C: C || 256,
     ent: [[], []], mea: [[], []], cE: 1,
-    stats: { ins: 0, rem: 0, rd: 0, seek: 0, skip: 0, splits: 0, drains: 0, multi: 0, nilSeen: 0 },
+    stats: { ins: 0, rem: 0, rd: 0, seek: 0, skip: 0, splits: 0, rstruct: 0, drains: 0, multi: 0, nilSeen: 0 },
     cn: new Int32Array(12), cn2: new Int32Array(12),
   };
   R.chk = (cond, cls, msg) => { if (!cond) throw new Fail(cls, msg); };
@@ -99,14 +101,18 @@ function newRun(B, wrap, C, factory) {
     const hits0 = R.cn[CN.fingerHits];
     const miss0 = R.cn[CN.fingerMisses];
     const spl0 = R.cn[CN.splits];
+    const mrg0 = R.cn[CN.merges] + R.cn[CN.equalizes];
     run(v);
     if (modelApply) modelApply();
     v.readCounters(R.cn2);
     const dh = R.cn2[CN.fingerHits] - hits0;
     const dm = R.cn2[CN.fingerMisses] - miss0;
-    const structural = kind === 'ins' && R.cn2[CN.splits] - spl0 > 0;
     const drained = kind === 'rem' && n === 1;
-    if (structural) R.stats.splits++;
+    // structural: a split (insert) or a merge / equalize (remove, not the drain), read from the spec'd counters
+    const structural = (kind === 'ins' && R.cn2[CN.splits] - spl0 > 0) ||
+      (kind === 'rem' && !drained && R.cn2[CN.merges] + R.cn2[CN.equalizes] - mrg0 > 0);
+    if (structural && kind === 'ins') R.stats.splits++;
+    if (structural && kind === 'rem') R.stats.rstruct++;
     if (R.wrap) {
       R.wrap({ v, vi, kind, i, n, pre, preF, structural, drained, snap: f.snapshot, descend });
     }
@@ -130,8 +136,10 @@ function newRun(B, wrap, C, factory) {
     } else if (kind === 'ins') {
       R.cmpFinger(vi, descend(post, vi, i), tag);
     } else if (kind === 'rem') {
-      // non-structural: the touched leaf, tree shape unchanged (underflow removes are A-R3 and skipped)
-      R.cmpFinger(vi, descend(pre, vi, i), tag);
+      // C-3: structural remove (merge / equalize) = cold descent to min(i, length-1) over the post state;
+      // non-structural = the touched leaf, tree shape unchanged
+      if (structural) R.cmpFinger(vi, descend(post, vi, Math.min(i, n - 2)), tag);
+      else R.cmpFinger(vi, descend(pre, vi, i), tag);
     } else {
       R.cmpFinger(vi, descend(post, vi, i), tag);
     }
@@ -149,17 +157,8 @@ function doIns(R, vi, i, e, mm) {
   R.stats.ins++;
 }
 function doRem(R, vi, i) {
-  R.op(vi, 'rem', i, 'removeAt', (v) => v.removeAt(i), () => { R.ent[vi].splice(i, 1); R.mea[vi].splice(i, 1); });
+  R.op(vi, 'rem', i, 'removeAt', (v) => R.chk(v.removeAt(i) === R.ent[vi][i], 'value', 'removeAt(' + i + ') entity'), () => { R.ent[vi].splice(i, 1); R.mea[vi].splice(i, 1); });
   R.stats.rem++;
-}
-
-// A remove is non-underflowing when the view is one leaf (any length) or the leaf holding i has len > m (m = B/4).
-function removable(R, vi, i) {
-  const v = C(R, vi);
-  if (v._root < 0) return true;
-  const s = R.f.snapshot();
-  const d = descend(s, vi, i);
-  return s.leaf.len[~d.fl] > R.m;
 }
 
 function mixStream(R, seed, N) {
@@ -195,7 +194,6 @@ function mixStream(R, seed, N) {
     last = i;
     if (cls === 0) doIns(R, vi, i, R.cE++, mm);
     else if (cls === 1) {
-      if (!removable(R, vi, i)) { R.stats.skip++; continue; }
       doRem(R, vi, i);
     } else if (cls === 2) {
       R.op(vi, 'rd', i, 'setMeasure', (v) => v.setMeasure(i, 0, mm), () => { R.mea[vi][i] = mm; });
@@ -230,6 +228,7 @@ function drainRow(R, vi) {
   R.stats.drains++;
 }
 
+const RSTRUCT_FLOOR = 5;
 const CFGS = [];
 for (const B of [4, 8, 16]) for (const seed of [1, 2, 3]) CFGS.push({ B, seed });
 
@@ -266,6 +265,8 @@ test('Finger lane: B 4 / 8 / 16 x seeds 1..3, 2000 ops each, every op checked (C
     assert.ok(s.ins >= 300, tag + ' inserts ' + s.ins);
     assert.ok(s.splits >= 10, tag + ' structural inserts ' + s.splits);
     assert.ok(s.rem >= 30, tag + ' removes ' + s.rem);
+    assert.ok(s.rstruct >= RSTRUCT_FLOOR, tag + ' structural removes (merge / equalize) ' + s.rstruct);
+    assert.equal(s.skip, 0, tag + ' no op is skipped any more');
     assert.ok(s.rd >= 60, tag + ' reads/sets ' + s.rd);
     assert.ok(s.seek >= 60, tag + ' seeks ' + s.seek);
     assert.ok(s.multi >= 500, tag + ' multi-leaf post-op states ' + s.multi);
@@ -352,28 +353,157 @@ for (const B of [4, 8, 16]) {
   });
 }
 
-test('Finger row (C-3): an underflowing removeAt, if it throws a RangeError (A-R2), re-homes nothing', () => {
-  const f = engineFactory(64, { leafSize: 16, dims: 1 }, 1);
-  const v = f.views[0];
-  for (let k = 0; k < 17; k++) v.insertAt(k, k, k + 1); // 13|4
-  v.getMeasure(2, 0);
-  const before = json(fingerOf(v));
+// C-3 throwing-op row (A-R3 form): the underflow throw is gone, so the teeth move to the throws that remain: a bad index
+// or measure on a multi-leaf view with the finger in the OTHER root subtree. _fl, _fb, _fdepth and the whole _fpath
+// (every slot) are byte-identical, and no counter moves. The pool throw is exempt (R-P1 / R-P2) and has its row in
+// Core.test.
+function expectThrowIdentical(v, fn, tag) {
+  const before = json(fingerOf(v)) + json(Array.from(v._fpath));
+  const cnt = new Int32Array(12);
+  v.readCounters(cnt);
+  const c0 = cnt.slice();
   let threw = false;
-  try { v.removeAt(16); } catch (e) { threw = e instanceof RangeError; if (!threw) throw e; }
-  // At A-R2 the underflow throws; once A-R3 lands the same call succeeds and the C-35 MF-4 todo below takes over.
-  if (threw) assert.equal(json(fingerOf(v)), before);
-  else assert.equal(v._len, 16);
+  try { fn(); } catch (e) { threw = e instanceof RangeError; if (!threw) throw e; }
+  assert.ok(threw, tag + ': must throw RangeError');
+  assert.equal(json(fingerOf(v)) + json(Array.from(v._fpath)), before, tag + ': finger fields / _fpath changed on a throw');
+  v.readCounters(cnt);
+  assert.deepEqual(Array.from(cnt), Array.from(c0), tag + ': a throwing op counts nothing');
+}
+
+for (const B of [4, 8, 16]) {
+  test('Finger row (C-3): throwing removeAt / insertAt / setMeasure on a multi-leaf view re-home nothing, B=' + B, () => {
+    const f = engineFactory(256, { leafSize: B, dims: 1 }, 1);
+    const v = f.views[0];
+    const n = 3 * B;
+    for (let k = 0; k < n; k++) v.insertAt(k, k, k + 1);
+    assert.ok(v._root >= 0, 'multi-leaf view');
+    const bad = [
+      ['removeAt(n)', () => v.removeAt(n)],
+      ['removeAt(-1)', () => v.removeAt(-1)],
+      ['removeAt(1.5)', () => v.removeAt(1.5)],
+      ['insertAt(n + 1)', () => v.insertAt(n + 1, 1, 1)],
+      ['insertAt bad measure', () => v.insertAt(0, 1, -1)],
+      ['setMeasure(n)', () => v.setMeasure(n, 0, 1)],
+      ['setMeasure bad measure', () => v.setMeasure(0, 0, 1.5)],
+    ];
+    for (const [tag, fn] of bad) {
+      // finger far from the touched side: home it at the last element, then at the first, then throw
+      v.getMeasure(n - 1, 0);
+      expectThrowIdentical(v, fn, tag + ' (finger last)');
+      v.getMeasure(0, 0);
+      expectThrowIdentical(v, fn, tag + ' (finger first)');
+    }
+    assert.equal(walk(f.snapshot(), { B, dims: 1 }), null);
+  });
+}
+
+// Must-fail control: expectThrowIdentical must catch a throwing op that re-homes first. The faulty op rewrites one
+// finger field, then throws; each of fl / fb / fdepth / fpath must be caught on its own (state-restore, no source patch).
+test('Finger control: a throw that re-homes before throwing is caught on each of _fl, _fb, _fdepth, _fpath', () => {
+  const f = engineFactory(256, { leafSize: 4, dims: 1 }, 1);
+  const v = f.views[0];
+  for (let k = 0; k < 12; k++) v.insertAt(k, k, 1);
+  assert.ok(v._root >= 0 && v._fdepth >= 1);
+  const faults = {
+    fl: () => { v._fl = v._fl === 0 ? 1 : 0; },
+    fb: () => { v._fb += 1; },
+    fdepth: () => { v._fdepth -= 1; },
+    fpath: () => { v._fpath[0] = v._fpath[0] + 1; },
+  };
+  for (const name of Object.keys(faults)) {
+    v.getMeasure(11, 0);
+    const keep = { ...fingerOf(v) };
+    const keepPath = Int32Array.from(v._fpath);
+    assert.throws(() => expectThrowIdentical(v, () => { faults[name](); throw new RangeError('index fault'); }, name),
+      assert.AssertionError, name + ' fault must be caught');
+    setFinger(v, keep);
+    v._fpath.set(keepPath);
+  }
+  // the control is sound: a clean throw passes
+  expectThrowIdentical(v, () => v.removeAt(99), 'clean');
 });
 
-test('Finger row: C-35 MF-4, B=16, 17 appends, removeAt(16) -> 8|8 (true fb 8); removeAt(14) returns 14', { todo: 'A-R3 (equalize: the underflowing remove throws at A-R2)' }, () => {
+test('Finger row: C-35 MF-4, B=16, 17 appends, removeAt(16) -> 8|8 (true fb 8); removeAt(14) returns 14; finger per C-3', () => {
   const f = engineFactory(64, { leafSize: 16, dims: 1 }, 1);
   const v = f.views[0];
   for (let k = 0; k < 17; k++) v.insertAt(k, k, k + 1);
-  v.removeAt(16);
-  assert.deepEqual(leafLens(f.snapshot(), 0), [8, 8]);
+  assert.equal(v.removeAt(16), 16); // entity i at index i
+  let s = f.snapshot();
+  assert.deepEqual(leafLens(s, 0), [8, 8]);
+  // structural: cold descent to min(16, length - 1) = 15, which lives in the right leaf (fb 8, depth 1)
+  const d15 = descend(s, 0, 15);
+  assert.equal(d15.fb, 8);
+  assert.equal(v._fl, d15.fl);
   assert.equal(v._fb, 8);
+  assert.equal(v._fdepth, 1);
+  assert.equal(v._fpath[0], d15.path[0]);
   assert.equal(v.removeAt(14), 14);
-  assert.equal(walk(f.snapshot(), { B: 16, dims: 1 }), null);
+  s = f.snapshot();
+  assert.deepEqual(leafLens(s, 0), [8, 7]); // 14 sits in the right leaf (8..15), len 8 > m: non-structural
+  const d14 = descend(s, 0, 14); // non-structural: the touched leaf is the right leaf, which still holds index 14 of 15
+  assert.equal(v._fb, 8);
+  assert.equal(v._fl, d14.fl);
+  assert.equal(walk(s, { B: 16, dims: 1 }), null);
+});
+
+// Drain of a multi-leaf view: remove the last element until empty. The final remove writes NIL / 0 / 0 and leaves
+// _fpath contents exactly as they were before it (C-3 "_fpath kept").
+test('Finger row: draining a multi-leaf view ends at _fl NIL, _fb 0, _fdepth 0, _fpath unchanged by the last remove', () => {
+  for (const B of [4, 8, 16]) {
+    const f = engineFactory(64, { leafSize: B, dims: 1 }, 1);
+    const v = f.views[0];
+    const NIL = f.snapshot().NIL;
+    const n = 2 * B + 1;
+    for (let k = 0; k < n; k++) v.insertAt(k, k, 1);
+    assert.ok(v._root >= 0, 'multi-leaf start');
+    while (v._len > 1) {
+      const last = v._len - 1; // entity i sits at index i
+      assert.equal(v.removeAt(last), last);
+      assert.equal(walk(f.snapshot(), { B, dims: 1 }), null);
+    }
+    const pathBefore = Int32Array.from(v._fpath);
+    assert.equal(v.removeAt(0), 0);
+    assert.equal(v._len, 0);
+    assert.equal(v._fl, NIL);
+    assert.equal(v._fb, 0);
+    assert.equal(v._fdepth, 0);
+    assert.deepEqual(Array.from(v._fpath), Array.from(pathBefore));
+    assert.equal(walk(f.snapshot(), { B, dims: 1 }), null);
+  }
+});
+
+// Merge row: B=16, 17 appends (13|4); nine removeAt(0) leave 4|4... (13 -> 4 in leaf 0, total 8); the tenth removeAt(0)
+// underflows leaf 0 (3 < m = 4) with total 7 <= B, a merge that deletes one of the two leaves (spec: merge frees one).
+// The finger is homed on leaf 0 (variant A) or on leaf 1 (variant B) first; whichever leaf the merge frees, the finger
+// ends on a live leaf (walker I-9) and equals the cold descent to index 0 of the post state. Across both variants the
+// old finger leaf must be the freed one at least once, or the row would not test the deleted-finger case.
+test('Finger row: a merge that deletes the finger\'s old leaf re-homes onto a live leaf (I-9, descent to min(i, length-1))', () => {
+  let deletedSeen = 0;
+  for (const variant of ['leaf0', 'leaf1']) {
+    const f = engineFactory(64, { leafSize: 16, dims: 1 }, 1);
+    const v = f.views[0];
+    const cnt = new Int32Array(12);
+    for (let k = 0; k < 17; k++) v.insertAt(k, k, 1);
+    for (let k = 0; k < 9; k++) assert.equal(v.removeAt(0), k);
+    assert.deepEqual(leafLens(f.snapshot(), 0), [4, 4]);
+    if (variant === 'leaf1') v.getMeasure(7, 0); else v.getMeasure(0, 0);
+    const preFl = v._fl;
+    v.readCounters(cnt);
+    const m0 = cnt[CN.merges];
+    assert.equal(v.removeAt(0), 9);
+    v.readCounters(cnt);
+    assert.equal(cnt[CN.merges] - m0, 1, variant + ': the tenth remove is a merge');
+    const s = f.snapshot();
+    assert.equal(v._len, 7);
+    assert.deepEqual(leafLens(s, 0), [7]);
+    const d = descend(s, 0, 0);
+    assert.equal(v._fl, d.fl);
+    assert.equal(v._fb, 0);
+    assert.equal(v._fdepth, d.depth);
+    assert.equal(walk(s, { B: 16, dims: 1 }), null, variant + ': walker I-9');
+    if (preFl !== v._fl) deletedSeen++;
+  }
+  assert.ok(deletedSeen >= 1, 'the freed leaf was the old finger leaf in at least one variant');
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -403,6 +533,12 @@ control('seek writes the finger (re-home to the sought element)', (c) => {
   const d = c.descend(c.snap(), c.vi, c.n - 1);
   setFinger(c.v, { fl: d.fl, fb: d.fb, depth: d.depth, path: d.path });
 }, 'neutral', 600);
+
+// MF-4 (remove side): a structural remove (merge / equalize) without re-home keeps the pre-op finger
+control('MF-4 a structural remove keeps the pre-op finger', (c) => {
+  if (c.kind !== 'rem' || !c.structural) return;
+  setFinger(c.v, c.preF);
+}, 're-home', 2000);
 
 // MF-3: a drain keeps the finger (C-35, C-28 a/b)
 control('MF-3 a drain keeps the finger', (c) => {

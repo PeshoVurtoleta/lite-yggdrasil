@@ -1,4 +1,4 @@
-// Type declarations for @zakkster/lite-yggdrasil (rung A-R2: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits and rotations; an underflowing remove throws until rung A-R3).
+// Type declarations for @zakkster/lite-yggdrasil (rung A-R3: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain).
 export declare const VERSION: string;
 
 export interface SumSequenceOptions {

@@ -115,7 +115,7 @@ gated in COUNTS, not time:
 
 - DETERMINISTIC (gated every run): trunk nodes touched per op, pulls per op, leaf moves per op.
   touches(op) <= p(op) * H(Lmax(n)) + k(op), all integers (ADR 0003 G-11; the slope
-  c = 2.409 of log2 L is REPORTED only), k(op) the leaf constant -- an exact, host-independent line. The foil's count (elements moved) is n-linear.
+  c = 2.409 of log2 L is REPORTED only), k(op) = 0 (0005 C-25) -- an exact, host-independent line. The foil's count (elements moved) is n-linear.
 - REPORTED (docs only, with provenance): ns/op vs log2 n, fitted with lite-logn's frozen family fit
   (r2 floor 0.958) for display. Never a gate (no hosted CI; sibling convention).
 
@@ -230,7 +230,7 @@ A benchmark page with no loss rows is a red flag; the suite treats it as a faile
   a hot path.
 - I-8 **Height**: height <= spine-stack size = H(Lmax), Lmax = ceil(C / m) + K (ADR 0001 T-9 /
   T-10, ADR 0004 A-5).
-- I-9 **Finger**: valid only while its epoch equals the tree epoch; a hit never descends. Incomplete as stated -- see B-17; the SumSequence planner fixes it.
+- I-9 **Finger**: positional only, per-view path stack, no epoch (0005 C-1..C-5).
 
 ---
 
@@ -258,26 +258,26 @@ by every design review; a class seen twice becomes a standing gate.
 | B-14 | (S3) ROADMAP DB-2 claimed B-1 "falls out at B = 4 (sibling leaves of 1 and 4)": at B = 4 those weigh 2 vs 5 under element-count+1 weights -- balanced; the unfixable pair exists only at B = 16 (5 vs 17). | planner P-A (ADR 0001 M-1), confirmed by node arithmetic | DB-8 mutation-tested gates (run the mutant against the claimed witness) |
 | B-15 | (S3) The Adams size-only-weight mutant is EQUIVALENT on I-1 shapes (3(wl-1) >= wr-1 implies 3wl >= wr): it cannot be a deletion witness. | planner P-A | DB-8 (a mutant that no gate can kill is not a control) -> W-DEL / W-INS / W-TIE |
 | B-16 | (S3) ROADMAP HOT PATH "<= 15 leaf moves" is false: an interior split at p = 1 writes 16 at B = 16. | planner P-A | DB-9 count-first claims |
-| B-17 | (S1) Finger rule incomplete: (a) an ordinary miss does not move the finger and no epoch bump follows a non-finger mutation -> stale positional base returns a wrong row (B = 8, 9 rows, setMeasure(0), indexAtSum(75) -> 7, true 5); (b) draining the last element frees the leaf on a "hit" -> the next insert writes a freed leaf; (c) equalize ("no shape change") leaves a stale keyed fence -> I-6 broken. ADR 0001 and 0003 also define "hit" differently. SECOND finger-class bug (B-3) -> STANDING GATE: every op stream run with the finger enabled and disabled must give identical answers and identical walker state. | DB-1 adversarial review (also pre-read P-4) | DB-6 metamorphic (finger on == finger off) + DB-2 with the finger live |
-| B-18 | (S2) Epoch storage / wrap / clear() unspecified: b.clear() O(1) pool reset then a's insert reuses b's finger leaf; an Int32 epoch re-matches after 2^32 bumps; a plain field leaves Smi range after 2^30. | DB-1 | DB-7 boundary catalogue (counters and epochs at 2^30 / 2^31 / 2^32) |
-| B-19 | (S2) ADR 0003 G-12 "prepends mirror" is false for moves: a prepend into a packed leaf shifts every element (B = 16, 200 prepends: 1960 moves vs formula 45). | DB-1 | DB-9 count-first (simulate the edge stream before writing the formula) |
-| B-20 | (S2) ADR 0004 assertion-1 control can never fail: views 1365/1365/1366 make <= 1023 leaves under ADR 0001 T-9, not 1026; and 0004 A-5 ("one under-min leaf per view") contradicts T-9. Working control: views 1 / 1 / 4094 -> 1025. | DB-1 | DB-8 (run every control against the correct code AND the mutant before writing it down) |
-| B-21 | (S2) No way to choose B: DB-2 needs B = 4 / 8, the .d.ts options are { dims } only. | DB-1 | DB-11 spike (write the test harness against the API first) |
-| B-22 | (S2) The entity argument is never validated: undefined -> 0, 2^31 -> -2^31, 1.5 -> 1 in an Int32 column (fail open). | DB-1 | DB-7 boundary catalogue (every argument, not only measures) |
-| B-23 | (S2) I-7 ("no value >= 2^31 read from a Uint32Array on a hot path") contradicts SumMap's uint32 key column. | DB-1 | DB-7 + the lite-loglogn C-14 boxing lesson |
-| B-24 | (S2) The virtual-list consumer needs ops no document specifies: entityAt(i), getMeasure, a SumSequence cursor seek, a dims > 1 insert form that does not allocate, entity -> index (parent column; ADR 0004 O-3 defers it to v0.4). | DB-1 | DB-11 consumer-first spike |
-| B-25 | (S3) ADR 0001 T-2's per-ancestor balance check is dead on the hot path: weight = leaf count, so a non-splitting insert / non-underflowing remove changes no weight. | DB-1 | DB-4 (restating the proof's preconditions per op) |
-| B-26 | (S3) Seam-repair counts disagree (0004 A-4 "one", 0001 T-7 "<= 2" / join "<= 1", 0003 row 11 "<= 2"); T-7's "both single leaves -> one leaf" is false (10 + 10 -> two leaves). | DB-1 | DB-1 cross-document read |
-| B-27 | (S3) Table 3 hysteresis row holds only for the interior split: after a 13 + 4 edge split one remove underflows. | DB-1 | DB-2 |
-| B-28 | (S3) No stated MAX_CAPACITY / dims cap: Int32 count overflows near 2^31; indices >= 2^30 leave Smi range. | DB-1 | DB-7 |
-| B-29 | (S3) ADR 0003 G-13 can never fail (stack size = H(Lmax) by T-10, so G-13 reduces to "H is monotone"); "H(L) <= log_{4/3}(L) - 1.4" is false at L = 1. | DB-1 | DB-8 |
+| B-17 | (S1) Finger rule incomplete: (a) an ordinary miss does not move the finger and no epoch bump follows a non-finger mutation -> stale positional base returns a wrong row (B = 8, 9 rows, setMeasure(0), indexAtSum(75) -> 7, true 5); (b) draining the last element frees the leaf on a "hit" -> the next insert writes a freed leaf; (c) equalize ("no shape change") leaves a stale keyed fence -> I-6 broken. ADR 0001 and 0003 also define "hit" differently. SECOND finger-class bug (B-3) -> STANDING GATE: every op stream run with the finger enabled and disabled must give identical answers and identical walker state. -> CLOSED 0005 C-1..C-5 (c: DEFERRED SumMap) | DB-1 adversarial review (also pre-read P-4) | DB-6 metamorphic (finger on == finger off) + DB-2 with the finger live |
+| B-18 | (S2) Epoch storage / wrap / clear() unspecified: b.clear() O(1) pool reset then a's insert reuses b's finger leaf; an Int32 epoch re-matches after 2^32 bumps; a plain field leaves Smi range after 2^30. -> CLOSED 0005 C-6 | DB-1 | DB-7 boundary catalogue (counters and epochs at 2^30 / 2^31 / 2^32) |
+| B-19 | (S2) ADR 0003 G-12 "prepends mirror" is false for moves: a prepend into a packed leaf shifts every element (B = 16, 200 prepends: 1960 moves vs formula 45). -> CLOSED 0005 C-19 | DB-1 | DB-9 count-first (simulate the edge stream before writing the formula) |
+| B-20 | (S2) ADR 0004 assertion-1 control can never fail: views 1365/1365/1366 make <= 1023 leaves under ADR 0001 T-9, not 1026; and 0004 A-5 ("one under-min leaf per view") contradicts T-9. The proposed 1 / 1 / 4094 control fails too (peaks at 1023); 1365/1365/1366 at 1017; control = C-36. -> CLOSED 0005 C-36 | DB-1 | DB-8 (run every control against the correct code AND the mutant before writing it down) |
+| B-21 | (S2) No way to choose B: DB-2 needs B = 4 / 8, the .d.ts options are { dims } only. -> CLOSED 0005 C-11 | DB-1 | DB-11 spike (write the test harness against the API first) |
+| B-22 | (S2) The entity argument is never validated: undefined -> 0, 2^31 -> -2^31, 1.5 -> 1 in an Int32 column (fail open). -> CLOSED 0005 C-9 | DB-1 | DB-7 boundary catalogue (every argument, not only measures) |
+| B-23 | (S2) I-7 ("no value >= 2^31 read from a Uint32Array on a hot path") contradicts SumMap's uint32 key column. -> DEFERRED SumMap | DB-1 | DB-7 + the lite-loglogn C-14 boxing lesson |
+| B-24 | (S2) The virtual-list consumer needs ops no document specifies: entityAt(i), getMeasure, a SumSequence cursor seek, a dims > 1 insert form that does not allocate, entity -> index (parent column; ADR 0004 O-3 defers it to v0.4). -> CLOSED 0005 C-12 | DB-1 | DB-11 consumer-first spike |
+| B-25 | (S3) ADR 0001 T-2's per-ancestor balance check is dead on the hot path: weight = leaf count, so a non-splitting insert / non-underflowing remove changes no weight. -> CLOSED 0005 C-20 | DB-1 | DB-4 (restating the proof's preconditions per op) |
+| B-26 | (S3) Seam-repair counts disagree (0004 A-4 "one", 0001 T-7 "<= 2" / join "<= 1", 0003 row 11 "<= 2"); T-7's "both single leaves -> one leaf" is false (10 + 10 -> two leaves). -> CLOSED 0005 C-21 | DB-1 | DB-1 cross-document read |
+| B-27 | (S3) Table 3 hysteresis row holds only for the interior split: after a 13 + 4 edge split one remove underflows. -> CLOSED 0005 C-22 | DB-1 | DB-2 |
+| B-28 | (S3) No stated MAX_CAPACITY / dims cap: Int32 count overflows near 2^31; indices >= 2^30 leave Smi range. -> CLOSED 0005 C-14 | DB-1 | DB-7 |
+| B-29 | (S3) ADR 0003 G-13 can never fail (stack size = H(Lmax) by T-10, so G-13 reduces to "H is monotone"); "H(L) <= log_{4/3}(L) - 1.4" is false at L = 1. -> CLOSED 0005 C-23 | DB-1 | DB-8 |
 | B-30 | (S3) ROADMAP 3.1 asked for torture / perf / bench scripts on day 1 with no engine: green on nothing. | pre-read (S0) | DB-8 (a gate with no subject cannot fail) -> ruled: scripts land with their subject |
 | B-31 | (S2) The strongest competent SumSequence rival -- the blocked array (sqrt decomposition) -- was missing from the foil table and the loss table, so the benchmark plan could only beat O(n) foils and Fenwick-rebuild. | external review (lite-pick session, 2026-10-25) | DB-1 applied to the benchmark plan: ask "what would a competent engineer write instead?" before fixing the foil list |
-| B-32 | (S2) ADR 0001's DB-2 canonical state (shape + leaf sizes) merges states that differ in finger / cursor / pool free-list order, so the exhaustive run can miss the B-17 / B-18 classes; a raw epoch in the signature would instead make nearly every state distinct. | external review of a Canopy blueprint + doc-truth review (2026-10-25), RESEARCH Q-6 | DB-4 applied to the state merge: a merge is sound only if it distinguishes every field the next op reads |
+| B-32 | (S2) ADR 0001's DB-2 canonical state (shape + leaf sizes) merges states that differ in finger / cursor / pool free-list order, so the exhaustive run can miss the B-17 / B-18 classes; a raw epoch in the signature would instead make nearly every state distinct. -> CLOSED 0005 C-31 | external review of a Canopy blueprint + doc-truth review (2026-10-25), RESEARCH Q-6 | DB-4 applied to the state merge: a merge is sound only if it distinguishes every field the next op reads |
 
 Standing rules from repeated classes (2026-10-25). Class seen twice becomes a standing gate / law
 (DB-12). FINGER (B-3, B-17): every op stream is run with the finger enabled and disabled and must give
-identical answers and identical walker state (the finger-on == finger-off metamorphic gate).
+identical answers and identical walker state (the finger-on == finger-off metamorphic gate; walker state = 0005 C-27).
 CONTROL THAT CANNOT FAIL (B-20, B-29, plus the S0 scaffold review's GATE TEETH rejects): every control
 is executed against the correct code (must pass) AND against its mutant (must fail) in the session
 that writes it.
@@ -292,7 +292,7 @@ listing the proof's assumptions and checking each one is.
 
 ### Tier 1 -- the members to ship
 - **SumSequence** (0.1.0) -- implicit position, multi-dim sums, insertAt / removeAt / setMeasure /
-  indexAtSum / sumBefore / splitAt / append, positional finger.
+  indexAtSum / sumBefore / splitAt / append, positional finger (positional ops only, 0005 C-2).
 - **SumMap** (0.2.0) -- uint32 keys, get / set / delete, successor / predecessor, rank / select,
   sumBelow / keyAtSum, splitAt / join, fence-key finger.
 - **IntervalMap** (0.3.0) -- (start, entityId) order, maxEnd summary, stab / overlap into caller
@@ -301,10 +301,10 @@ listing the proof's assumptions and checking each one is.
   realms, per-realm back-pointers, remove(id) from all realms.
   Candidate (external review, 2026-10-25): a `realmMask` Int32 column per entity, bit r set while the
   id is in realm r (at most 30 realms, bits 0..29, so the mask stays a Smi across a call -- the
-  same reason R-8 picks 30 bits), so remove(id) visits only the realms that
+  Chrome / Electron Smi ceiling, 0x3FFFFFFF), so remove(id) visits only the realms that
   hold it (lowest-set-bit loop, deterministic order); plus an id-liveness bitset so a double remove
   or an unknown id fails closed. NOT a fix for B-22 (that is v0.1 argument validation: typeof + an
-  int32-range integer guard (-2^31 <= x <= 2^31 - 1) on the caller's int32 id; an integer test alone
+  `(e & 0x3FFFFFFF) === e` guard, [0, 2^30-1] (0005 C-9), on the caller's id; an integer test alone
   passes B-22's 2^31 witness, which an Int32 column stores as -2^31).
 
 ### Tier 2 -- strong candidates
@@ -345,10 +345,10 @@ listing the proof's assumptions and checking each one is.
   The lookup-aid variant is R-9.
 - Per-view arena OWNERSHIP bitsets (2026-10-25): after splitAt every leaf on the right side changes
   owner, so maintaining the masks makes splitAt / append O(leaves moved), not O(log n) -- it breaks the
-  ADR 0004 headline (A-4). B-18 stays OPEN (ADR 0004 DB-1 findings): A-6's O(1) reset with A-7
+  ADR 0004 headline (A-4). B-18 is CLOSED (0005 C-6): A-6's O(1) reset with A-7
   bumping epochs only on splitAt / append IS the B-18 case (b.clear() resets the pools; a's next
-  insert takes the leaf b's still-valid finger names). Its fix is a clear()-time epoch bump / finger
-  reset for the SumSequence planner, not ownership bits; the wrap / Smi-range parts are counter
+  insert takes the leaf b's still-valid finger names). Its fix is no epoch and a finger NIL at
+  clear() (0005 C-5, C-6), not ownership bits; the wrap / Smi-range parts are counter
   width, not ownership.
 - A per-leaf positive-measure mask for zero-height skipping: the strict seek (I-4) already skips
   zero measures and tree-level sums skip collapsed runs; inside <= B slots (16 default, up to 32 by ADR 0001
@@ -359,9 +359,8 @@ listing the proof's assumptions and checking each one is.
   - clear() zeroing the diagnostic counters: contradicts ADR 0003 G-8 (RULED, R-Y09) -- clear() keeps
     the counters, resetCounters() zeroes them.
   - An epoch stepped by a large odd constant "so a wrap collision is astronomically unlikely": any odd
-    step k has period exactly 2^32 in a 32-bit counter, the same as k = 1, so it buys nothing. B-18's
-    fix stays with the SumSequence planner (finger reset on splitAt / append / clear plus an epoch that
-    cannot re-match).
+    step k has period exactly 2^32 in a 32-bit counter, the same as k = 1, so it buys nothing. B-18 is
+    closed with no epoch at all (0005 C-6).
   - A "sticky finger" that skips the fence check after a sequential call: the fence check is what
     B-3 and B-17 are about (a class seen twice); skipping it saves only the range test (nominal: one or two compares) and does not change the
     hit count. Sequential walks use the cursor (Y-11), not the finger.
@@ -372,12 +371,11 @@ listing the proof's assumptions and checking each one is.
     kinds are fixed by design, so a preset could bundle only B and dims -- a string option that hides
     parameters from README examples.
   - A rest-parameter insert for dims > 1: a rest array allocates per call (ROADMAP 3.6: 0 B/op on insertAt).
-    The non-allocating dims > 1 form stays OPEN (B-24): a caller-preallocated Float64Array,
-    or fixed positional measure arguments (dims <= 4, Y-10 lean).
+    The non-allocating dims > 1 form is CLOSED (B-24, 0005 C-10): fixed positional measure arguments /
+    insertAt(i, e, m0, m1?, m2?, m3?), dims <= 4; no Float64Array form (0005 C-13).
   - A capacity ceiling chosen to keep "height + spine + counters" in Smi range (e.g. 2^26): counters
     are Int32 that wrap by design (ADR 0003 G-5) and height <= H(2^29) = 67; the binding limits are
-    indices and the count column (B-28; lean: MAX_CAPACITY <= 2^30 - 1) and ADR 0001 T-9's
-    Lmax <= 2^29, which binds first at B = 4 / 8 (C <= m x (2^29 - K)).
+    indices and the count column (B-28; caps = 0005 C-14).
   - A quantile-helper "numerical stability near 2^53" concern: every partial sum is exact by
     ADR 0002 M-6, so the sums cannot drift; the one rounding step is the helper's own q -> target conversion
     (q * total rounds, ulp 1 in [2^52, 2^53), and can move a strict seek by one element) -- a rule the
@@ -422,8 +420,8 @@ listing the proof's assumptions and checking each one is.
 
 - Q-1 Leaf size B per facade: 16 uint32 keys is one cache line; SumSequence carries no keys, so its
   leaf may be measure-bound instead (16 x dims x 8 B). Measure, REPORTED.
-- Q-2 Max dims per instance (fixed at construction; 1..4?) and its effect on pull cost.
-- Q-3 Cursor API: one preallocated cursor per instance vs a caller-owned cursor object created once.
+- Q-2 Max dims per instance (fixed at construction; 1..4?) and its effect on pull cost (closed: 0005 C-14).
+- Q-3 Cursor API: one preallocated cursor per instance vs a caller-owned cursor object created once (closed: 0005 C-7).
 - Q-4 Id source for the pool: raw int32 vs lite-arena handle (generation checks cost a load per op).
 - Q-5 Whether IntervalMap needs a min-start summary for "free slots in [a, b)" (S5).
 - Q-6 DB-2 state signature (external review, 2026-10-25): de-duplication is already RULED -- ADR 0001
@@ -434,4 +432,4 @@ listing the proof's assumptions and checking each one is.
   sizes, pool free heads; per view root, finger leaf + a finger-valid bit, cursor), each epoch
   reduced to that valid bit (a raw monotone epoch makes nearly every state distinct), or the
   shape-only BFS runs finger-disabled and every reached state's witness stream is replayed finger-on
-  (FINGER standing rule). Logged as B-32 against ADR 0001. "Depth 14-16 in milliseconds" is unmeasured.
+  (FINGER standing rule). Logged as B-32 against ADR 0001. "Depth 14-16 in milliseconds" is unmeasured. Closed: 0005 C-31.

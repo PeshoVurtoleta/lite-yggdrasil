@@ -2,7 +2,7 @@
 
 > **STATE (2026-10-25): S0 in progress (2026-10-25): Y-01, Y-02, Y-04, Y-05, Y-09, Y-13, Y-15 RULED; ADRs
 > 0001-0004; scaffolding at 0.0.0 (npm test green). 24 design bugs logged (RESEARCH
-> section 6 B-9..B-32); the 13 from the DB-1 review (B-17..B-29) are carried to the SumSequence planner.** D7 is RULED (both, distinct). Nothing
+> section 6 B-9..B-32); the 13 from the DB-1 review (B-17..B-29) are closed / deferred in decisions/0005 (CURRENT).** D7 is RULED (both, distinct). Nothing
 > is published; git repo initialized (e14e2f3).
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
@@ -75,7 +75,7 @@ Each settled call becomes a `decisions/NNNN-*.md` ADR in the session that owns i
 | **Y-08** (D8) | S2 | First consumer to prove the API. | LiteVirtual `measuredAxis` (insert-in-the-middle O(n) -> O(log n)), as a recipe / spike on the yggdrasil side first; any LiteVirtual change is LiteVirtual's own session. | LEAN -> SumSequence |
 | **Y-09** | S2 | Diagnostic counters: which ones, Int32 wrap policy. | `_n` Int32Array: touches, pulls, moves, splits, merges, equalizes, rotSingle, rotDouble, fingerHits, fingerMisses, joinSteps, seamRepairs (ADR 0003); wrap at 2^31; REPORTED; the engine never reads them (lite-loglogn precedent). | **RULED 2026-10-25** (0003; per-view counters, list per ADR 0003 table) |
 | **Y-10** | S2 | Max dims per instance. | 1..4, fixed at construction (Q-2). | SumSequence |
-| **Y-11** | S2 | Iteration API. | One preallocated cursor per instance (`c.seek*`, `c.next()`, fields), invalidated by epoch; no iterator objects. | SumSequence |
+| **Y-11** | S2 | Iteration API. | One preallocated cursor per instance (`c.seek*`, `c.next()`, fields), invalidated by a cursor bit (0005 C-6, C-7); no iterator objects. | SumSequence |
 | **Y-12** | S2 | Entity id source for the pool. | Raw int32 by default; lite-arena handle as an optional adapter (generation check = one load). | Yggdrasil pool |
 | **Y-13** | S3 | Statistical host. | "none: statistical claims are REPORTED only" (sibling convention, as lite-loglogn). | **RULED 2026-10-25** (0003) |
 | **Y-14** | S3 | Day-1 scaffolding and `files[]`. | Mirror `LiteLogN/` (6 shipped files: Yggdrasil.js, .d.ts, llms.txt, README.md, CHANGELOG.md, LICENSE); test/, benchmark/, decisions/, demo/ repo-only. | S0 |
@@ -103,7 +103,7 @@ equalize, rotation single / double, join, splitAt) asserted to fire > 0 times pe
 ### 3.3 Invariant walker (DETERMINISTIC)
 Runs after EVERY op in the fuzz and the exhaustive small-scope runs (section 4 DB-2, DB-3): I-1
 balance at every node, I-2 summaries recompute exactly, I-3 totals bound, I-5 leaf occupancy, I-6
-fences, I-7 id signs, I-8 height <= spine size, I-9 finger epoch.
+fences, I-7 id signs, I-8 height <= spine size, I-9 finger (0005 C-28).
 
 ### 3.4 Count gates (DETERMINISTIC) -- the splice witness
 touches / pulls / moves per op against exact formulas from the spec (RESEARCH section 3); finger
@@ -314,20 +314,20 @@ TASKS
     (I-4), iterative splitAt / append on spine stacks (I-8), positional finger (I-9), counters (Y-09),
     preallocated cursor (Y-11). Int32 ids, negative leaves (I-7). Fail closed per I-3.
   - Gates 3.2-3.6 with their mutants (DB-8).
-  - Resolve the DB-1 findings B-17..B-29 (RESEARCH section 6) in the planner pass before the first coder batch; B-17 adds the finger-on == finger-off metamorphic gate.
+  - DB-1 findings B-17..B-29 (RESEARCH section 6) resolved in the planner pass (decisions/0005 CURRENT); B-17 adds the finger-on == finger-off metamorphic gate.
   - Docs: README (LiteSepforge blueprint spine), llms.txt, .d.ts, CHANGELOG 0.1.0, GUIDE.
 
 ASSERTIONS
   - Oracle 0 divergences; every structural event fires > 0 per stream.
   - Exhaustive small-scope: every sequence up to the chosen length passes the walker; the
     element-count-weight mutant (B-1) FAILS it.
-  - touches per op <= p(op) * H(Lmax(n)) + k(op) (ADR 0003 G-11); finger hits on a strictly
+  - touches per op <= p(op) * H(Lmax(n)) + k(op), k(op) = 0 (ADR 0003 G-11, 0005 C-25); finger hits on a strictly
     increasing append stream = policy-derived value.
   - Shape independence: 3 insertion orders, identical seek answers; float-measure mutant FAILS.
   - torture 0 B/op on every hot op; controls fail.
 
 HOT PATH
-  insertAt / removeAt / setMeasure / indexAtSum / sumBefore: one descent (or a finger hit), leaf moves per the exact formula of the SumSequence spec (formulas pending; the old <= 15 was false -- B-16, ADR 0001 O-4), one pull per level, zero allocation.
+  insertAt / removeAt / setMeasure / indexAtSum / sumBefore: one descent, or a finger hit for the positional ops (0005 C-4; seeks never use the finger, C-2), leaf moves per the exact formula of the SumSequence spec (formulas: 0005 C-18; the old <= 15 was false -- B-16, ADR 0001 O-4), one pull per level, zero allocation.
 
 NON-GOALS
   No keys (SumMap), no intervals, no pool, no persistence, no lazy range updates.

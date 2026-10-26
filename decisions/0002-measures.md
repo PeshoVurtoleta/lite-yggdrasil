@@ -12,7 +12,21 @@
 - R-X5: "RangeError everywhere" -- ADR 0002 O-3 closed (RangeError); ADR 0004 A-3 TypeError -> RangeError.
 - O-3 and X-5 below: CLOSED by R-X5.
 
-## DB-1 findings (2026-10-25) -- OPEN for the SumSequence planner
+## Superseded / amended by 0005 (CURRENT)
+
+These items are amended by decisions/0005-sumsequence-current.md (CURRENT, consolidated through ADDENDUM 3); 0005 is binding where they differ.
+
+| ADR item | amended by |
+| --- | --- |
+| M-5 | C-6, C-9, C-10 |
+| DB-7 catalogue | C-9 |
+| O-1 | C-13 |
+| O-4 | C-12 |
+| Assertions | C-13 |
+| DB-1 B-22 | C-9, C-10 |
+| DB-1 B-24 | C-7, C-12 |
+
+## DB-1 findings (2026-10-25) -- OPEN for the SumSequence planner -- closed / deferred in 0005
 
 - B-22 (S2): the entity argument is never validated (undefined -> 0, 2^31 -> -2^31, 1.5 -> 1 in an Int32 column; fail open).
 - B-24 (S2): the virtual-list consumer needs getMeasure(i, d) (and entityAt, a cursor seek, a non-allocating dims > 1 insert form) that no document specifies; see O-4.

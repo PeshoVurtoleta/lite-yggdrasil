@@ -13,7 +13,29 @@
 - R-Y09: Y-09 + Y-13 "Rule ADR 0003 as written" (maintainer, 2026-10-25). O-3 (counter names) and O-4 (stale bench table on a PENDING release) stay OPEN.
 - X-1 below: CLOSED by R-X1. O-2 and X-2 below: CLOSED by R-X2.
 
-## DB-1 findings (2026-10-25) -- OPEN for the SumSequence planner
+## Superseded / amended by 0005 (CURRENT)
+
+These items are amended by decisions/0005-sumsequence-current.md (CURRENT, consolidated through ADDENDUM 3); 0005 is binding where they differ.
+
+| ADR item | amended by |
+| --- | --- |
+| G-4 | C-6, C-24 |
+| G-8 | C-8 |
+| G-11 | C-25 |
+| G-12 | C-4, C-19, C-26 |
+| G-13 | C-23 |
+| Counters / gates, idx 0 (touches) | C-25 |
+| Counters / gates, idx 1 (pulls) | C-20 |
+| Counters / gates, idx 8/9 (fingerHits / Misses) | C-26 |
+| Counters / gates, idx 11 (seamRepairs) | C-21 |
+| O-1 | C-25 |
+| O-3 | C-24 |
+| X-8 | C-8 |
+| DB-1 B-17 | C-4, C-27 |
+| DB-1 B-19 | C-19 |
+| DB-1 B-29 | C-23 |
+
+## DB-1 findings (2026-10-25) -- OPEN for the SumSequence planner -- closed / deferred in 0005
 
 - B-17 (S1): "hit" is defined differently here (G-12: in range + epoch valid + no split / merge / equalize) and in ADR 0001; the finger rule is also incomplete (stale base, freed leaf on a draining hit, stale keyed fence); the finger-on == finger-off metamorphic gate becomes standing.
 - B-19 (S2): G-12 "prepends mirror" is false for moves (a prepend into a packed leaf shifts every element: B = 16, 200 prepends -> 1960 moves vs formula 45).

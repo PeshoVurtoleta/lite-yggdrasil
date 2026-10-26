@@ -13,10 +13,36 @@
 - R-X5: "RangeError everywhere" -- A-3 TypeError -> RangeError.
 - O-4 and X-2 below: CLOSED by R-X2. X-5 below: CLOSED by R-X5.
 
-## DB-1 findings (2026-10-25) -- OPEN for the SumSequence planner
+## Superseded / amended by 0005 (CURRENT)
+
+These items are amended by decisions/0005-sumsequence-current.md (CURRENT, consolidated through ADDENDUM 3); 0005 is binding where they differ.
+
+| ADR item | amended by |
+| --- | --- |
+| A-1 | C-6 |
+| A-2 | C-14 |
+| A-4 | C-21 |
+| A-5 | C-1, C-15, C-16 |
+| A-6 | C-6, C-8 |
+| A-7 | C-6 |
+| Assertions, item 1 | C-36 |
+| Assertions, item 3 | C-18 |
+| Assertions, item 4 | C-39 |
+| Assertions, item 5 | C-6, C-40 |
+| Signatures v0.1 (.d.ts) | C-7, C-12 |
+| O-1 | C-15 |
+| O-2 | C-12 |
+| O-3 | C-12 |
+| X-3 (cross-ADR) | C-15 |
+| DB-1 B-18 | C-6, C-8 |
+| DB-1 B-20 | C-36 |
+| DB-1 B-24 | C-7, C-12 |
+| DB-1 B-26 | C-21 |
+
+## DB-1 findings (2026-10-25) -- OPEN for the SumSequence planner -- closed / deferred in 0005
 
 - B-18 (S2): epoch storage / wrap / clear() are unspecified (b.clear() O(1) pool reset then a's insert reuses b's finger leaf; an Int32 epoch re-matches after 2^32 bumps; a plain field leaves Smi range after 2^30).
-- B-20 (S2): assertion-1 control can never fail (views 1365/1365/1366 make <= 1023 leaves under ADR 0001 T-9, not 1026), and A-5 ("one under-min leaf per view") contradicts T-9; a working control is views 1 / 1 / 4094 -> 1025.
+- B-20 (S2): assertion-1 control can never fail (views 1365/1365/1366 make <= 1023 leaves under ADR 0001 T-9, not 1026), and A-5 ("one under-min leaf per view") contradicts T-9; views 1 / 1 / 4094 peak at 1023; 1365/1365/1366 at 1017; control = C-36.
 - B-24 (S2): the virtual-list consumer needs entity -> index (a parent column), which O-3 defers to v0.4, plus entityAt, getMeasure, a cursor seek and a non-allocating dims > 1 insert form.
 - B-26 (S3): seam-repair counts disagree (A-4 "one" vs ADR 0001 T-7 "<= 2" / join "<= 1" vs ADR 0003 row 11 "<= 2").
 

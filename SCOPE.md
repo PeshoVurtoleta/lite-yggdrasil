@@ -122,12 +122,13 @@ D-C6 **Iterative split / join** over preallocated spine stacks sized from the he
      a comment).
 D-C7 **Finger with fence keys:** cache the last leaf, its separator range [lo, hi) and its path. An op
      whose key falls in [lo, hi) skips the descent. Fences, not the leaf's min/max contents -- else every
-     sorted append misses. An epoch counter invalidates the finger on any structural change.
+     sorted append misses. An epoch counter invalidates the keyed finger on any structural change (SumMap;
+     SumSequence: none, 0005 C-3).
      Keyed mode routes "left iff q <= maxKey[left]", so a leaf owns (maxKey of previous leaf,
      its own maxKey], the rightmost owns up to +inf, and fences fall out of the descent. A split /
      merge re-establishes the finger through the trunk: hits are "no descent", splits are counted
      separately (expected ~14/15 hits on a strictly increasing stream with the 15 + 1 split, not 100%).
-     SumSequence gets a positional finger: [baseIndex, baseIndex + len) and [baseSum_d, + leafSum_d).
+     SumSequence gets a positional finger: [baseIndex, baseIndex + len), no sum base (0005 C-1..C-5).
 D-C8 **Fixed capacity, fail closed** (RangeError on full / bad input), clear() restores construction
      state, counters are Int32Array REPORTED diagnostics (lite-loglogn style).
 
@@ -136,7 +137,7 @@ D-C8 **Fixed capacity, fail closed** (RangeError on full / bad input), clear() r
 ```js
 // v0.1 SumSequence -- position is implicit (a rope / virtual-list index)
 const rows = new SumSequence(capacity, { dims: 1 });   // dim 0 = row height in px
-rows.insertAt(i, entity, h)        // O(log n); entity is the caller's int32 id
+rows.insertAt(i, entity, h)        // O(log n); entity is the caller's id in [0, 2^30-1] (0005 C-9)
 rows.removeAt(i)                   // -> entity
 rows.setMeasure(i, 0, h2)          // resize one row, O(log n)
 rows.length; rows.total(0)         // n and total height

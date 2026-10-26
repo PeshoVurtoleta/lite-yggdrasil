@@ -12,7 +12,34 @@
 - R-X1: "(B+1-m | m) = 13|4" -- ADR 0001 Table 3; finger hits 12/13; ADR 0003 G-12 s0 := m. ROADMAP / SCOPE "15 + 1", "~14/15", "14 of every 15" are SUPERSEDED. (Y-06 numeric B stays measured in SumSequence.)
 - X-1 below: CLOSED by R-X1.
 
-## DB-1 findings (2026-10-25) -- OPEN for the SumSequence planner
+## Superseded / amended by 0005 (CURRENT)
+
+These items are amended by decisions/0005-sumsequence-current.md (CURRENT, consolidated through ADDENDUM 3); 0005 is binding where they differ.
+
+| ADR item | amended by |
+| --- | --- |
+| Table 3 -- leaf policy in B (m = B/4; [B = 16]), finger-hits paragraph | C-4 |
+| Table 3 -- leaf policy in B (m = B/4; [B = 16]), row `last leaf, p = B (append)` | C-18 |
+| Table 3 -- leaf policy in B (m = B/4; [B = 16]), row `first leaf, p = 0 (prepend)` | C-18 |
+| Table 3 -- leaf policy in B (m = B/4; [B = 16]), row `hysteresis` | C-22 |
+| T-2 | C-20 |
+| T-7 | C-21 |
+| T-9 | C-14, C-15 |
+| T-10 | C-23 |
+| O-4 | C-18 |
+| O-6 | C-4 |
+| DB-2 | C-31 |
+| I-8 walker assertions | C-28 |
+| X-3 (cross-ADR) | C-15 |
+| DB-1 B-17 | C-1, C-2, C-3, C-4, C-5 |
+| DB-1 B-21 | C-11 |
+| DB-1 B-25 | C-20 |
+| DB-1 B-26 | C-21 |
+| DB-1 B-27 | C-22 |
+| DB-1 B-28 | C-14 |
+| DB-1 B-29 | C-23 |
+
+## DB-1 findings (2026-10-25) -- OPEN for the SumSequence planner -- closed / deferred in 0005
 
 - B-17 (S1): the finger rule is incomplete (stale positional base after an ordinary miss; draining the last element frees the leaf on a "hit"; equalize leaves a stale keyed fence), and ADR 0001 and 0003 define "hit" differently.
 - B-21 (S2): there is no way to choose B (DB-2 needs B = 4 / 8; the .d.ts options are { dims } only).

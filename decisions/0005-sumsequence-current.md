@@ -1,6 +1,7 @@
 # 0005 -- SumSequence CURRENT: the binding rules of the 0.1.0 spec closure
 
-consolidated through ADDENDUM 3 at da45c50 / PLAN-G-A e2b52b3f / PLAN-G-B 03f0bf88 / DB1-plans 4f60e9a1
+consolidated through ADDENDUM 3 at da45c50 / PLAN-G-A e2b52b3f / PLAN-G-B 03f0bf88 / DB1-plans 4f60e9a1; ADDENDUM 4
+(0005's own) folded in at 6514d58
 
 - Status: CURRENT, consolidated (not RULED: the maintainer rulings are R-D1..R-D4 below; every other rule is a
   planner rule that survived DB-1 review rounds r1..r3)
@@ -9,7 +10,8 @@ consolidated through ADDENDUM 3 at da45c50 / PLAN-G-A e2b52b3f / PLAN-G-B 03f0bf
 - Provenance of this text: consolidated from .handoff/PLAN-G-A.md (body, rulings, ADDENDA 1-3), .handoff/PLAN-G-B.md
   (body, ADDENDA 1-3) and .handoff/DB1-plans.md (r1, r2 incl. TOUCHES RECONCILED, r3, R-D4). This is the only place
   that names those files; the plan files are gitignored and archived at release.
-- Precedence: ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 > body. Every rule below is the FINAL rule, stated in full.
+- Precedence: ADDENDUM 4 > ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 > body. Every rule below is the FINAL rule, stated in
+  full.
   A superseded rule is not repeated here (it lives in the plan files and the Source map says where it went).
 - Binding: this file is binding for every agent. ADRs 0001..0004 keep their ruled text; where this file amends an
   item, the ADR carries a pointer block (the Amends table below). Two texts for one rule would be two specs.
@@ -27,6 +29,9 @@ AskUserQuestion, 2026-10-26:
   ADDENDUM 3 item.
 
 ## Sources legend
+
+- 0005 A4-1..A4-14 = this file's own ADDENDUM 4 (below; HB4 plan review R1, the HB3 walker, the B1 stub readings and
+  the B2 driver readings). Every A4 item names the CURRENT rules it changed and every changed rule cites its A4 ids.
 
 - G-A = PLAN-G-A (body: B-17 F-1..F-3, HIT-1, B-18, B-20, B-21, B-22, B-24, B-28, X-3, XG-2, XG-4, D-1..D-3, TASKS,
   A1..A5, RISK; G-A-D1..D11 = ADDENDUM 1; A2-1..A2-8 = ADDENDUM 2; A3-1..A3-5 = ADDENDUM 3).
@@ -122,9 +127,15 @@ AskUserQuestion, 2026-10-26:
 - Replaces any int32-range guard (RESEARCH :306-308 becomes `(e & 0x3FFFFFFF) === e`, [0, 2^30-1]).
 - Amends 0002 M-5 (entity added to the check set). The cursor sentinel -1 cannot collide with an entity.
 
-### C-10 Check order, index rule, extra-slot branch, census (G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2)
+### C-10 Check order, index rule, extra-slot branch, census (G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9)
 
 - Check order, all before the first write: i, e, measures (M-3 each, slots < dims), extra slots, capacity, headroom.
+  The capacity RangeError message carries the token 'capacity' and is checked between extra slots and headroom.
+- The orders C-10 did not place (the index / dim / -0 orders are pinned by test/oracle.mjs and Oracle.test.mjs): the
+  index is validated before the operand (splitAt; append takes no index) and the dim before the seek (indexAtSum); -0
+  acts as 0 for both the index and the dim. An operand from another arena throws, the message carrying the token
+  'operand' (0004 A-3). 'capacity' and the cross-arena 'operand' are stub + driver behaviour (oracle.mjs (a) / (b): the
+  oracle does not model them).
 - Indexes are validated, never clamped: insertAt and sumBefore take [0, length]; removeAt, setMeasure, getMeasure and
   entityAt take [0, length); anything else is a RangeError (the adapter clamps). typeof guard first.
 - Dims > 1 insert is insertAt(i, e, m0, m1?, m2?, m3?). Slots < dims are validated under M-3; slots >= dims must be
@@ -146,9 +157,10 @@ AskUserQuestion, 2026-10-26:
 - Rows (RangeError): [], null, Object.create({dims:5}), {dim:2} (message contains 'dims'), {dims:undefined},
   {[Symbol()]:1}, an accessor spy (0 calls). Object.create(null) with dims 2 is ok.
 
-### C-12 Signatures, closed open items (G-A B-24 -> G-A XG-3)
+### C-12 Signatures, closed open items (G-A B-24 -> G-A XG-3 -> 0005 A4-9)
 
-- getMeasure(i, d) -> number; entityAt(i) -> entity; removeAt(i) -> entity; total(d) stays, O(1); cursor() per C-7.
+- getMeasure(i, d) -> number; entityAt(i) -> entity; removeAt(i) -> entity; sumBefore(d, i) -> number (dim first, then
+  the index); total(d) stays, O(1); cursor() per C-7.
 - Closes 0002 O-4 (getMeasure). 0004 O-2 (moveRange): closed, not needed (spike (e)). XG-3 readRange: not in
   v0.1 (the cursor gives O(log n + k) at 0 B); owner Tier 2. 0004 O-3 (parent column, entity -> index): not carried
   into v0.1 (it needs an entity-slot write on every leaf move, which is hot); owner = the v0.4 pool planner.
@@ -279,30 +291,50 @@ AskUserQuestion, 2026-10-26:
 
 ### Harness
 
-### C-27 Snapshot, finger-off, walker state (G-B-D3 -> G-B B2-1 -> G-B B2-2 -> G-A A3-1)
+### C-27 Snapshot, finger-off, walker state (G-B-D3 -> G-B B2-1 -> G-B B2-2 -> G-A A3-1 -> 0005 A4-6, A4-7, A4-11)
 
 - Snapshot contract per view: _root, _len, _fl, _fb, _fdepth, _fpath (Int32Array, [k] = node at depth k), _cv.
-- NIL is read from a fresh empty view's _fl. Before the first finger-off write the harness asserts
-  Object.hasOwn(view, f) for f in _fl, _fb, _fdepth, _fpath (a renamed field fails here). Finger off = before each
-  op write NIL / 0 / 0 into _fl / _fb / _fdepth.
+- The binding SNAPSHOT shape is the header of test/walker.mjs (sha256 3a163137), which the engine adapter
+  snapshot(arena) must produce. In short: arena constants C, B, dims, NIL, EMPTY_ROOT and the header live; an internal
+  pool {size = Lmax - 1, bump, free, next, left, right, weight, count, sum (dims columns)}; a leaf pool {size = Lmax,
+  bump, free, next, len, ent (size*B slots), meas (dims columns of size*B)}; views[] (k >= 1), each {_root, _len, _fl,
+  _fb, _fdepth, _fpath (length exactly H(Lmax)), _cv}. A child ref >= 0 is an internal id and < 0 is ~leafId; leaf
+  sums are not stored (the walk recounts them from len + meas); slots >= len are never read; free-list ids are plain.
+  When _fl === NIL, _fb / _fdepth and the _fpath contents are never read.
+- NIL is read from a fresh empty view's _fl. At the START of a lane (a lane-start check, not a per-op step) the
+  harness asserts Object.hasOwn(view, f) for f in _fl, _fb, _fdepth, _fpath (a renamed field, or one that lives on the
+  prototype, fails here with code C-27, op null, witnessLength 0). Finger off = before each op write NIL / 0 / 0 into
+  _fl / _fb / _fdepth.
 - "Walker state" = the walk() verdict plus the snapshot minus _fl / _fb / _fdepth / _fpath. Answers (compared with
   Object.is) and walker state are compared on == off after EVERY op. The finger fields are compared on == off only
   after positional ops, splitAt, append and clear, and only the op's own view's (both views for splitAt / append).
   After a finger-neutral op (indexAtSum, sumBefore, total, cursor seekIndex / seekSum / next) the on-run finger is
   byte-identical to its own pre-op value and the off-run finger is still the NIL it was given. This holds in every
   on / off lane: A1 (C-34), BFS + sweep (C-31) and the deep lane (C-32).
+- B2 readings (review-ACCEPTED 2026-10-26; 0005 A4-11): the on / off finger compare skips an op that threw; two
+  NIL fingers are equal; _fpath is compared on [0, _fdepth) only.
 
-### C-28 Walker I-9, XG-1, pool census (G-B-D4 -> G-B-D5 -> G-B XG-1)
+### C-28 Walker I-9, XG-1, pool census (G-B-D4 -> G-B-D5 -> G-B XG-1 -> 0005 A4-7, A4-8)
 
+- Codes, in walker CHECK ORDER (test/walker.mjs CODES; the first failure wins): SNAP, I-7, I-8, I-1, I-2, I-3, I-5,
+  I-9a, XG-1, I-9c, I-9d, I-9e. XG-1 is I-9 (b), the C-5 ownership rule: there is no code I-9b. I-4 (seek) is
+  oracle-checked and I-6 is n/a (no keys), so neither is a walker code. walk() never throws: a malformed snapshot or
+  any exception while reading it is SNAP (detail 'exception ...'). The tokens 'reach' and 'retention' are
+  unreachable defensive tokens.
 - I-9: (a) an empty view has fl NIL, and fl NIL checks nothing else; (b) otherwise fl is reachable from THIS view's
   root and not free (not another view's); (c) fb == the recount; (d) depth == the recount; (e) _fpath[0..depth) each
-  == the recount. Fixtures, each failing with its own code: freed leaf; foreign leaf; stale fb (B=16, 17 appends,
-  removeAt(16) -> 8|8, fb 13 vs 8); depth + 1; a path entry from before a rotation; non-NIL fl on an empty view.
+  == the recount. _fb / _fdepth are type-checked only when _fl !== NIL. Fixtures, each failing with its own code:
+  freed leaf; foreign leaf; stale fb (B=16, 17 appends, removeAt(16) -> 8|8, fb 13 vs 8); depth + 1; a path entry
+  from before a rotation; non-NIL fl on an empty view.
 - Pool census per pool: the free-list walk takes <= pool-size steps (longer = cycle); no duplicate ids; no id shared
   with any view's live nodes; live U free == [0, bump). Fixtures that must FAIL I-7: double free, live id on the free
   list, leak, cycle. Retention: live + free == pool, internal == sum(L_s - 1).
+- Census readings (accepted at HB3 review): in a free list 'dup' = next[x] === x (an id linking to itself); any other
+  revisit is 'cycle'. The census checks 'range' before 'shared', and the leaf pool before the internal pool. I-8 uses
+  n_s = the RECOUNTED element count, with slot reads capped to [0, B]. The I-2 sum compare treats NaN as equal (I-3
+  is the code that reports it).
 - Per-code fixtures (clean passes; each fails with exactly its code): I-1 (M-1 shape, stored 5|5), I-2, I-3 (-0;
-  total 2^53), I-5, I-7, I-8, I-9, XG-1. I-6 is "n/a" (no keys). Snapshot contract is in the walker file header.
+  total 2^53), I-5, I-7, I-8, I-9a, XG-1, I-9c, I-9d, I-9e. I-6 is "n/a" (no keys). The snapshot contract is C-27.
 
 ### C-29 Oracle (G-B TASK 3 -> G-B-D8)
 
@@ -320,7 +352,7 @@ AskUserQuestion, 2026-10-26:
   splits; an `import` fixture added to spec-counts FAILS the 0003 G-9 gate.
 - GC: spec-counts exports 0 B/op over 1e5 calls, maxMajor 0; an object-returning mutant FAILS.
 
-### C-31 BFS and sweep lanes (G-B B-32 -> G-B-D1 -> G-B B2-1 -> G-B B2-6 -> DB1 P-01)
+### C-31 BFS and sweep lanes (G-B B-32 -> G-B-D1 -> G-B B2-1 -> G-B B2-6 -> DB1 P-01 -> 0005 A4-2, A4-5, A4-6, A4-11..A4-14)
 
 - Shape-only BFS stays the state generator, closed under insertAt / removeAt / splitAt + append at every position,
   with walker and oracle after every op. At EVERY state, for each j in {NIL, 0..L-1}: replay the witness; j = NIL ->
@@ -329,30 +361,107 @@ AskUserQuestion, 2026-10-26:
   splitAt(i, b), b.clear(), a.append(b); answers, walker state and post-op fl / fb / depth / path per C-27.
 - Free-list order is merged on purpose: it is observable only through ids, and any id alias fails the C-28 census in
   the state where it appears. This works because the walker checks the finger against truth after EVERY op.
-- Budgets: two lanes, each capped at 2^22 op applications (nominal), the WHOLE lane (a BFS that closes every size
-  n' <= n pays the cumulative cost). BFS cost = U*(3n+2)*(n+2); sweep cost = sum over L of S(L)*comp(n,L)*(L+1)*
-  (8n+6)*(n+2). Result: nMax 9/15 (B=4 / B=8), nSweep 7/12; nSweep <= nMax, reported, never raised. U(B,n) = sum over
-  L of S(L)*comp(n,L,[m,B]) (S(L) = number of I-1 shapes) is an upper bound: U(4,16) = 7,901,563, U(8,24) =
-  1,244,740; the reachable count is logged by the first engine run (TASK 0(a) ran: node v26.8.2, untimed,
-  2026-10-26). If a bound ever drops nMax, record it; never raise the budget.
+- Engine budgets (DEFERRED to the engine group; not run on the stubs): two lanes, each capped at 2^22 op
+  applications (nominal), the WHOLE lane (a BFS that closes every size n' <= n pays the cumulative cost). BFS cost =
+  U*(3n+2)*(n+2); sweep cost = sum over L of S(L)*comp(n,L)*(L+1)*(8n+7)*(n+2). Result: nMax 9/15 (B=4 / B=8), nSweep
+  7/12; nSweep <= nMax, reported, never raised. U(B,n) = sum over L of S(L)*comp(n,L,[m,B]) (S(L) = number of I-1
+  shapes) is an upper bound: U(4,16) = 7,901,563, U(8,24) = 1,244,740; the reachable count is logged by the first
+  engine run (TASK 0(a) ran: node v26.8.2, untimed, 2026-10-26). If a bound ever drops nMax, record it; never raise
+  the budget.
+- Stub budgets (npm test, test/Exhaustive.test.mjs, DETERMINISTIC): one APPLICATION = one op on one on / off pair,
+  replays included; each lane is capped at 2^18 applications (ENGINE / CAPS key cap). If a lane exceeds the cap, lower
+  that lane's nMax / nSweep by 1 and record it in an addendum; never raise 2^18. Sizes: nMax 6 / 10 (B=4 / B=8),
+  nSweep 5 / 9 over the BFS states, deep 4,000 ops per B. Applied per lane (deterministic counts, test code, node
+  v26.8.2, 2026-10-26; no wall time), B=4 / B=8: bfs 7,095 / 24,532; sweep 40,623 / 154,475 (59% of 2^18 at B=8);
+  deep 4,226 / 4,222. 15 s wall is nominal, not a gate.
+- Lane API (0005 A4-5): bfsLane(f, {B, nMax, walker, cap, drop, cfg}); sweepLane(f, {B, states, nSweep, suffixes =
+  true, cfg}); deepLane(f, {B, ops, seed, nLo, nHi, drop, cfg}); lanes call f(C = nMax, {leafSize: B, dims: 1}, 2,
+  cfg ?? {}). Report {ok, first, applied, divergences, tally, states (bfs) | maxLeaves (deep)}; first = {lane
+  'bfs' | 'sweep' | 'deep', run 'on' | 'off', code, detail, op, n (pre-op length), witnessLength (ops from empty
+  through the failing op, inclusive)}; a witness is an array of {op, i}, replayable on any stub. exhaustive.mjs
+  exports bfsLane, sweepLane, deepLane, CELLS, coverageMissing, assertCoverage, mergeTally, CODES, ENGINE, CAPS; ENGINE
+  and CAPS are deep-frozen with the keys cap, nMax, nSweep, deepOps, deepN ({4: [8, 48], 8: [16, 96]}).
+- Driver check order per op, first failure wins (source: PLAN-HB4 SPEC 2, 0005 A4-11): walker (on), sweep landing,
+  walker (off), oracle (an indexAtSum answer mismatch = I-4, anything else = ORACLE), ONOFF (C-27), C-26, C-27 (neutral
+  finger), BUDGET. The driver checks capacity before calling the oracle; replays are unchecked.
+- Fail-open closers (0005 A4-6): a lane fails unless applied > 0 and, for BFS, every n in 0..nMax is seen. sweepLane
+  fails 'SWEEP' with detail 'no states' when no state has n <= nSweep. A stub throw the oracle does not match,
+  including during a replay, is 'ORACLE'. Invalid lane options throw RangeError. The 'LANE' code reports the
+  applied-0 and missing-n closers (B2 reading, A4-11). The deep lane redraws insertAt at n >= nHi, removeAt at
+  n <= nLo, and setMeasure / getMeasure / entityAt at n == 0 (the lane starts empty).
+- B2 readings (review-ACCEPTED 2026-10-26; 0005 A4-11): the sweep landing is checked on the on run only; a lane
+  stops at its first failure (divergences 0 or 1); sweep C = max(nSweep + 1, the highest live a witness reaches); the
+  suffix set per state costs 8n + 7 applications (the extra one
+  is `total`); witness args come from position k (entity k, measure 1 + k % 3,
+  indexAtSum y = sumBefore(0, i), a clear entry's i = the view index); sweepLane and deepLane take `cap`.
+- Driver contract (0005 A4-13): for every pair the driver builds the finger-ON arena first, then the finger-OFF arena.
+  The test's off-only wrapper controls rely on this order.
+- Engine-time coverage (0005 A4-14): under CAPS the sweep's b.clear() always runs on an empty b, so a clear on a
+  non-empty view is covered only at engine size.
+- Cursor suffixes, the 2^22 runs and the nMax / nSweep 9/15 and 7/12 figures stay with the engine group.
 
-### C-32 Deep lane and coverage cells (G-B-D6 -> G-B B2-3 -> G-B B2-5)
+### C-32 Deep lane and coverage cells (G-B-D6 -> G-B B2-3 -> G-B B2-5 -> 0005 A4-1, A4-2, A4-5, A4-10..A4-12, A4-14)
 
 - Deep lane: xorshift32 with separate op / index / measure streams (G-A's constants and seeds, C-34); B=4 n in
-  [8, 48], B=8 n in [16, 96], 2e4 ops each; two-view ops included; finger on / off in lockstep; walker + oracle after
-  every op; the lane reaches >= 11 leaves. W-DEL / W-INS / W-TIE stay join-built (0001 M-2, engine group).
-- Coverage (G-B ASSERTION 6): over BFS + deep lane at each B in {4, 8}, every cell fires >= 1, attributed by the
-  per-op SumSequence.COUNTERS delta: rotSingle / rotDouble each on insertAt and removeAt; a merge that moves elements
-  (moves delta - removeMoves(m, p) > 0, removeMoves from spec-counts); equalize at each k in 4..8 (k = the neighbour
-  leaf's size read from the PRE-op walker snapshot); splitAt with 1 and with 2 seam repairs; append with 1 seam
-  repair (merge / equalize / seam cells at B=8 only). Must fail: a run with removeAt dropped; a tally fixture with
-  one zero cell. assertCoverage and its controls ship now; the real-engine run lands with the engine.
+  [8, 48], B=8 n in [16, 96]; two-view ops included; finger on / off in lockstep; walker + oracle after every op.
+  W-DEL / W-INS / W-TIE stay join-built (0001 M-2, engine group). The engine run is 2e4 ops each (DEFERRED to the
+  engine group); the stub run (npm test) is 4,000 ops per B, reaches >= 11 leaves (maxLeaves 33 / 32 at B=4 / 8,
+  asserted >= 11) and reports its maxLeaves.
+- B2 readings (review-ACCEPTED 2026-10-26; 0005 A4-11): the deep lane starts empty (no view draw at start), C = nHi,
+  and draws a zero measure when (r >>> 16) % 20 == 0; the C-34 fixed clears are kept (they fire only at 2e4 ops, NEVER
+  at the 4,000-op npm-test size); splitAt + append is ONE stream op and TWO applications.
+- Engine-time coverage (0005 A4-14; not gated on the stub): under CAPS, clear only ever runs on an empty b, so a clear
+  on a non-empty view is covered only at engine size; and the mergeMoves move condition (moves delta - removeMoves(m,
+  m, p, 0, 0) > 0) is never false on the stub, so its false branch is unexercised there.
+- Coverage (G-B ASSERTION 6): over bfsLane + deepLane ONLY (the sweep adds no cell) at each B in {4, 8}, every cell
+  fires >= 1, attributed by the per-op SumSequence.COUNTERS delta: rotSingle / rotDouble each on insertAt and removeAt;
+  mergeMoves and equalizeK count on a removeAt op only: a merge that moves elements (moves delta - removeMoves(m, m, p,
+  0, 0) > 0, removeMoves from spec-counts, p = i - fb of the pre-op leaf); equalize at each k in 4..8 (k = the size of
+  T-6's neighbour v, the in-order leaf on u's sibling side, read from the PRE-op walker snapshot); a merge or equalize
+  inside splitAt / append counts only toward splitAt1 / splitAt2 / append1 (the seamRepairs delta): splitAt with 1 and
+  with 2 seam repairs; append with 1 seam repair (merge / equalize / seam cells at B=8 only). CELLS(B) is a frozen
+  array in this order: 'rotSingle@insertAt', 'rotSingle@removeAt', 'rotDouble@insertAt', 'rotDouble@removeAt', then at
+  B=8 'mergeMoves', 'equalize4'..'equalize8', 'splitAt1', 'splitAt2', 'append1' (|CELLS(4)| = 4, |CELLS(8)| = 13);
+  tally is a plain object with every CELLS(B) key; coverageMissing(tally, B) lists the names with !(t[c] >= 1) in CELLS
+  order; assertCoverage(tally, B) throws RangeError 'coverage: missing ' + names.join(', ').
+- Must fail: a run with removeAt dropped (drop applies to bfsLane AND deepLane; at B=8 missing(drop ['removeAt'])
+  minus missing(full) = {mergeMoves, equalize4..equalize8}); a tally fixture with one zero cell. assertCoverage and
+  its controls ship now. The synthStub run misses exactly the 4 rot cells per B (expected: it never rotates); the
+  positive coverage run needs rotations and stays with the engine group.
 
-### C-33 Stubs (G-B TASK 7 -> G-B ASSERTION 4 -> G-B-D8)
+### C-33 Stubs (G-B TASK 7 -> G-B ASSERTION 4 -> G-B-D8 -> 0005 A4-3, A4-4, A4-5, A4-10, A4-12, A4-13)
 
-- stubs.mjs: synthStub PASSES (it re-homes per C-3); flatStub FAILS I-5 at insert 5 (B=4) with 0 oracle divergences;
-  seekStub (a `>=` routing) FAILS I-4; staleFingerStub keeps the pre-op fb and FAILS I-9 (c) in the sweep with the
-  finger on. Exhaustive.test.mjs runs them.
+- stubs.mjs exports the factories synthStub, flatStub, seekStub, staleFingerStub, nolandStub, countStub, homeStub,
+  each (C, {leafSize, dims}, count, cfg) -> {views, snapshot()}; cfg keys NIL, EMPTY_ROOT, protoField. It also exports
+  the frozen COUNTERS (0003 names, idx 0-11); counters live in view._n. Exhaustive.test.mjs runs them (DETERMINISTIC,
+  npm test). Stubs are test code, not a hot path. The lane driver builds the finger-ON arena first, then the
+  finger-OFF arena, for every pair (0005 A4-13): the test's off-only wrapper controls rely on that order.
+- Expected reports (each on the stated lane, B=4 unless stated): synthStub PASSES (it re-homes per C-3) at B=4 and
+  B=8 in BFS, sweep and deep. flatStub (never splits): bfsLane first.code 'I-5', detail starts 'leaf:', op insertAt,
+  witnessLength 5; it stores leaves overlap-free, so with walker: false the lane is ok with 0 divergences. seekStub
+  (flips only the internal-node comparator of the sum descent, `>=` for `>`): BFS ok; sweep first {lane 'sweep', code
+  'I-4', op indexAtSum}. staleFingerStub (keeps the pre-op _fb on every miss re-home, structural and first-leaf
+  included): sweepLane over the states of bfsLane(synthStub, {B: 4, nMax: 6}) with nSweep 5 gives first {lane 'sweep',
+  code 'I-9c', run 'on'}; synthStub on the same states is ok. nolandStub (getMeasure skips the re-home): BFS ok; sweep
+  first {code 'ONOFF', op getMeasure}; sweep with suffixes: false first code 'SWEEP'. countStub (indexAtSum adds a
+  miss, after validation): sweep 'C-26'. homeStub (indexAtSum re-homes, only when y < total): sweep 'C-27'.
+  cfg.protoField '_fdepth' (the field lives on the prototype): first {code 'C-27', op null, witnessLength 0}.
+  synthStub with cap 10: first code 'BUDGET'.
+- A4 on stubs (0005 A4-4): the B/op lane and the lite-leak arena tracking (and the `onArena` option) are DROPPED (stubs
+  are not hot path; the engine's C-38 / C-39 are unchanged). KEPT: 100 fill / split / append / clear cycles each
+  ending with bump = live = 0 on both pools (deterministic; it gives the walker's I-7 'leak' check meaning).
+- Stub readings (B1, review-ACCEPTED; 0005 A4-10): (a) a structural re-home descends by `i < count[left]` goes left; a
+  non-structural miss re-homes to the touched leaf. The walker and ONOFF cannot see this rule (a mutant of it passes
+  lockstep), so no lane gate here covers it. (b) Every NIL write
+  (drain, splitAt, append, clear) sets NIL / 0 / 0 on _fl / _fb / _fdepth and leaves _fpath. (c) T-6's neighbour v =
+  the in-order leaf on u's sibling side in the CURRENT tree: literal T-6, which DIFFERS from the C-42 leaf model
+  ("right neighbour unless u is last"); the equalize k of C-32 is read from that sibling-side neighbour in the PRE-op
+  snapshot. (d) Each seam repair also adds one merge or equalize counter; a splitAt mid-leaf cut is not a split. (e)
+  moves are counted per phase (remove, then repair) = C-18 term by term. (f) Leaf slots are stored per leaf; the
+  snapshot writes min(len, B) slots. (g) seekStub flips only the internal-node comparator. (h) staleFingerStub as
+  above. (i) homeStub re-homes only when y < total; countStub adds its miss after validation. (j) Stub-only limits:
+  C <= 2^20; cfg keys are validated (NIL is not a pool leaf ref; EMPTY_ROOT is not 0 and not a valid ref; protoField
+  is one of _fl, _fb, _fdepth, _fpath).
 
 ### Gates
 
@@ -443,7 +552,10 @@ AskUserQuestion, 2026-10-26:
 
 ### Deferred, owners, unverified
 
-### C-42 Deferred / owners / UNVERIFIED (G-A XG-2 -> G-A XG-4 -> G-A-D11 -> G-A TASKS 5-8 -> DB1 P-10)
+### C-42 Deferred / owners / UNVERIFIED (G-A XG-2 -> G-A XG-4 -> G-A-D11 -> G-A TASKS 5-8 -> DB1 P-10 -> 0005 A4-12)
+
+- DEFERRED to the engine group (0005 A4-12): the engine lane numbers of C-31 / C-32 (2^22, nMax 9/15, nSweep 7/12, the
+  2e4 deep run), the positive coverage run, the cursor suffixes, C-20 / C-25 exactness, and W-DEL / W-INS / W-TIE.
 
 - DEFERRED to SumMap: B-17 part (c) keyed fence (I-6) and B-23. XG-2: v0.1 one column per dim (identical at dims=1);
   interleaved A/B is a REPORTED measurement, owner Bench-ADOPT / LP-4 Q-1. XG-4: deferred to the post-engine perf
@@ -659,12 +771,87 @@ Each source item maps to a C-id or reads "history-only". Rule text is not repeat
 | DB1 N-3 | C-8 |
 | DB1 N-4 | C-25 |
 | DB1 N-5 | C-34 |
+| 0005 A4-1 | C-32 |
+| 0005 A4-2 | C-31, C-32 |
+| 0005 A4-3 | C-33 |
+| 0005 A4-4 | C-33 |
+| 0005 A4-5 | C-31, C-32, C-33 |
+| 0005 A4-6 | C-27, C-31 |
+| 0005 A4-7 | C-27, C-28 |
+| 0005 A4-8 | C-28 |
+| 0005 A4-9 | C-10, C-12 |
+| 0005 A4-10 | C-32, C-33 |
+| 0005 A4-11 | C-27, C-31, C-32 |
+| 0005 A4-12 | C-31, C-32, C-33, C-42 |
+| 0005 A4-13 | C-31, C-33 |
+| 0005 A4-14 | C-31, C-32 |
 
 Count note: this map has 128 rows: G-A 61 (body 13, D-1..D-3 3, R-D1..R-D3 3, TASKS 0-8 9, A1..A5 5, RISK 3, G-A-D1..D11
 11, A2-1..A2-8 8, A3-1..A3-5 5, plus the shared R-D4 row), G-B 39 (O-4, B-19, B-25, B-26, B-27, B-29, B-32, XG-1;
 TASKS 0-7; ASSERTIONS 1-6; RISK; D1..D8; B2-1..B2-6; B3-1..B3-2) and DB1 28 (P-01..P-23, N-1..N-5). The planner's 97
 (45/24/28) = G-A body 13 + A1..A5 5 + D-1..D-3 3 + G-A-D1..D11 11 + A2 8 + A3 5; G-B body 8 + D1..D8 8 + B2 6 + B3 2;
-DB1 28. The 31 extra rows are G-A R-D1..R-D4, TASKS 0-8, RISK 1-3 and G-B TASKS 0-7, ASSERTIONS 1-6, RISK.
+DB1 28. The 31 extra rows are G-A R-D1..R-D4, TASKS 0-8, RISK 1-3 and G-B TASKS 0-7, ASSERTIONS 1-6, RISK. The 14
+rows 0005 A4-1..A4-14 follow the DB1 rows (142 rows in all).
 
 ## Addenda
 
+### ADDENDUM 4 (2026-10-26) -- HB4 (stubs + exhaustive lanes), HB3 walker, 0005's own
+
+Tier: every gate named here is DETERMINISTIC (npm test, test/Exhaustive.test.mjs, test/Walker.test.mjs,
+test/Oracle.test.mjs); the counts in A4-2 and A4-12 are exact integers, not timings. Each item names the CURRENT
+rule(s) it changed; the rule text above is already amended (same edit). The map rows are in the Source map.
+
+- A4-1 Cell attribution (plan review R1-1) -> C-32. Cells are tallied over bfsLane + deepLane only (the sweep adds
+  none). mergeMoves / equalizeK count on a removeAt op only (k = T-6's neighbour v in the pre-op snapshot, p = i - fb
+  of the pre-op leaf); a merge or equalize inside splitAt / append counts only toward splitAt1 / splitAt2 / append1.
+  drop applies to bfsLane AND deepLane; at B=8 missing(drop ['removeAt']) minus missing(full) = {mergeMoves,
+  equalize4..equalize8}.
+- A4-2 Sizes and the "application" definition (R1-2) -> C-31, C-32. One application = one op on one on / off pair,
+  replays included; a lane over 2^18 lowers its nMax / nSweep by 1 and records it here, never raises 2^18; 15 s is
+  nominal, not a gate. Replaces the plan's "if over, halve the deep ops". Stub sizes: nMax 6 / 10, nSweep 5 / 9, deep
+  4,000 ops per B.
+- A4-3 Expected mutant reports (R1-3) -> C-33. flatStub, seekStub, staleFingerStub, nolandStub, countStub, homeStub,
+  cfg.protoField and the cap-10 BUDGET control have the first-failure reports now stated in C-33.
+- A4-4 A4 scope (R1-4, settled: DROP) -> C-33. The stub B/op lane and the lite-leak arena tracking (with `onArena`)
+  are dropped; the 100 fill / split / append / clear cycles ending at bump = live = 0 are kept. The engine's C-38 and
+  C-39 are unchanged.
+- A4-5 API pin (R1-5) -> C-31, C-32, C-33: stub factories and cfg keys, lane signatures, report and first
+  shapes, CELLS / coverageMissing / assertCoverage, ENGINE / CAPS keys (cap, nMax, nSweep, deepOps, deepN).
+- A4-6 Fail-open closers (R1-6) -> C-31, C-27: applied > 0 and every n in 0..nMax seen; 'SWEEP' 'no states'; an
+  unmatched stub throw (replays included) = 'ORACLE'; the deep-lane redraws at nHi / nLo; the C-27 hasOwn check is a
+  lane-start check, not a per-op step.
+- A4-7 HB3 walker (committed 6514d58) -> C-27, C-28. C-28 names the codes in check order: SNAP, I-7, I-8, I-1, I-2,
+  I-3, I-5, I-9a, XG-1 (= I-9 (b), the C-5 ownership rule; there is no I-9b), I-9c, I-9d, I-9e. C-27 states that the
+  binding SNAPSHOT shape is the test/walker.mjs header (sha256 3a163137) and summarises it.
+- A4-8 HB3 implementer readings (review-ACCEPTED) -> C-28: 'dup' = next[x] === x, any other revisit = 'cycle'; census
+  'range' before 'shared', leaf pool before internal; I-8 n_s = recounted count with slot reads capped to [0, B]; NaN
+  equal in the I-2 sum compare (I-3 reports it); _fb / _fdepth typed only when _fl !== NIL; walk() try/catch -> SNAP
+  'exception ...'; 'reach' / 'retention' are unreachable defensive tokens.
+- A4-9 C-10 gap -> C-10, C-12: index before operand (splitAt; append takes no index); dim before seek (indexAtSum);
+  -0 acts as 0 for both; the capacity token 'capacity' sits between extra slots and headroom; an operand from another
+  arena throws with the token 'operand'; sumBefore is sumBefore(d, i). The index / dim / -0 orders are pinned by
+  test/oracle.mjs and Oracle.test.mjs; 'capacity' and the cross-arena 'operand' are stub + driver behaviour (oracle.mjs
+  (a) / (b): the oracle does not model them).
+- A4-10 B1 stub readings (review-ACCEPTED) -> C-33, C-32: items (a)..(j) of C-33. (a) is invisible to the walker and
+  to ONOFF; (c) is literal T-6 and differs from the C-42 leaf model (it feeds the equalize k of C-32).
+- A4-11 B2 driver readings (review-ACCEPTED 2026-10-26; the driver check order is from PLAN-HB4 SPEC 2) -> C-31,
+  C-32, C-27: the sweep landing on the on run only; a
+  lane stops at its first failure (divergences 0 or 1); sweep C = max(nSweep + 1, the highest live a witness reaches),
+  deep C = nHi; witness args from position k; the deep-lane zero measure when (r >>> 16) % 20 == 0; the C-34 fixed
+  clears kept (never fire at 4,000 ops); starts empty with no view draw at start; splitAt + append = one stream op /
+  two applications; the LANE code; invalid lane options throw RangeError; sweepLane / deepLane take `cap`; suffixes per
+  state 8n + 7 (the extra one is `total`, so C-31's sweep cost factor (8n+6) became (8n+7)); the finger compare skips
+  ops that threw, two NIL fingers equal, on vs off compares _fpath[0, _fdepth) only.
+- A4-12 Measured (deterministic counts, test code, node v26.8.2, 2026-10-26; no timing) -> C-31, C-32, C-33, C-42.
+  Applied per lane, B=4 / B=8: bfs 7,095 / 24,532; sweep 40,623 / 154,475 (59% of 2^18); deep 4,226 / 4,222. synthStub
+  coverage misses exactly the 4 rot cells per B (expected: it never rotates). Engine numbers (2^22, 9/15, 7/12, 2e4,
+  the 2e4 deep run, positive coverage, cursor suffixes, C-20 / C-25 exactness, W-DEL / W-INS / W-TIE) stay DEFERRED
+  to the engine group.
+
+- A4-13 Driver order -> C-31, C-33: the lane driver builds the finger-ON arena first, then the finger-OFF arena, for
+  every pair; this is a driver contract (the test's off-only wrapper controls rely on it).
+- A4-14 Engine-time coverage (not gated on the stub) -> C-31, C-32: under CAPS, clear only ever runs on an empty b
+  (the sweep suffix b.clear() follows a fresh replay where b is empty; the deep lane's fixed clears need op >= 4999),
+  so a clear on a non-empty view is covered only at engine size; the mergeMoves move condition (moves delta -
+  removeMoves(m, m, p, 0, 0) > 0) is never false on the stub (252/252 removeAt merges pass it, B=8; bfsLane 144 +
+  deepLane 108, CAPS), so its false branch is unexercised there.

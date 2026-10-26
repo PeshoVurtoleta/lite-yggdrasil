@@ -4,14 +4,14 @@
 // The lane (test/count-lane.mjs) runs the same op stream as StubCounts against
 // the real SumSequence through test/adapter.mjs. Every expected value comes from
 // spec-counts formulas and walker-style depth recounts of the PRE / POST
-// snapshots, never from the engine. Until the hit test lands (F) every positional
-// op is a miss. Checks per op: see the count-lane.mjs header.
+// snapshots, never from the engine. Hits are counted per C-4 / C-26 (rung F-R): a hit
+// adds 0 touches, a miss keeps d(t). Checks per op: see the count-lane.mjs header.
 //
 // Controls (each must FAIL the lane with its expected class): a C-25 touches
 // "+2 per level" mutant of the engine, and the structural re-home `<=` mutant (the
 // only gate for A4-10 a). Mutants are exact-count source patches of a temp copy
 // (buildMutant, C-46 M-8); the adapter is rebuilt over the mutant. The anchors are
-// literal [anchor, replacement, count] lists (a 'TODO' anchor would mark its row todo).
+// literal [anchor, replacement, count] lists.
 // S-R2: the lane runs append in engine mode (count-lane.mjs header).
 // S-R3: the lane runs splitAt for real too (the read-instead substitution and the LANE LIMIT note are gone).
 // ASCII-only.
@@ -33,7 +33,13 @@ const APATH = HERE('./adapter.mjs');
 // rehomeLe: the structural re-home descent goes left on `<=` (class 're-home').
 const ANCHORS = {
   // all five `cn[YG_TOUCHES] += depth;` adds (main positional descents) -> 2 per level
-  touchesPlus2: [['cn[YG_TOUCHES] += depth;', 'cn[YG_TOUCHES] += depth * 2;', 5]],
+  touchesPlus2: [['cn[YG_TOUCHES] += depth & (h - 1);', 'cn[YG_TOUCHES] += (depth & (h - 1)) * 2;', 5]],
+  // C-25: a hit adds 0 touches; the hit mask `& (h - 1)` dropped makes a hit add its depth (class 'touches')
+  hitTouchesDepth: [['cn[YG_TOUCHES] += depth & (h - 1);', 'cn[YG_TOUCHES] += depth;', 5]],
+  // C-4 insert lo `fb - ((fb-1)>>>31)` widened to `fb - 1`: i = fb now counts as a hit (class 'hit')
+  loWiden: [['fb - ((fb - 1) >>> 31) < at', 'fb - 1 < at', 1]],
+  // C-4 element range `at < fb + len` widened to `<=` (all three sites): i = fb+len hits (class 'value': wrong-leaf answer)
+  elemHiWiden: [['at < fb + llen[~ref]', 'at <= fb + llen[~ref]', 3]],
   // ygHome's element-rule compare (the only `if (q < c) {` in the file)
   rehomeLe: [['    if (q < c) {', '    if (q <= c) {', 1]],
 };
@@ -106,11 +112,16 @@ const MUTANTS = [
   ['touchesPlus2', 'touchesPlus2', 'touches', [4, 2, 1]],
   // A4-10 a: the structural re-home descends right on ties (`<=`); only this gate sees it
   ['rehomeLe', 'rehomeLe', 're-home', [4, 2, 1]],
+  // C-25: a hit adds 0 touches
+  ['hitTouchesDepth', 'hitTouchesDepth', 'touches', [4, 2, 1]],
+  // C-4: range widening (insert lo, element hi) turns misses into hits (lane class 'hit' = the fingerHits delta check)
+  ['loWiden', 'loWiden', 'hit', [4, 2, 1]],
+  // the widened element range answers from the WRONG leaf at i = fb+len, so the value check (checked before the counters) fires first
+  ['elemHiWiden', 'elemHiWiden', 'value', [4, 2, 1]],
 ];
 
 for (const [name, key, cls, hint] of MUTANTS) {
-  const todo = ANCHORS[key] === 'TODO' ? 'G-B3: literal anchor from the coder' : false;
-  test(`control: engine mutant ${name} fails the lane with class "${cls}"`, { todo }, async () => {
+  test(`control: engine mutant ${name} fails the lane with class "${cls}"`, async () => {
     const E = await buildEngine(ANCHORS[key]);
     const res = runLane({ COUNTERS: E.COUNTERS }, { ...MUT_LANE(2), factory: E.factory, hint });
     assert.equal(res.fails.length, 1, `${name}: lane did not fail (checks ${res.checks})`);

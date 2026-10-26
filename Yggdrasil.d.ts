@@ -1,4 +1,4 @@
-// Type declarations for @zakkster/lite-yggdrasil (rung S-R3: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain, the k >= 2 clear() free-walk, join and append with the seam repair, and splitAt with its seam repairs).
+// Type declarations for @zakkster/lite-yggdrasil (rung F-R: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain, the k >= 2 clear() free-walk, join and append with the seam repair, splitAt with its seam repairs, and the finger hit test in the positional ops).
 export declare const VERSION: string;
 
 export interface SumSequenceOptions {

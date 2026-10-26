@@ -3,7 +3,7 @@
  *
  * MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
- * Pre-release engine build (rung S-R3 of the E0 ladder): SumSequence init,
+ * Pre-release engine build (rung F-R of the E0 ladder): SumSequence init,
  * layout, pools, constructor validation, counters and getters (A-R1a), the
  * positional ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
  * seeks indexAtSum / sumBefore and clear(), with their C-10 checks (A-R1b),
@@ -12,9 +12,11 @@
  * the structural re-home, and the remove side (A-R3): the T-6 neighbour walk,
  * the one repair (merge / equalize), the delete rebalance and the drain, and
  * the k >= 2 clear() free-walk (S-R1), the T-3 join and append with its
- * C-21 seam repair (S-R2), and splitAt (S-R3): the T-4 split whose joins
- * reuse the popped path nodes, and the C-21 rL + rR seam repairs. Nothing is
- * released between rungs.
+ * C-21 seam repair (S-R2), splitAt (S-R3): the T-4 split whose joins
+ * reuse the popped path nodes, and the C-21 rL + rR seam repairs, and the
+ * C-4 finger hit test in the five positional ops (F-R): a hit skips the
+ * descent and adds 0 touches; fingerHits / fingerMisses split (C-26). Nothing
+ * is released between rungs.
  *
  * Layout (0005 C-44). Every view owns, in this order: _root, _len, _fl, _fb,
  * _fdepth, _fpath, _cv, _n, then the hoisted refs _hdr, _left, _right, _weight,
@@ -1033,7 +1035,7 @@ function ygSeamJoin(v, o) {
 // consumes no node: x is freed. Then the C-21 repairs, rX = [result X has
 // >= 2 leaves and its seam leaf < m], decided from the result's root and the
 // cut sizes (no seam search; a boundary cut never repairs). Writes both roots;
-// _len, live and the fingers are splitAt's. Counters into v._n (RS-1).
+// _len and the fingers are splitAt's; live is unchanged. Counters into v._n (RS-1).
 function ygSplitCut(v, o, c, p, d) {
   const ar = v._ar;
   const left = v._left;
@@ -1193,17 +1195,26 @@ export class SumSequence {
     return r < 0 ? this._lsum[d >>> 0][~r] : this._sums[d >>> 0][r];
   }
 
-  // ---- positional ops (C-10, C-12; finger writes M-1, C-3, C-5) --------------------
-  // ONE descent from _root writing this._fpath[0..d): insertAt by the T-5
-  // insert rule (k <= count[left] goes left), every other op by the element
-  // rule (k < count[left]). A root-leaf view runs no loop (d = 0). Then the
-  // leaf work and, for a non-structural mutation, ONE hot pull pass over
-  // _fpath (count + sums recomputed from the children, no weight read; pulls
-  // == d, C-20, C-45). The only branch to cold structural code: insertAt into
-  // a full leaf (ygSplit), removeAt from a leaf of length m when the view has
-  // >= 2 leaves (ygUnder, T-6). Every op is a finger miss (the core never READS the
-  // finger until the hit test, C-4) and re-homes to the touched leaf; touches
-  // += d (C-25). Counters are bumped after the loops (0003 G-5 / G-7).
+  // ---- positional ops (C-4, C-10, C-12; finger M-1, C-3, C-5, C-26) ---------------
+  // After every C-10 check, the finger hit test (C-4) from _fl / _fb / _fdepth
+  // and llen[~_fl], NIL tested first: insertAt hits iff lo < i <= fb+len and
+  // len < B (lo = fb - ((fb-1)>>>31): -1 on the first leaf, else fb); removeAt
+  // iff fb <= i < fb+len and len > (_fdepth === 0 ? 1 : m) (no underflow, no
+  // drain; n === 1 drains before the test); setMeasure / getMeasure / entityAt
+  // iff fb <= i < fb+len. A hit takes the leaf, fb, depth and _fpath as they
+  // are (a hit is non-structural: none of them changes) and skips the descent.
+  // A miss runs ONE descent from _root writing this._fpath[0..d): insertAt by
+  // the T-5 insert rule (k <= count[left] goes left), every other op by the
+  // element rule (k < count[left]). A root-leaf view runs no loop (d = 0).
+  // Then the leaf work and, for a non-structural mutation, ONE hot pull pass
+  // over _fpath (count + sums recomputed from the children, no weight read;
+  // pulls == d on a hit and a miss alike, C-20, C-45). The only branch to cold
+  // structural code is a miss: insertAt into a full leaf (ygSplit), removeAt
+  // from a leaf of length m when the view has >= 2 leaves (ygUnder, T-6).
+  // Every op re-homes to the touched leaf (a hit rewrites the same values).
+  // h = 1 on a hit: touches += d & (h - 1) (0 on a hit, d on a miss, C-25) and
+  // slot YG_MISSES - h (fingerHits = 8, fingerMisses = 9) += 1 (C-26).
+  // Counters are bumped after the loops (0003 G-5 / G-7).
 
   insertAt(i, e, m0, m1, m2, m3) {
     const n = this._len;
@@ -1236,36 +1247,46 @@ export class SumSequence {
     const t0 = r === YG_EMPTY_ROOT ? 0 : r < 0 ? this._lsum[0][~r] : this._sums[0][r];
     sx[0] = m0 + 0; // staged (scratch, not state; -0 -> +0, 0002 M-2)
     if ((m0 > YG_MAX - t0) | (dims > 1)) ygHeadroomIns(this);
-    if (r === YG_EMPTY_ROOT) {
-      ygFirstLeaf(this, e);
-      return;
-    }
     const left = this._left;
     const right = this._right;
     const count = this._count;
     const llen = this._llen;
     const fpath = this._fpath;
-    let ref = r;
+    const fb = this._fb;
+    let ref = this._fl;
     let k = at;
     let depth = 0;
-    while (ref >= 0) {
-      fpath[depth] = ref;
-      depth++;
-      const l = left[ref];
-      const cl = l < 0 ? llen[~l] : count[l];
-      if (k <= cl) {
-        ref = l;
-      } else {
-        k -= cl;
-        ref = right[ref];
+    let len = 0;
+    let h = 0;
+    if (ref !== YG_NIL && fb - ((fb - 1) >>> 31) < at && at <= fb + (len = llen[~ref]) && len < ar.B) {
+      k = at - fb; // C-4 hit: i in (fb, fb+len], [0, len] on the first leaf
+      depth = this._fdepth;
+      h = 1;
+    } else {
+      if (r === YG_EMPTY_ROOT) {
+        ygFirstLeaf(this, e);
+        return;
+      }
+      ref = r;
+      while (ref >= 0) {
+        fpath[depth] = ref;
+        depth++;
+        const l = left[ref];
+        const cl = l < 0 ? llen[~l] : count[l];
+        if (k <= cl) {
+          ref = l;
+        } else {
+          k -= cl;
+          ref = right[ref];
+        }
+      }
+      len = llen[~ref];
+      if (len === ar.B) {
+        ygSplit(this, at, e, ~ref, k, depth);
+        return;
       }
     }
     const id = ~ref;
-    const len = llen[id];
-    if (len === ar.B) {
-      ygSplit(this, at, e, id, k, depth);
-      return;
-    }
     // ---- leaf write ----
     const base = id << ar.shift;
     const p = base + k;
@@ -1302,9 +1323,9 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth;
+    cn[YG_TOUCHES] += depth & (h - 1);
     cn[YG_PULLS] += depth;
-    cn[YG_MISSES] += 1;
+    cn[YG_MISSES - h] += 1;
     cn[YG_MOVES] += len - k;
   }
 
@@ -1326,24 +1347,35 @@ export class SumSequence {
     const count = this._count;
     const llen = this._llen;
     const fpath = this._fpath;
-    let ref = r;
+    const fb = this._fb;
+    let ref = this._fl;
     let k = at;
     let depth = 0;
-    while (ref >= 0) {
-      fpath[depth] = ref;
-      depth++;
-      const l = left[ref];
-      const cl = l < 0 ? llen[~l] : count[l];
-      if (k < cl) {
-        ref = l;
-      } else {
-        k -= cl;
-        ref = right[ref];
+    let len = 0;
+    let h = 0;
+    if (ref !== YG_NIL && fb <= at && at < fb + (len = llen[~ref]) &&
+        len > (this._fdepth === 0 ? 1 : ar.m)) {
+      k = at - fb; // C-4 hit: i in [fb, fb+len), no underflow, no drain
+      depth = this._fdepth;
+      h = 1;
+    } else {
+      ref = r;
+      while (ref >= 0) {
+        fpath[depth] = ref;
+        depth++;
+        const l = left[ref];
+        const cl = l < 0 ? llen[~l] : count[l];
+        if (k < cl) {
+          ref = l;
+        } else {
+          k -= cl;
+          ref = right[ref];
+        }
       }
+      len = llen[~ref];
+      if ((len === ar.m) & (depth !== 0)) return ygUnder(this, at, ~ref, k, depth);
     }
     const id = ~ref;
-    const len = llen[id];
-    if ((len === ar.m) & (depth !== 0)) return ygUnder(this, at, id, k, depth);
     // ---- leaf write ----
     const base = id << ar.shift;
     const p = base + k;
@@ -1379,9 +1411,9 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth;
+    cn[YG_TOUCHES] += depth & (h - 1);
     cn[YG_PULLS] += depth;
-    cn[YG_MISSES] += 1;
+    cn[YG_MISSES - h] += 1;
     cn[YG_MOVES] += len - 1 - k;
     return e;
   }
@@ -1413,19 +1445,28 @@ export class SumSequence {
     const count = this._count;
     const llen = this._llen;
     const fpath = this._fpath;
-    let ref = r;
+    const fb = this._fb;
+    let ref = this._fl;
     let k = at;
     let depth = 0;
-    while (ref >= 0) {
-      fpath[depth] = ref;
-      depth++;
-      const l = left[ref];
-      const cl = l < 0 ? llen[~l] : count[l];
-      if (k < cl) {
-        ref = l;
-      } else {
-        k -= cl;
-        ref = right[ref];
+    let h = 0;
+    if (ref !== YG_NIL && fb <= at && at < fb + llen[~ref]) {
+      k = at - fb; // C-4 hit: i in [fb, fb+len)
+      depth = this._fdepth;
+      h = 1;
+    } else {
+      ref = r;
+      while (ref >= 0) {
+        fpath[depth] = ref;
+        depth++;
+        const l = left[ref];
+        const cl = l < 0 ? llen[~l] : count[l];
+        if (k < cl) {
+          ref = l;
+        } else {
+          k -= cl;
+          ref = right[ref];
+        }
       }
     }
     const id = ~ref;
@@ -1446,9 +1487,9 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth;
+    cn[YG_TOUCHES] += depth & (h - 1);
     cn[YG_PULLS] += depth;
-    cn[YG_MISSES] += 1;
+    cn[YG_MISSES - h] += 1;
   }
 
   getMeasure(i, d) {
@@ -1465,19 +1506,28 @@ export class SumSequence {
     const count = this._count;
     const llen = this._llen;
     const fpath = this._fpath;
-    let ref = this._root;
+    const fb = this._fb;
+    let ref = this._fl;
     let k = at;
     let depth = 0;
-    while (ref >= 0) {
-      fpath[depth] = ref;
-      depth++;
-      const l = left[ref];
-      const cl = l < 0 ? llen[~l] : count[l];
-      if (k < cl) {
-        ref = l;
-      } else {
-        k -= cl;
-        ref = right[ref];
+    let h = 0;
+    if (ref !== YG_NIL && fb <= at && at < fb + llen[~ref]) {
+      k = at - fb; // C-4 hit: i in [fb, fb+len)
+      depth = this._fdepth;
+      h = 1;
+    } else {
+      ref = this._root;
+      while (ref >= 0) {
+        fpath[depth] = ref;
+        depth++;
+        const l = left[ref];
+        const cl = l < 0 ? llen[~l] : count[l];
+        if (k < cl) {
+          ref = l;
+        } else {
+          k -= cl;
+          ref = right[ref];
+        }
       }
     }
     const x = this._meas[d >>> 0][(~ref << ar.shift) + k];
@@ -1485,8 +1535,8 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth;
-    cn[YG_MISSES] += 1;
+    cn[YG_TOUCHES] += depth & (h - 1);
+    cn[YG_MISSES - h] += 1;
     return x;
   }
 
@@ -1500,19 +1550,28 @@ export class SumSequence {
     const count = this._count;
     const llen = this._llen;
     const fpath = this._fpath;
-    let ref = this._root;
+    const fb = this._fb;
+    let ref = this._fl;
     let k = at;
     let depth = 0;
-    while (ref >= 0) {
-      fpath[depth] = ref;
-      depth++;
-      const l = left[ref];
-      const cl = l < 0 ? llen[~l] : count[l];
-      if (k < cl) {
-        ref = l;
-      } else {
-        k -= cl;
-        ref = right[ref];
+    let h = 0;
+    if (ref !== YG_NIL && fb <= at && at < fb + llen[~ref]) {
+      k = at - fb; // C-4 hit: i in [fb, fb+len)
+      depth = this._fdepth;
+      h = 1;
+    } else {
+      ref = this._root;
+      while (ref >= 0) {
+        fpath[depth] = ref;
+        depth++;
+        const l = left[ref];
+        const cl = l < 0 ? llen[~l] : count[l];
+        if (k < cl) {
+          ref = l;
+        } else {
+          k -= cl;
+          ref = right[ref];
+        }
       }
     }
     const e = this._ent[(~ref << this._ar.shift) + k];
@@ -1520,8 +1579,8 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth;
-    cn[YG_MISSES] += 1;
+    cn[YG_TOUCHES] += depth & (h - 1);
+    cn[YG_MISSES - h] += 1;
     return e;
   }
 

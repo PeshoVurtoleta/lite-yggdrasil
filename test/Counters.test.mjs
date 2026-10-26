@@ -1,6 +1,6 @@
 // test/Counters.test.mjs -- C-24 COUNTERS / readCounters / resetCounters, C-8 clear(), and the getter surface.
 // Expectations from 0003 (counters table), 0004 (A-6 clear, signatures) and 0005 (C-8, C-24, C-44); the engine
-// state is forced directly (no ops exist in rung A-R1a). A fresh arena per test. ASCII only.
+// state is forced directly (no ops exist in rung A-R1a; the clear rows added in A-R1b use real insertAt). A fresh arena per test. ASCII only.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -70,6 +70,25 @@ test('S-R1 placeholder: clear() of a non-empty view beside another holder throws
   const before = snap();
   assert.throws(() => vs[0].clear());
   assert.equal(snap(), before);
+});
+
+test('S-R1 placeholder (real insertAt): clear() of a non-empty view beside another holder throws, writes nothing; sole holder clears to fresh hdr', () => {
+  const vs = SumSequence.arena(8, undefined, 3);
+  vs[0].insertAt(0, 1, 2);
+  vs[1].insertAt(0, 2, 3);
+  const snap = () => vs.map((v) => JSON.stringify([v._root, v._len, v._fl, v._fb, v._fdepth, v._cv,
+    Array.from(v._n), Array.from(v._fpath)])).join('|') + Array.from(vs[0]._hdr).join(',');
+  const before = snap();
+  assert.throws(() => vs[0].clear());
+  assert.equal(snap(), before);
+  // k = 1 / sole holder: the view holds every live element and clears to the fresh hdr (C-8)
+  const s = SumSequence.arena(8, undefined, 1)[0];
+  s.insertAt(0, 1, 2);
+  s.insertAt(1, 2, 3);
+  s.clear();
+  assert.deepEqual(Array.from(s._hdr), [0, 0, -1, 0, -1]);
+  assert.equal(s._root, EMPTY_ROOT);
+  assert.equal(s._len, 0);
 });
 
 test('getters: available === C - live (whole arena); length === _len', () => {

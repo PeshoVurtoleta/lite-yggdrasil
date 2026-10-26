@@ -77,7 +77,7 @@ test('non-aliasing: mutating a snapshot does not change the next one', () => {
   assert.notEqual(b.views[0]._fpath.buffer, c2.views[0]._fpath.buffer);
 });
 
-// Must-fail controls: no ops exist in this rung, so corrupt the arena directly.
+// Must-fail controls: these corrupt the arena directly (written in rung A-R1a, before ops existed).
 test('control: hdr live := 1 with no leaf is an I-7 hdr failure; restore is clean', () => {
   const { views, snapshot } = engineFactory(C, { leafSize: 8, dims: 1 }, 1);
   const hdr = views[0]._hdr;
@@ -114,7 +114,7 @@ test('arena sharing: views of one arena share _hdr / columns by identity; anothe
   }
 });
 
-test.todo('control: 5 appends, then weight[root] += 1 fails I-1 weight (needs insertAt: rung 2 A-R1b)');
+test.todo('control: 5 appends, then weight[root] += 1 fails I-1 weight (needs a split: rung 3 A-R2)');
 
 test('cfg row: any cfg key is a RangeError naming cfg', () => {
   assert.throws(() => engineFactory(64, {}, 1, { x: 1 }), (e) => e instanceof RangeError && /cfg/.test(e.message));

@@ -1,4 +1,4 @@
-// Type declarations for @zakkster/lite-yggdrasil (rung A-R1a: constructor, arena, pools, counters; no ops yet).
+// Type declarations for @zakkster/lite-yggdrasil (rung A-R1b: constructor, arena, pools, counters, one-leaf ops; a full leaf throws until the trunk rung).
 export declare const VERSION: string;
 
 export interface SumSequenceOptions {
@@ -21,8 +21,26 @@ export declare class SumSequence {
   readonly length: number;
   readonly capacity: number;
   readonly available: number;
-  /** Total of dimension d (0 <= d < dims). */
+  /** Total of dimension d (0 <= d < dims). O(1). */
   total(d: number): number;
+  /**
+   * Insert entity e at index i in [0, length] with measures m0 (and m1..m3 for dims > 1).
+   * Entity range [0, 2^30 - 1]; measure range [0, 2^53 - 1] integers; slots >= dims must be undefined.
+   * RangeError (first token index / entity / measure / extra / capacity / headroom) leaves the sequence unchanged.
+   */
+  insertAt(i: number, e: number, m0: number, m1?: number, m2?: number, m3?: number): void;
+  /** Remove and return the entity at index i in [0, length). */
+  removeAt(i: number): number;
+  /** Set measure d of the element at index i in [0, length) to m (integer in [0, 2^53 - 1]). */
+  setMeasure(i: number, d: number, m: number): void;
+  /** Measure d of the element at index i in [0, length). */
+  getMeasure(i: number, d: number): number;
+  /** Entity at index i in [0, length). */
+  entityAt(i: number): number;
+  /** Smallest index i with prefix(i) + measure(i) > y in dimension d, else length. y finite, >= 0. */
+  indexAtSum(d: number, y: number): number;
+  /** Sum of dimension d over elements [0, i), i in [0, length]. */
+  sumBefore(d: number, i: number): number;
   clear(): this;
   /** Copy the 12 counters into out (length >= 12). */
   readCounters(out: Int32Array): void;

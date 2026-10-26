@@ -3,7 +3,7 @@
  *
  * MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
- * Pre-release engine build (rung S-R1 of the E0 ladder): SumSequence init,
+ * Pre-release engine build (rung S-R2 of the E0 ladder): SumSequence init,
  * layout, pools, constructor validation, counters and getters (A-R1a), the
  * positional ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
  * seeks indexAtSum / sumBefore and clear(), with their C-10 checks (A-R1b),
@@ -11,13 +11,16 @@
  * leaf split, the hot pull pass, the cold weight pull with H-Y rotations and
  * the structural re-home, and the remove side (A-R3): the T-6 neighbour walk,
  * the one repair (merge / equalize), the delete rebalance and the drain, and
- * the k >= 2 clear() free-walk (S-R1). splitAt / append are not built yet.
- * Nothing is released between rungs.
+ * the k >= 2 clear() free-walk (S-R1), the T-3 join and append with its
+ * C-21 seam repair (S-R2). splitAt is not built yet. Nothing is released
+ * between rungs.
  *
  * Layout (0005 C-44). Every view owns, in this order: _root, _len, _fl, _fb,
  * _fdepth, _fpath, _cv, _n, then the hoisted refs _hdr, _left, _right, _weight,
  * _count, _inext, _sums, _llen, _lnext, _ent, _meas, _lsum, then _ar (the
- * shared arena record {C, B, shift, m, dims, Lmax, HL, views, sx}).
+ * shared arena record {C, B, shift, m, dims, Lmax, HL, views, sx, jstack,
+ * sstack}: jstack is the T-3 join stack, sstack the split stack (append's seam
+ * path; splitAt in S-R3), each Int32Array(H(Lmax))).
  * hdr = Int32Array(5) [live, lbump, lfree, ibump, ifree], END = -1.
  * A child ref >= 0 is an internal id; a ref < 0 is ~leafId. NIL = 0 (finger,
  * C-1); EMPTY_ROOT = 0x3FFFFFFF (C-8).
@@ -47,6 +50,8 @@ const YG_EQUALIZES = 5;
 const YG_ROTS = 6;
 const YG_ROTD = 7;
 const YG_MISSES = 9;
+const YG_JOINS = 10;
+const YG_SEAMS = 11;
 // 2^53-1, the measure / total bound (0002 M-1, M-4). The one non-Smi constant.
 const YG_MAX = 9007199254740991;
 
@@ -164,11 +169,16 @@ function ygInit(C, o, k) {
   for (let d = 0; d < dims; d++) sums.push(new Float64Array(NI));
   const hdr = new Int32Array(5);
   const sx = new Float64Array(4);
+  const jstack = new Int32Array(HL);
+  const sstack = new Int32Array(HL);
   lnext.fill(YG_END);
   inext.fill(YG_END);
   hdr[YG_LFREE] = YG_END;
   hdr[YG_IFREE] = YG_END;
-  const ar = { C: C, B: B, shift: shift, m: m, dims: dims, Lmax: Lmax, HL: HL, views: [], sx: sx };
+  const ar = {
+    C: C, B: B, shift: shift, m: m, dims: dims, Lmax: Lmax, HL: HL, views: [], sx: sx,
+    jstack: jstack, sstack: sstack,
+  };
   return {
     ar: ar, hdr: hdr, left: left, right: right, weight: weight, count: count, inext: inext, sums: sums,
     llen: llen, lnext: lnext, ent: ent, meas: meas, lsum: lsum,
@@ -177,9 +187,11 @@ function ygInit(C, o, k) {
 
 // ---- pools (cold; C-15, R-E4) ---------------------------------------------------
 
-// Every R-E4 'pool' throw (R-P2, 0005 A6-4, C-3): the finger is invalidated
-// (NIL / 0 / 0) before the throw, so the next positional op is a miss and I-9
-// holds; _fpath may stay rewritten by the op's descent. Unreachable under C-15.
+// The R-E4 'pool' throw of the allocators and ygSplit (R-P2, 0005 A6-4, C-3):
+// the finger is invalidated (NIL / 0 / 0) before the throw, so the next
+// positional op is a miss and I-9 holds; _fpath may stay rewritten by the op's
+// descent. The splitAt / append 'pool' pre-checks call ygFail directly and
+// change nothing (A7-4). Unreachable under C-15.
 function ygPoolFail(v, detail) {
   v._fl = YG_NIL; // R-P2 (C-3)
   v._fb = 0;
@@ -812,6 +824,196 @@ function ygUnder(v, at, id, p, D) {
   return e;
 }
 
+// ---- join and append (cold; 0001 T-3, C-21, C-24, C-25, M-3) ----------------------
+
+// T-3 join rotation at x after joinRight replaced right[x] (BFS's own rule, no
+// gamma): single left iff both new nodes (l, yl) and ((l, yl), yr) pass I-1,
+// else double left. x keeps its id as the subtree top. wl = w(left[x]).
+// Returns the pulls it ran.
+function ygJoinRotL(v, x, wl) {
+  const left = v._left;
+  const right = v._right;
+  const weight = v._weight;
+  const cn = v._n;
+  const y = right[x];
+  const yl = left[y];
+  const yr = right[y];
+  const a = yl < 0 ? 1 : weight[yl];
+  const b = yr < 0 ? 1 : weight[yr];
+  const s = wl + a;
+  if ((3 * wl >= a) & (3 * a >= wl) & (3 * s >= b) & (3 * b >= s)) {
+    // single left: (A, (yl, yr)) -> ((A, yl), yr)
+    left[y] = left[x];
+    right[y] = yl;
+    left[x] = y;
+    right[x] = yr;
+    ygPullW(v, y);
+    ygPullW(v, x);
+    cn[YG_ROTS] += 1;
+    return 2;
+  }
+  // double left: (A, ((zl, zr), yr)) -> ((A, zl), (zr, yr))
+  const z = yl;
+  const zl = left[z];
+  const zr = right[z];
+  left[z] = left[x];
+  right[z] = zl;
+  left[y] = zr;
+  left[x] = z;
+  right[x] = y;
+  ygPullW(v, z);
+  ygPullW(v, y);
+  ygPullW(v, x);
+  cn[YG_ROTD] += 1;
+  return 3;
+}
+
+// Mirror of ygJoinRotL after joinLeft replaced left[x]: single right iff both
+// new nodes (yr, C) and (yl, (yr, C)) pass I-1, else double right.
+// wr = w(right[x]). Returns the pulls it ran.
+function ygJoinRotR(v, x, wr) {
+  const left = v._left;
+  const right = v._right;
+  const weight = v._weight;
+  const cn = v._n;
+  const y = left[x];
+  const yl = left[y];
+  const yr = right[y];
+  const a = yr < 0 ? 1 : weight[yr];
+  const b = yl < 0 ? 1 : weight[yl];
+  const s = wr + a;
+  if ((3 * wr >= a) & (3 * a >= wr) & (3 * s >= b) & (3 * b >= s)) {
+    // single right: ((yl, yr), C) -> (yl, (yr, C))
+    left[y] = yr;
+    right[y] = right[x];
+    left[x] = yl;
+    right[x] = y;
+    ygPullW(v, y);
+    ygPullW(v, x);
+    cn[YG_ROTS] += 1;
+    return 2;
+  }
+  // double right: ((yl, (zl, zr)), C) -> ((yl, zl), (zr, C))
+  const z = yr;
+  const zl = left[z];
+  const zr = right[z];
+  right[y] = zl;
+  left[z] = zr;
+  right[z] = right[x];
+  left[x] = y;
+  right[x] = z;
+  ygPullW(v, y);
+  ygPullW(v, z);
+  ygPullW(v, x);
+  cn[YG_ROTD] += 1;
+  return 3;
+}
+
+// T-3 join(a, b) of two non-empty trees of one arena (refs; a precedes b):
+// iterative BFS joinRight / joinLeft. Push the heavier tree's spine (right
+// spine of a, left spine of b) onto the arena join stack jstack until the
+// first node c balanced (I-1) against the other tree; one fresh internal node
+// (c, b) or (a, c); pop back up, relinking and recomputing weight, count and
+// every dim's sum (ygPullW), keeping each node that passes I-1 and rotating it
+// otherwise (ygJoinRotL / ygJoinRotR). The pool was pre-checked by append.
+// joinSteps += internal nodes pushed (C-24); the spine steps are not touches
+// (C-25). Returns the root ref of the joined tree.
+function ygJoin(v, a, b) {
+  const left = v._left;
+  const right = v._right;
+  const weight = v._weight;
+  const js = v._ar.jstack;
+  const wa = a < 0 ? 1 : weight[a];
+  const wb = b < 0 ? 1 : weight[b];
+  const heavyA = 3 * wb < wa ? 1 : 0;
+  let c = heavyA !== 0 ? a : b;
+  let wc = heavyA !== 0 ? wa : wb;
+  const wo = heavyA !== 0 ? wb : wa;
+  let top = 0;
+  while (!((3 * wc >= wo) & (3 * wo >= wc))) {
+    js[top] = c;
+    top++;
+    c = heavyA !== 0 ? right[c] : left[c];
+    wc = c < 0 ? 1 : weight[c];
+  }
+  const u = ygAllocInt(v);
+  left[u] = heavyA !== 0 ? c : a;
+  right[u] = heavyA !== 0 ? b : c;
+  ygPullW(v, u);
+  let pulls = 1;
+  let cur = u;
+  for (let q = top - 1; q >= 0; q--) {
+    const p = js[q];
+    if (heavyA !== 0) right[p] = cur;
+    else left[p] = cur;
+    ygPullW(v, p);
+    pulls++;
+    const l = left[p];
+    const r = right[p];
+    const wl = l < 0 ? 1 : weight[l];
+    const wr = r < 0 ? 1 : weight[r];
+    if (!((3 * wl >= wr) & (3 * wr >= wl))) {
+      pulls += heavyA !== 0 ? ygJoinRotL(v, p, wl) : ygJoinRotR(v, p, wr);
+    }
+    cur = p;
+  }
+  const cn = v._n;
+  cn[YG_JOINS] += top;
+  cn[YG_PULLS] += pulls;
+  return cur;
+}
+
+// append's tree work for two non-empty views (C-21, R-E5): descend to v's last
+// leaf (pushes into sstack, d_a) and to o's first leaf (d_b); touches +=
+// d_a + d_b (C-25). If a seam leaf is < m, ONE repair before the join: u = the
+// short seam leaf (the right one if both are short), w = the other one, sh = 0;
+// o's seam path is written into jstack only then (the join stack is otherwise
+// the join's own). A merge that empties a one-leaf operand makes the join the
+// identity. Returns the result root ref; _len, live and the finger are append's.
+function ygSeamJoin(v, o) {
+  const ar = v._ar;
+  const left = v._left;
+  const right = v._right;
+  const llen = v._llen;
+  const ss = ar.sstack;
+  const js = ar.jstack;
+  let ra = v._root;
+  let da = 0;
+  while (ra >= 0) {
+    ss[da] = ra;
+    da++;
+    ra = right[ra];
+  }
+  let rb = o._root;
+  let db = 0;
+  while (rb >= 0) {
+    db++;
+    rb = left[rb];
+  }
+  const cn = v._n;
+  cn[YG_TOUCHES] += da + db;
+  const m = ar.m;
+  const la = llen[~ra];
+  const lb = llen[~rb];
+  if ((la < m) | (lb < m)) {
+    let x = o._root;
+    for (let q = 0; q < db; q++) {
+      js[q] = x;
+      x = left[x];
+    }
+    let rep;
+    if (lb < m) rep = ygRepair(v, o, ~rb, ~ra, 0, js, db, ss, da, 0);
+    else rep = ygRepair(v, v, ~ra, ~rb, 1, ss, da, js, db, 0);
+    cn[YG_MOVES] += rep;
+    cn[YG_SEAMS] += 1;
+  }
+  const a = v._root;
+  const b = o._root;
+  if (a === YG_EMPTY_ROOT) return b;
+  if (b === YG_EMPTY_ROOT) return a;
+  return ygJoin(v, a, b);
+}
+
 // ---- the view ---------------------------------------------------------------------
 
 export class SumSequence {
@@ -821,6 +1023,11 @@ export class SumSequence {
     rotSingle: 6, rotDouble: 7, fingerHits: 8, fingerMisses: 9, joinSteps: 10,
     seamRepairs: 11,
   });
+
+  // The private brand of a view (C-10 RS-6 operand check: `#yg in o`). A
+  // method, not a field: no stored value, and every view (ctor and arena
+  // paths alike) gets it the same way, so the one hidden class stays (MS-2).
+  #yg() {}
 
   // new SumSequence(C, o) is arena(C, o, 1)'s one view (M-2): the same init,
   // the same field order (one hidden class across views, 0004 A-8).
@@ -1328,6 +1535,53 @@ export class SumSequence {
     this._fb = 0;
     this._fdepth = 0;
     this._cv = false;
+    return this;
+  }
+
+  // ---- append (0004 A-4; C-3, C-5, C-6, C-10, C-21, C-24, C-25) ---------------------
+  // this := this ++ other, other := empty; returns this. Every check before the
+  // first write (RS-6 order): not a view, self, another arena, headroom (V-R4,
+  // in-body, b = 0, C-13), then the R-E4 'pool' pre-check (one internal node
+  // when both are non-empty; ygFail, so a throw changes nothing, A7-4). Live is
+  // unchanged (elements move, none is created). Both fingers NIL / 0 / 0 and
+  // both _cv false; counters into this._n only (RS-1).
+
+  append(other) {
+    if (other === null || typeof other !== 'object' || !(#yg in other)) {
+      ygFail('operand', 'must be a SumSequence view');
+    }
+    if (other === this) ygFail('operand', 'must not be this view');
+    if (other._hdr !== this._hdr) {
+      ygFail('operand', 'is from another arena (views of one SumSequence.arena only)');
+    }
+    const ar = this._ar;
+    const ra = this._root;
+    const rb = other._root;
+    for (let d = 0; d < ar.dims; d++) {
+      const tL = ra === YG_EMPTY_ROOT ? 0 : ra < 0 ? this._lsum[d][~ra] : this._sums[d][ra];
+      const tR = rb === YG_EMPTY_ROOT ? 0 : rb < 0 ? this._lsum[d][~rb] : this._sums[d][rb];
+      if (tR > YG_MAX - tL) ygFail('headroom', 'total would exceed 2^53-1');
+    }
+    const hdr = this._hdr;
+    if ((ra !== YG_EMPTY_ROOT) & (rb !== YG_EMPTY_ROOT) & (hdr[YG_IFREE] === YG_END) &
+        !(hdr[YG_IBUMP] < ar.Lmax - 1)) {
+      ygFail('pool', 'internal pool exhausted');
+    }
+    // ---- first write ----
+    if (rb !== YG_EMPTY_ROOT) {
+      this._root = ra === YG_EMPTY_ROOT ? rb : ygSeamJoin(this, other);
+    }
+    this._len += other._len;
+    other._root = YG_EMPTY_ROOT;
+    other._len = 0;
+    this._fl = YG_NIL;
+    this._fb = 0;
+    this._fdepth = 0;
+    other._fl = YG_NIL;
+    other._fb = 0;
+    other._fdepth = 0;
+    this._cv = false;
+    other._cv = false;
     return this;
   }
 

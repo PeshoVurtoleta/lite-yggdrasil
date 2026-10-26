@@ -26,6 +26,12 @@
 //            (C-20: a merge may pull 0), === |anc(u) U anc(v)| on an equalize
 //   rotSingle / rotDouble delta 0 on every non-structural op
 //   joinSteps delta 0 on every positional / seek / clear op
+// append (S-R2) runs for real in engine mode, checked from the PRE / POST snapshots and the
+// spec only: touches 0 when an operand is empty else d_a(last) + d_b(first) (C-25), seamRepairs
+// === [both non-empty and min(seam leaf lens) < m] (C-21), splits 0, fingerHits / fingerMisses 0,
+// joinSteps 0 when an operand is empty else <= HB(Lmax) (C-24), the operand's counters all delta 0
+// (RS-1 / C-8), both fingers NIL / 0 / 0 (C-5), both _cv false (C-6), the walker clean on the whole
+// arena and both views against the oracle. splitAt stays substituted (read instead) until S-R3.
 // ASCII-only.
 
 import { walk } from './walker.mjs';
@@ -136,13 +142,14 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
     if (n === 0 && op !== 'insertAt' && op !== 'append' && op !== 'clear' && op !== 'indexAtSum') {
       op = live < C ? 'insertAt' : 'clear';
     }
-    // engine without the splitAt / append rungs yet: read instead (same draws)
-    if (E && (op === 'splitAt' || op === 'append') && typeof v[op] !== 'function') {
+    // engine without the splitAt rung yet: read instead (same draws). append is NEVER
+    // substituted (S-R2): a missing append is a TypeError, i.e. a lane failure.
+    if (E && op === 'splitAt' && typeof v[op] !== 'function') {
       op = n === 0 ? (live < C ? 'insertAt' : 'clear') : 'getMeasure';
     }
     // LANE LIMIT until S-R3: splitAt with no empty operand view would clear() inside splitAt
-    // (and append / the real splitAt join are not built until S-R2 / S-R3); engine mode reads
-    // instead there. A plain clear() op runs for real (free-walk or O(1) reset, rung S-R1).
+    // (the real splitAt join is not built until S-R3); engine mode reads instead there.
+    // append runs for real (S-R2), as does a plain clear() op (free-walk or O(1) reset, S-R1).
     if (E && n > 0 && live !== n && op === 'splitAt') {
       let em = false;
       for (let k = 1; k < count; k++) if (views[(vi + k) % count]._len === 0) em = true;
@@ -294,15 +301,22 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
       const Lo = leavesOf(pre, oi);
       x.row = SC.TOUCH_APPEND; x.join0 = false; x.rot0 = false;
       x.a = -1; x.b = -1;
+      const onPre = E ? views[oi]._n.slice() : null;
       if (n > 0 && Lo.length > 0) {
         const a = L[L.length - 1].len;
         const b = Lo[0].len;
         exp.seamRepairs = SC.seamAppend(m, a, b); // C-21
         if (exp.seamRepairs) { exp.moves = b < m ? rep(a, b, 0) : rep(a, b, 1); seenB('appendSeam'); }
         x.a = L[L.length - 1].depth; x.b = Lo[0].depth;
-      }
+        x.joinMax = HB;
+        if (E) seenB('appendBoth');
+      } else x.joinMax = 0; // an empty operand: the identity, no join
       v.append(views[oi]); or[vi].append(or[oi]);
       expLeaf = 'nil';
+      if (E) { // operand counters: delta 0 on every counter; both cursors invalid (C-6)
+        for (const nm of ctr) chk(views[oi]._n[K[nm]] === onPre[K[nm]], 'operand-counter', tag(op, `operand ${nm} moved`), o);
+        chk(v._cv === false && views[oi]._cv === false, 'cv', tag(op, 'append left a cursor valid'), o);
+      }
     } else { v.clear(); or[vi].clear(); expLeaf = 'nil'; x.row = SC.TOUCH_TOTAL_CLEAR; }
 
     seenK(op); seenB(op);
@@ -359,6 +373,7 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
         chk(d.rotSingle === 0 && d.rotDouble === 0, 'rot', tag(op, `rot ${d.rotSingle}/${d.rotDouble} on a non-structural op`), o);
       }
       if (x.join0) chk(d.joinSteps === 0, 'join', tag(op, `joinSteps moved by ${d.joinSteps}`), o);
+      if (op === 'append') chk(d.joinSteps >= 0 && d.joinSteps <= x.joinMax, 'join', tag(op, `joinSteps ${d.joinSteps} exp [0, ${x.joinMax}]`), o);
     }
     if (off) chk(d.fingerHits === 0, 'hit', tag(op, 'finger-off op counted a hit'), o);
 

@@ -12,6 +12,7 @@
 // only gate for A4-10 a). Mutants are exact-count source patches of a temp copy
 // (buildMutant, C-46 M-8); the adapter is rebuilt over the mutant. The anchors are
 // literal [anchor, replacement, count] lists (a 'TODO' anchor would mark its row todo).
+// S-R2: the lane runs append in engine mode (count-lane.mjs header).
 // ASCII-only.
 
 import { test, after } from 'node:test';
@@ -40,7 +41,9 @@ const ANCHORS = {
 // 500/600 ops x seeds 1, 2: the same sizes as StubCounts, whose measured tallies
 // (stub run, 2026-10-26) show merge, equalize, split and structural-remove cases at
 // every B. The floor is a tripwire for a lane that checks nothing.
-const LANE = (dims) => ({ ops: (B) => (B === 16 ? 600 : 500), seeds: [1, 2], early: false, mode: 'engine', dims });
+// S-R2: append consumes one extra draw per append op, which shifted the stream; seeds 1..5 (was 1, 2) restore the
+// clearReset floor at B = 8 (measured 2026-10-26: clearReset 2 / 3 / 3 at B 4 / 8 / 16). Engine lane only; StubCounts is unchanged.
+const LANE = (dims) => ({ ops: (B) => (B === 16 ? 600 : 500), seeds: [1, 2, 3, 4, 5], early: false, mode: 'engine', dims });
 const MUT_LANE = (dims) => ({ ops: () => 1000, seeds: [1, 2], early: true, mode: 'engine', dims });
 const CHECK_FLOOR = 100000;
 const S = { COUNTERS: SumSequence.COUNTERS };
@@ -64,6 +67,10 @@ for (const dims of [1, 2]) {
       // the lane checks every counter delta of each clear is 0 (C-25 row TOUCH_TOTAL_CLEAR,
       // pulls [0, 0], hits / misses / splits / merges / equalizes / seams / moves / rot / join 0).
       kinds.push('clear', 'clearFree', 'clearReset', 'reset');
+      // S-R2: append runs for real; >= 1 with both operands non-empty at every B, and >= 1 with a
+      // seam repair at B 8 / 16 (at B = 4, m = 1: a leaf shorter than m cannot exist, C-21).
+      kinds.push('append', 'appendBoth');
+      if (B !== 4) kinds.push('appendSeam');
       for (const k of kinds) {
         assert.ok((res.seenB[B + ':' + k] || 0) > 0, `B=${B} dims=${dims}: op/case "${k}" never exercised`);
       }

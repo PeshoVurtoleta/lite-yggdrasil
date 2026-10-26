@@ -50,3 +50,10 @@ seq.entityAt('0');
 seq.indexAtSum(0, '1');
 // @ts-expect-error -- sumBefore takes a numeric index.
 seq.sumBefore(0, '0');
+
+// append (rung S-R2): takes a view of the same arena, returns this.
+const ap: SumSequence = views[0].append(views[1]);
+void ap;
+
+// @ts-expect-error -- append takes a view.
+views[0].append(5);

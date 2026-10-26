@@ -8,8 +8,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SumSequence } from '../Yggdrasil.js';
-import { bfsLane } from './exhaustive.mjs';
-import { appendStream, prependStream, insertMoves, H, pullsHot } from './spec-counts.mjs';
+import { bfsLane, deepLane, coverageMissing, mergeTally } from './exhaustive.mjs';
+import {
+  appendStream, prependStream, insertMoves, removeMoves, repMoves, touchesExact, TOUCH_REMOVE_UNDERFLOW,
+  H, pullsHot,
+} from './spec-counts.mjs';
 import { engineFactory } from './adapter.mjs';
 import { Oracle } from './oracle.mjs';
 import { walk } from './walker.mjs';
@@ -253,7 +256,7 @@ for (const dims of [1, 2]) {
   });
 }
 
-// ---- A-R2: the split exists (C-18); what still fails closed is the remove underflow (A-R3) ----
+// ---- A-R2: the split exists (C-18); A-R3: the remove underflow repairs (C-18 / C-20 / C-22), nothing fails closed ----
 test('A4: B=4, the 5th insert succeeds: splits +1, walker null (replaces the rung-2 fail-closed row)', () => {
   const { views, snapshot } = engineFactory(16, { leafSize: 4, dims: 1 }, 1);
   const v = views[0];
@@ -268,26 +271,43 @@ test('A4: B=4, the 5th insert succeeds: splits +1, walker null (replaces the run
   assert.equal(counters(v)[CN.moves], 2);
 });
 
-// C-3: a throwing op re-homes nothing. Counters are bumped after the loops (0003 G-5 / G-7), so a rejected op
-// adds nothing. m = B/4 = 1 at B = 4: removing the only element of a non-only leaf drops it below m (C-18 / T-6).
-// This row is replaced when the A-R3 remove repair lands (the throw disappears).
-test('fail closed: B=4, two leaves, a remove that underflows throws RangeError; snapshot and counters unchanged', () => {
+// A-R3 (replaces the rung-3 fail-closed row): B=4, m=1, 5 appends -> 4 | 1. removeAt(4) takes the only element of the
+// right leaf: it underflows (s == m, not the only leaf), so it is repaired, never thrown (C-18, T-6). Hand values:
+// u = right leaf (sR = 0 after the remove), v = the left leaf (sL = 4), uLeft false, t = 4 > B/2 = 2 -> equalize,
+// rep = ceil(t/2) = 2 moves, base m-1-p = 0; leaves 2 | 2. Then removeAt(3) (right leaf 2 -> 1, no underflow, 0 moves),
+// removeAt(2): the right leaf (s = 1 == m) underflows again, sL = 2, sR = 0, t = 2 <= B/2 -> merge, uLeft false so
+// rep = sR = 0 moves; the view is one leaf of 2.
+test('A-R3: B=4, 4|1 view, the underflowing removeAt(4) succeeds: equalize 2|2, moves 2; then a merge, moves 0', () => {
   const { views, snapshot } = engineFactory(16, { leafSize: 4, dims: 1 }, 1);
   const v = views[0];
-  for (let j = 0; j < 5; j++) v.insertAt(j, j, 1); // 5 > B: two leaves (append split 4 | 1, C-18)
-  let threw = 0;
-  for (let k = 0; k < 5 && v.length > 0; k++) {
-    const before = snapshot();
-    const n0 = Array.from(counters(v));
-    try { v.removeAt(v.length - 1); } catch (e) {
-      assert.ok(e instanceof RangeError);
-      assert.deepEqual(snapshot(), before);
-      assert.deepEqual(Array.from(counters(v)), n0);
-      threw++;
-      break;
-    }
-  }
-  assert.equal(threw, 1, 'the underflowing remove threw');
+  const o = new Oracle(1);
+  for (let j = 0; j < 5; j++) { v.insertAt(j, j, 1); o.insertAt(j, j, 1); }
+  assert.deepEqual(leafLens(v), [4, 1]);
+  let c0 = counters(v);
+  v.removeAt(4); o.removeAt(4);
+  let c1 = counters(v);
+  assert.equal(v.length, 4);
+  assert.deepEqual(leafLens(v), [2, 2]);
+  assert.equal(c1[CN.equalizes] - c0[CN.equalizes], 1);
+  assert.equal(c1[CN.merges] - c0[CN.merges], 0);
+  const rep1 = repMoves(4, 4, 0, 0);
+  assert.equal(rep1, 2);
+  assert.equal(c1[CN.moves] - c0[CN.moves], 2);
+  assert.equal(c1[CN.moves] - c0[CN.moves], removeMoves(1, 1, 0, 0, rep1));
+  assert.equal(walk(snapshot(), { B: 4, dims: 1 }), null);
+  v.removeAt(3); o.removeAt(3);
+  assert.deepEqual(leafLens(v), [2, 1]);
+  c0 = counters(v);
+  v.removeAt(2); o.removeAt(2);
+  c1 = counters(v);
+  assert.deepEqual(leafLens(v), [2]);
+  assert.equal(c1[CN.merges] - c0[CN.merges], 1);
+  assert.equal(c1[CN.equalizes] - c0[CN.equalizes], 0);
+  assert.equal(repMoves(4, 2, 0, 0), 0);
+  assert.equal(c1[CN.moves] - c0[CN.moves], 0);
+  assert.equal(walk(snapshot(), { B: 4, dims: 1 }), null);
+  assert.equal(v.length, o.length);
+  for (let i = 0; i < o.length; i++) assert.equal(v.entityAt(i), o.entityAt(i));
 });
 
 // ---- ASSERTION 4: streams, closed forms, random inserts, bfs ----
@@ -448,7 +468,50 @@ function descend(v, i, insertRule) {
   return { d, len: v._llen[~r] };
 }
 
-// One mixed C-34 xorshift stream (separate op / index / measure states). Returns { bad, splits, ops }.
+// In-order leaves of a view (own walk over _left / _right / _llen): ref, length, side (0 = left child, 1 = right
+// child, -1 = root leaf), depth and the ancestor internal ids.
+function leavesOf(v) {
+  const out = [];
+  if (v._root === EMPTY_ROOT) return out;
+  const st = [[v._root, -1, 0, []]];
+  while (st.length > 0) {
+    const [r, side, d, anc] = st.pop();
+    if (r < 0) out.push({ ref: r, len: v._llen[~r], side, depth: d, anc });
+    else {
+      const a2 = anc.concat([r]);
+      st.push([v._right[r], 1, d + 1, a2]);
+      st.push([v._left[r], 0, d + 1, a2]);
+    }
+  }
+  return out;
+}
+
+// The expected result of removeAt(i) from the PRE-op tree and the spec formulas only (C-18, T-6 neighbour v = the
+// in-order leaf on u's sibling side, C-20, C-25). Returns { under, merge, moves, uni }.
+function removePlan(v, i, B) {
+  const m = B >> 2;
+  const L = leavesOf(v);
+  let li = 0;
+  let q = i;
+  while (q >= L[li].len) { q -= L[li].len; li++; }
+  const len = L[li].len;
+  const only = L.length === 1;
+  if (only || len > m) return { under: false, merge: false, moves: removeMoves(m, len, q, only ? 1 : 0, 0), uni: 0, d: L[li].depth };
+  const uLeft = L[li].side === 0;
+  const vi = uLeft ? li + 1 : li - 1;
+  const sv = L[vi].len;
+  const sL = uLeft ? m - 1 : sv;
+  const sR = uLeft ? sv : m - 1;
+  const t = sL + sR;
+  const rep = repMoves(B, sL, sR, uLeft ? 1 : 0);
+  return {
+    under: true, merge: 2 * t <= B, moves: removeMoves(m, len, q, 0, rep), d: L[li].depth, dv: L[vi].depth,
+    uni: new Set(L[li].anc.concat(L[vi].anc)).size,
+  };
+}
+
+// One mixed C-34 xorshift stream (separate op / index / measure states).
+// Returns { bad, splits, merges, equalizes, ops }.
 function touchLane(Seq, B, nOps) {
   const m = B >> 2;
   const v = new Seq(4096, { leafSize: B });
@@ -461,14 +524,25 @@ function touchLane(Seq, B, nOps) {
   const Lmax = v._ar.Lmax;
   let bad = null;
   let ops = 0;
-  for (let k = 0; k < nOps && bad === null; k++) {
+  // B=16 never merges on the random stream: a deterministic prologue (17 appends -> 13|4,
+  // removeAt(16) = equalize 8|8, 4 x removeAt(0) and 4 x removeAt(last) -> 4|4, removeAt(0) = merge: t = 3 + 4 <= B/2) runs under the same per-op asserts.
+  const pro = [];
+  if (B === 16) {
+    for (let j = 0; j < 17; j++) pro.push([0, j]);
+    pro.push([1, 16]); // equalize 13|3 -> 8|8 (C-22)
+    for (let j = 0; j < 4; j++) pro.push([1, 0]); // 8|8 -> 4|8
+    for (let j = 0; j < 4; j++) pro.push([1, -1]); // last element: 4|8 -> 4|4
+    pro.push([1, 0]); // 4|4: removeAt(0) merges
+  }
+  for (let k = -pro.length; k < nOps && bad === null; k++) {
     so = xs(so); si = xs(si); sm = xs(sm);
     const n = v.length;
     const r = so % 100;
     let kind = r < 55 || n < 2 ? 0 : r < 75 ? 1 : r < 85 ? 2 : r < 93 ? 3 : 4;
-    const i = kind === 0 ? (si >>> 1) % (n + 1) : (si >>> 1) % n;
+    let i = kind === 0 ? (si >>> 1) % (n + 1) : (si >>> 1) % n;
+    if (k < 0) { kind = pro[k + pro.length][0]; i = pro[k + pro.length][1]; if (i < 0) i = n - 1; }
     const D = descend(v, i, kind === 0);
-    if (kind === 1 && v._root >= 0 && D.len <= m) continue; // A-R2: an underflowing remove throws, skip it
+    const plan = kind === 1 ? removePlan(v, i, B) : null;
     v.readCounters(c0);
     if (kind === 0) v.insertAt(i, k & 0x3FFFFFFF, sm % 50);
     else if (kind === 1) v.removeAt(i);
@@ -481,48 +555,280 @@ function touchLane(Seq, B, nOps) {
     const dp = c1[K.pulls] - c0[K.pulls];
     const split = kind === 0 && c1[K.splits] - c0[K.splits] === 1;
     let ok;
-    if (split) {
+    if (plan !== null && plan.under) {
+      // A-R3: remove that underflows. exactly one of merges / equalizes +1; moves == removeMoves incl. repMoves;
+      // touches == d(v) + d'(t') (C-25): d(v) = depth of the neighbour leaf v (main descent d(u) + the walk from
+      // sibling(u), read from the PRE-op tree), d' = the re-home descent at min(i, n-1) in the post-op tree.
+      const D2 = descend(v, Math.min(i, v.length - 1), false);
+      const dM = c1[K.merges] - c0[K.merges];
+      const dE = c1[K.equalizes] - c0[K.equalizes];
+      ok = dM + dE === 1 && dM === (plan.merge ? 1 : 0) && dt === touchesExact(TOUCH_REMOVE_UNDERFLOW, plan.dv, D2.d) &&
+        c1[K.moves] - c0[K.moves] === plan.moves && dp <= 4 * (H(Lmax) + 1) &&
+        (plan.merge ? (D.d < 2 || dp >= 1) : dp === plan.uni);
+    } else if (split) {
       const D2 = descend(v, i, false); // element-rule depth in the post-op state
       ok = dt === D.d + D2.d && dp >= 1 && dp <= 4 * (H(Lmax) + 1);
+    } else if (kind === 1) {
+      ok = dt === D.d && dp === pullsHot(D.d) && c1[K.moves] - c0[K.moves] === plan.moves &&
+        c1[K.merges] === c0[K.merges] && c1[K.equalizes] === c0[K.equalizes];
     } else if (kind <= 2) {
       ok = dt === D.d && dp === pullsHot(D.d);
     } else {
       ok = dt === D.d && dp === 0;
     }
-    if (!ok) bad = { k, kind, dt, dp, D: D.d, split };
+    if (!ok) bad = { k, kind, dt, dp, D: D.d, split, plan };
   }
-  return { bad, splits: v._n[K.splits], ops };
+  return { bad, splits: v._n[K.splits], merges: v._n[K.merges], equalizes: v._n[K.equalizes], ops };
 }
 
 for (const B of [4, 8, 16]) {
-  test(`B1: B=${B} 4000-op mixed stream: touches = D (D + D2 on a split), pulls = depth (<= 4(H+1) on a split), 0 for reads`, () => {
+  test(`B1: B=${B} 4000-op mixed stream: touches = D (D + D2 on a split / underflow), pulls = depth (split <= 4(H+1); equalize |anc(u) U anc(v)|), 0 for reads`, () => {
     const r = touchLane(SumSequence, B, 4000);
     assert.equal(r.bad, null, JSON.stringify(r.bad));
     assert.ok(r.splits >= 100, 'coverage floor splits: ' + r.splits);
-    assert.ok(r.ops > 3000, 'ops ' + r.ops);
+    assert.ok(r.merges >= 1, 'coverage floor merges: ' + r.merges);
+    assert.ok(r.equalizes >= 1, 'coverage floor equalizes: ' + r.equalizes);
+    assert.ok(r.ops > 3500, 'ops ' + r.ops);
   });
 }
 
-// ---- B3: forged pool exhaustion at depth 0 fails closed with a byte-identical state (C-3, C-15) ----
-function fullState(v) {
-  return JSON.stringify([v._root, v._len, v._fl, v._fb, v._fdepth, Array.from(v._fpath), Array.from(v._hdr),
+// ---- B3: forged pool exhaustion fails closed (C-3, C-15, R-P2 / 0005 A6-4) ----
+// R-P2: the pool throw leaves every field byte-identical EXCEPT the finger, which is invalidated before the throw:
+// _fl NIL (0), _fb 0, _fdepth 0 (_fpath is not asserted beyond its length).
+function fullState(v) { // everything except the finger
+  return JSON.stringify([v._root, v._len, Array.from(v._hdr),
     Array.from(v._llen), Array.from(v._ent), Array.from(v._meas[0]), Array.from(v._lsum[0]), Array.from(v._left),
     Array.from(v._right), Array.from(v._weight), Array.from(v._count), Array.from(v._sums[0]), Array.from(v._n)]);
 }
 
 for (const [pool, sIx, bIx] of [['leaf', 2, 1], ['internal', 4, 3]]) {
-  test(`B3: B=4 depth 0, ${pool} pool forged exhausted: insertAt(2) throws RangeError /pool/, state identical; restore and it succeeds`, () => {
+  test(`B3: B=4 depth 0, ${pool} pool forged exhausted: insertAt(2) throws RangeError /pool/, state identical but the finger NIL / 0 / 0; restore and it succeeds`, () => {
     const v = new SumSequence(16, { leafSize: 4 });
     for (let j = 0; j < 4; j++) v.insertAt(j, j, 1);
+    assert.notEqual(v._fl, 0, 'finger set before the throw');
     const saved = Array.from(v._hdr);
     v._hdr[sIx] = -1; // free list empty
     v._hdr[bIx] = pool === 'leaf' ? v._ar.Lmax : v._ar.Lmax - 1; // bump at the pool size
     const before = fullState(v);
+    const plen = v._fpath.length;
     assert.throws(() => v.insertAt(2, 77, 1), (e) => e instanceof RangeError && /pool/.test(e.message));
     assert.equal(fullState(v), before);
+    assert.equal(v._fl, 0, 'fl NIL');
+    assert.equal(v._fb, 0);
+    assert.equal(v._fdepth, 0);
+    assert.equal(v._fpath.length, plen);
     for (let q = 0; q < 5; q++) v._hdr[q] = saved[q];
     v.insertAt(2, 77, 1);
     assert.equal(v.length, 5);
+  });
+}
+
+// Depth >= 1: B=4, 5 appends -> 4 | 1 (a full left leaf). getMeasure(4) homes the finger on the RIGHT leaf; an insert
+// into the full left leaf then needs a fresh leaf (and a fresh internal node) and finds the forged pool empty.
+function forgedDeep(pool, sIx, bIx) {
+  const { views, snapshot } = engineFactory(16, { leafSize: 4, dims: 1 }, 1);
+  const v = views[0];
+  for (let j = 0; j < 5; j++) v.insertAt(j, j, 1);
+  v.getMeasure(4, 0);
+  const saved = Array.from(v._hdr);
+  const f0 = [v._fl, v._fb, v._fdepth];
+  v._hdr[sIx] = -1;
+  v._hdr[bIx] = pool === 'leaf' ? v._ar.Lmax : v._ar.Lmax - 1;
+  const before = fullState(v);
+  const plen = v._fpath.length;
+  const threw = (() => { try { v.insertAt(2, 77, 1); } catch (e) { return e; } return null; })();
+  return { v, snapshot, saved, f0, before, plen, threw };
+}
+
+for (const [pool, sIx, bIx] of [['leaf', 2, 1], ['internal', 4, 3]]) {
+  test(`B3: B=4 depth 1 (4|1), finger on the other leaf, ${pool} pool forged exhausted: RangeError /pool/, finger NIL / 0 / 0, tree / pools / counters identical, walker null, next op a miss`, () => {
+    const r = forgedDeep(pool, sIx, bIx);
+    const v = r.v;
+    assert.notEqual(r.f0[0], 0, 'finger was homed');
+    assert.ok(r.f0[2] >= 1, 'finger depth >= 1');
+    assert.ok(r.threw instanceof RangeError && /pool/.test(r.threw.message), 'RangeError pool');
+    assert.equal(fullState(v), r.before);
+    assert.equal(v._fl, 0, 'fl NIL');
+    assert.equal(v._fb, 0);
+    assert.equal(v._fdepth, 0);
+    assert.equal(v._fpath.length, r.plen);
+    for (let q = 0; q < 5; q++) v._hdr[q] = r.saved[q];
+    assert.equal(walk(r.snapshot(), { B: 4, dims: 1 }), null);
+    const c0 = counters(v);
+    v.getMeasure(0, 0);
+    const c1 = counters(v);
+    assert.equal(c1[CN.fingerMisses] - c0[CN.fingerMisses], 1, 'next positional op is a miss');
+    assert.equal(c1[CN.fingerHits] - c0[CN.fingerHits], 0);
+    assert.equal(walk(r.snapshot(), { B: 4, dims: 1 }), null);
+  });
+}
+
+// ---- ASSERTION 5 (A-R3): remove side lanes, coverage ----
+// 'append' is only ever applied as the second half of the splitAt pair in bfsLane / deepLane, and the pair drops with
+// 'splitAt' (exhaustive.mjs exDropped), so drop ['splitAt'] is the whole 'append' drop: S has not landed.
+const LANES = { 4: { nMax: 6, nLo: 8, nHi: 48 }, 8: { nMax: 10, nLo: 16, nHi: 96 } };
+for (const B of [4, 8]) {
+  test(`A5: B=${B} bfsLane (nMax ${LANES[B].nMax}) + deepLane (4000 ops) drop splitAt: ok, 0 divergences, maxLeaves >= 11, coverage`, () => {
+    const bfs = bfsLane(engineFactory, { B, nMax: LANES[B].nMax, drop: ['splitAt'] });
+    assert.equal(bfs.ok, true, JSON.stringify(bfs.first));
+    assert.equal(bfs.divergences, 0);
+    const deep = deepLane(engineFactory, { B, ops: 4000, seed: 1, nLo: LANES[B].nLo, nHi: LANES[B].nHi, drop: ['splitAt'] });
+    assert.equal(deep.ok, true, JSON.stringify(deep.first));
+    assert.equal(deep.divergences, 0);
+    assert.ok(deep.maxLeaves >= 11, 'maxLeaves ' + deep.maxLeaves);
+    const miss = coverageMissing(mergeTally(bfs.tally, deep.tally), B);
+    if (B === 4) assert.deepEqual(miss, []);
+    else assert.deepEqual(miss, ['splitAt1', 'splitAt2', 'append1']); // the splitAt / append cells: S has not landed
+  });
+}
+
+// ---- C-22 edge hysteresis: B=16 (m=4), 17 appends -> 13 | 4; ONE remove on the m side underflows ----
+test('C-22: B=16, 17 appends (13|4), removeAt(16): equalizes +1, moves +8, leaves 8|8; prepend side 4|13: moves +13', () => {
+  const B = 16;
+  const m = 4;
+  const a = new SumSequence(64, { leafSize: B });
+  for (let j = 0; j < 17; j++) a.insertAt(j, j, 1);
+  assert.deepEqual(leafLens(a), [13, 4]);
+  let c0 = counters(a);
+  a.removeAt(16);
+  let c1 = counters(a);
+  // literal: base m-1-p = 4-1-3 = 0, rep = ceil(16/2) = 8 (sL 13, sR 3, uLeft false, t = 16 > B/2)
+  assert.equal(c1[CN.equalizes] - c0[CN.equalizes], 1);
+  assert.equal(c1[CN.merges] - c0[CN.merges], 0);
+  assert.equal(c1[CN.moves] - c0[CN.moves], 8);
+  assert.equal(c1[CN.moves] - c0[CN.moves], removeMoves(m, 4, 3, 0, repMoves(B, 13, 3, 0)));
+  assert.deepEqual(leafLens(a), [8, 8]);
+  assert.equal(a.length, 16);
+  const b = new SumSequence(64, { leafSize: B });
+  for (let j = 0; j < 17; j++) b.insertAt(0, j, 1);
+  assert.deepEqual(leafLens(b), [4, 13]);
+  c0 = counters(b);
+  b.removeAt(3); // the last element of the m-side (first) leaf: p = 3
+  c1 = counters(b);
+  // literal: base 0, rep = sR = 13 (sL 3, sR 13, uLeft true, t = 16 > B/2 -> equalize, uLeft ? sR)
+  assert.equal(c1[CN.equalizes] - c0[CN.equalizes], 1);
+  assert.equal(c1[CN.moves] - c0[CN.moves], 13);
+  assert.equal(c1[CN.moves] - c0[CN.moves], removeMoves(m, 4, 3, 0, repMoves(B, 3, 13, 1)));
+  assert.deepEqual(leafLens(b), [8, 8]);
+});
+
+// ---- delete-side gamma: mixed 50/50 xorshift stream against the Oracle (C-34 constants, s = 1) ----
+for (const B of [4, 8]) {
+  test(`A5: B=${B} 4000 mixed ops insert / remove 50/50: walker null + 0 Oracle divergences after every op; merges, equalizes, rotations during removes`, () => {
+    let so = (0x9E3779B9 ^ 1) >>> 0;
+    let si = (0x85EBCA6B ^ 1) >>> 0;
+    let sm = (0xC2B2AE35 ^ 1) >>> 0;
+    const { views, snapshot } = engineFactory(4096, { leafSize: B, dims: 1 }, 3);
+    const v = views[0];
+    const o = new Oracle(1);
+    const opts = { B, dims: 1 };
+    const c0 = new Int32Array(12);
+    let rotRem = 0;
+    let removes = 0;
+    let div = 0;
+    for (let k = 0; k < 4000; k++) {
+      so = xs(so); si = xs(si); sm = xs(sm);
+      const n = o.length;
+      const ins = n === 0 || (so >>> 8) % 2 === 0;
+      const idx = (si >>> 1) % (ins ? n + 1 : n);
+      v.readCounters(c0);
+      if (ins) {
+        const m = ((sm >>> 16) % 20) === 0 ? 0 : sm % 1000;
+        v.insertAt(idx, so & 0x3FFFFFFF, m);
+        o.insertAt(idx, so & 0x3FFFFFFF, m);
+      } else {
+        v.removeAt(idx);
+        o.removeAt(idx);
+        removes++;
+        const c1 = counters(v);
+        rotRem += c1[CN.rotSingle] - c0[CN.rotSingle] + c1[CN.rotDouble] - c0[CN.rotDouble];
+      }
+      const w = walk(snapshot(), opts);
+      if (w !== null) assert.fail('walker op ' + k + ': ' + JSON.stringify(w));
+      let bad = v.length !== o.length || v.total(0) !== o.total(0);
+      for (let i = 0; i < o.length && !bad; i++) {
+        const sb = o.sumBefore(0, i);
+        bad = v.entityAt(i) !== o.entityAt(i) || v.sumBefore(0, i) !== sb || v.indexAtSum(0, sb) !== o.indexAtSum(0, sb);
+      }
+      if (bad) div++;
+    }
+    assert.equal(div, 0, 'oracle divergences');
+    const c = counters(v);
+    assert.ok(removes > 1500, 'removes ' + removes);
+    assert.ok(c[CN.merges] > 0, 'merges ' + c[CN.merges]);
+    assert.ok(c[CN.equalizes] > 0, 'equalizes ' + c[CN.equalizes]);
+    assert.ok(rotRem > 0, 'rotations during removes ' + rotRem);
+  });
+
+  test(`A5: B=${B} fill 300 then drain to 0 in a seeded random order: walker null each step, hdr deep-equals [0, 0, -1, 0, -1]`, () => {
+    let si = (0x85EBCA6B ^ 1) >>> 0;
+    const { views, snapshot } = engineFactory(1024, { leafSize: B, dims: 1 }, 1);
+    const v = views[0];
+    for (let j = 0; j < 300; j++) { si = xs(si); v.insertAt((si >>> 1) % (j + 1), j, 1); }
+    assert.equal(v.length, 300);
+    while (v.length > 0) {
+      si = xs(si);
+      v.removeAt((si >>> 1) % v.length);
+      const w = walk(snapshot(), { B, dims: 1 });
+      if (w !== null) assert.fail('walker at n=' + v.length + ': ' + JSON.stringify(w));
+    }
+    assert.deepEqual(Array.from(v._hdr), [0, 0, -1, 0, -1]);
+    assert.equal(v._root, EMPTY_ROOT);
+    assert.equal(v._fl, 0);
+  });
+}
+
+// ---- R-Q1 (0005 A6-1, C-10, C-44): dims > 1 measures are typeof-checked inline, then staged in sx ----
+// Measure domain (C-10 / 0002 M-1): integers 0 <= m <= 2^53-1, a total <= 2^53-1 (headroom). Values below are large
+// non-Smi integers; totals are hand-summed.
+for (const dims of [2, 3, 4]) {
+  test(`R-Q1: dims ${dims}: big non-Smi measures in slots 1..${dims - 1}: total(d) and getMeasure exact, walker null`, () => {
+    const { views, snapshot } = engineFactory(16, { leafSize: 4, dims }, 1);
+    const v = views[0];
+    const A = [5, 2 ** 40 + 1, 2 ** 45 + 3, 2 ** 50 + 7];
+    const Bm = [9, 2 ** 41 + 5, 2 ** 46 + 11, 2 ** 51 + 13];
+    const args = (a) => a.slice(0, dims);
+    v.insertAt(0, 1, ...args(A));
+    v.insertAt(1, 2, ...args(Bm));
+    for (let d = 0; d < dims; d++) {
+      assert.equal(v.total(d), A[d] + Bm[d], 'total ' + d); // sums stay below 2^53: exact
+      assert.equal(v.getMeasure(0, d), A[d]);
+      assert.equal(v.getMeasure(1, d), Bm[d]);
+    }
+    // the largest legal value in the last slot of an empty view: total == 2^53 - 1 exactly
+    const w = engineFactory(16, { leafSize: 4, dims }, 1);
+    const big = [0, 0, 0, 0];
+    big[dims - 1] = 2 ** 53 - 1;
+    w.views[0].insertAt(0, 3, ...args(big));
+    assert.equal(w.views[0].total(dims - 1), 9007199254740991);
+    assert.equal(w.views[0].getMeasure(0, dims - 1), 9007199254740991);
+    assert.equal(walk(snapshot(), { B: 4, dims }), null);
+    assert.equal(walk(w.snapshot(), { B: 4, dims }), null);
+  });
+
+  test(`R-Q1: dims ${dims}: a non-number ('5', null, {}) in any slot 1..${dims - 1} throws RangeError 'measure'; snapshot, counters and sx unchanged`, () => {
+    const { views, snapshot } = engineFactory(16, { leafSize: 4, dims }, 1);
+    const v = views[0];
+    const base = [1, 2, 3, 4];
+    v.insertAt(0, 1, ...base.slice(0, dims));
+    v.insertAt(1, 2, ...base.slice(0, dims));
+    let rows = 0;
+    for (let slot = 1; slot < dims; slot++) {
+      for (const bad of ['5', null, {}]) {
+        const a = base.slice(0, dims);
+        a[slot] = bad;
+        const before = snapshot();
+        const n0 = Array.from(counters(v));
+        const sx0 = Array.from(v._ar.sx);
+        assert.throws(() => v.insertAt(1, 9, ...a), (e) => e instanceof RangeError && /measure/.test(e.message));
+        assert.deepEqual(snapshot(), before);
+        assert.deepEqual(Array.from(counters(v)), n0);
+        // typeof runs before sx is written: the staged slots 1..3 are as they were
+        assert.deepEqual(Array.from(v._ar.sx).slice(1), sx0.slice(1));
+        rows++;
+      }
+    }
+    assert.equal(rows, 3 * (dims - 1));
   });
 }
 
@@ -648,3 +954,131 @@ test('mutant: hot insert touches 0 is killed by the B1 lane', async () => {
   assert.equal(await mutantRow(laneOk, [[HOT_INS,
     'cn[YG_TOUCHES] += 0;\n    cn[YG_PULLS] += depth;\n    cn[YG_MISSES] += 1;\n    cn[YG_MOVES] += len - k;', 1]]), false);
 });
+
+// ---- A-R3 remove-side mutants (HA4). Every anchor lives here, one place, each must match exactly once. ----
+// The value 'TODO' marks a row todo; the orchestrator fills the literals from the coder's Yggdrasil.js. Each entry is
+// the [anchor, replacement, 1] patch list for buildMutant.
+const ANCHORS = {
+  mergeNoFree: [['ygFreeInt(v, par); // merge frees parent(u)', '', 1]],
+  repMovesPlus1: [['cn[YG_MOVES] += len - 1 - p + rep;', 'cn[YG_MOVES] += len - 1 - p + rep + 1;', 1]],
+  rhomeFlStore: [['  v._fl = YG_NIL; // R-P2 (C-3)', '', 1]],
+  gammaLeftLe: [['if ((yl < 0 ? 1 : weight[yl]) < 2 * (yr < 0 ? 1 : weight[yr])) {',
+    'if ((yl < 0 ? 1 : weight[yl]) <= 2 * (yr < 0 ? 1 : weight[yr])) {', 1]],
+  gammaRightLe: [['if ((yr < 0 ? 1 : weight[yr]) < 2 * (yl < 0 ? 1 : weight[yl])) {',
+    'if ((yr < 0 ? 1 : weight[yr]) <= 2 * (yl < 0 ? 1 : weight[yl])) {', 1]],
+  slotsByArgs: [["if ((typeof m1 !== 'number') | ((dims > 2) & (typeof m2 !== 'number')) |",
+    "if (false | ((dims > 2) & (typeof m2 !== 'number')) |", 1]],
+};
+// EQUIVALENT (no row): 'equalize that pulls weights' (an equalize changes no weight, C-20, so a weight pull writes
+// the values already stored) and 're-home at i instead of min(i, n-1)' (the element-rule descent to i = length
+// reaches the same last leaf, fb and path as min(i, n-1)). The drain reset anchor is the existing mutant row above.
+// DEFERRED to G-B4 Witness.test W-TIE: the gamma trigger `3 * lw < rw` -> `<=` survives every delete stream (only
+// the rotation counts at an exact 3*lw == rw tie see it).
+const todoFor = (key) => (ANCHORS[key] === 'TODO' ? { todo: 'HA4: anchor ' + key + ' not yet filled' } : {});
+
+// Snapshot of views built by ANY build (the adapter is bound to the real module); same shape as test/adapter.mjs.
+function snapOf(views) {
+  const v0 = views[0];
+  const ar = v0._ar;
+  const hdr = v0._hdr;
+  const dims = ar.dims;
+  const leaf = { size: ar.Lmax, bump: hdr[1], free: hdr[2], next: v0._lnext.slice(), len: v0._llen.slice(), ent: v0._ent.slice(), meas: [] };
+  const int = {
+    size: ar.Lmax - 1, bump: hdr[3], free: hdr[4], next: v0._inext.slice(), left: v0._left.slice(), right: v0._right.slice(),
+    weight: v0._weight.slice(), count: v0._count.slice(), sum: [],
+  };
+  for (let d = 0; d < dims; d++) { leaf.meas.push(v0._meas[d].slice()); int.sum.push(v0._sums[d].slice()); }
+  return {
+    C: ar.C, B: ar.B, dims, NIL: 0, EMPTY_ROOT, live: hdr[0], int, leaf,
+    views: views.map((w) => ({ _root: w._root, _len: w._len, _fl: w._fl, _fb: w._fb, _fdepth: w._fdepth, _fpath: new Int32Array(w._fpath), _cv: w._cv })),
+  };
+}
+
+function freeLen(next, head) {
+  let c = 0;
+  for (let f = head; f !== -1 && c < 100000; f = next[f]) c++;
+  return c;
+}
+
+// Pool census after every op of a B=4 prepend-drain: live leaves == bump - free, live internals == leaves - 1.
+function censusCheck(Seq) {
+  const v = new Seq(128, { leafSize: 4 });
+  for (let j = 0; j < 60; j++) v.insertAt(v.length, j, 1);
+  for (let k = 0; k < 45; k++) {
+    v.removeAt(0);
+    const L = leavesOf(v).length;
+    if (v._hdr[1] - freeLen(v._lnext, v._hdr[2]) !== L) return false;
+    if (v._hdr[3] - freeLen(v._inext, v._hdr[4]) !== L - 1) return false;
+  }
+  return v._n[Seq.COUNTERS.merges] > 0;
+}
+
+function remLaneOk(Seq) {
+  return touchLane(Seq, 4, 3000).bad === null && touchLane(Seq, 8, 3000).bad === null;
+}
+
+function c22Check(Seq) { // C-22 literals: 13|4 -> remove(16): 8 moves, 8|8; 4|13 -> remove(3): 13 moves
+  const a = new Seq(64, { leafSize: 16 });
+  for (let j = 0; j < 17; j++) a.insertAt(j, j, 1);
+  a.removeAt(16);
+  const b = new Seq(64, { leafSize: 16 });
+  for (let j = 0; j < 17; j++) b.insertAt(0, j, 1);
+  b.removeAt(3);
+  const K = Seq.COUNTERS;
+  const la = leavesOf(a).map((x) => x.len);
+  const lb = leavesOf(b).map((x) => x.len);
+  return la.join() === '8,8' && lb.join() === '8,8' &&
+    a._n[K.equalizes] === 1 && b._n[K.equalizes] === 1 &&
+    a._n[K.moves] - appendStream(16, 4, 17, new Int32Array(5))[3] === 8 &&
+    b._n[K.moves] - prependStream(16, 4, 17, new Int32Array(5))[3] === 13;
+}
+
+function gammaCheck(Seq) { // delete-heavy seeded streams (random fill 400, drain), walker after every op (I-1, C-23)
+  const opts = { B: 4, dims: 1 };
+  for (const seed of [9, 19]) { // seed search at B=4: 9 kills the left compare mutant, 19 the right one
+    const views = Seq.arena(1024, { leafSize: 4 }, 1);
+    const v = views[0];
+    let si = (0x85EBCA6B ^ seed) >>> 0;
+    for (let j = 0; j < 400; j++) { si = xs(si); v.insertAt((si >>> 1) % (j + 1), j, 1); }
+    while (v.length > 0) {
+      si = xs(si);
+      v.removeAt((si >>> 1) % v.length);
+      if (walk(snapOf(views), opts) !== null) return false;
+    }
+  }
+  return true;
+}
+
+function slotsCheck(Seq) { // R-Q1: a non-number slot throws before sx is written; valid staging is not stale
+  const v = new Seq(16, { leafSize: 4, dims: 2 });
+  v.insertAt(0, 1, 1, 7);
+  let threw = false;
+  try { v.insertAt(1, 2, 2, '5'); } catch (e) { threw = e instanceof RangeError && /measure/.test(e.message); }
+  if (!threw || v.length !== 1 || v._ar.sx[1] !== 7) return false;
+  v.insertAt(1, 3, 3, 9);
+  return v.total(1) === 16 && v.getMeasure(1, 1) === 9;
+}
+
+function forgedFingerCheck(Seq) { // R-P2: 4|1 view, finger on the right leaf, leaf pool forged empty
+  const v = new Seq(16, { leafSize: 4 });
+  for (let j = 0; j < 5; j++) v.insertAt(j, j, 1);
+  v.getMeasure(4, 0);
+  v._hdr[2] = -1;
+  v._hdr[1] = v._ar.Lmax;
+  let threw = false;
+  try { v.insertAt(2, 77, 1); } catch (e) { threw = e instanceof RangeError && /pool/.test(e.message); }
+  return threw && v._fl === 0 && v._fb === 0 && v._fdepth === 0;
+}
+
+for (const [key, check, title] of [
+  ['mergeNoFree', censusCheck, 'merge without freeing parent(u) is killed by the pool census'],
+  ['repMovesPlus1', (S) => c22Check(S) && remLaneOk(S), 'rep moves off by one is killed by C-22 and the B1 moves lane'],
+  ['gammaLeftLe', gammaCheck, 'ygRotate left compare < -> <= is killed by the delete-stream walker (I-1 / C-23)'],
+  ['gammaRightLe', gammaCheck, 'ygRotate right compare < -> <= is killed by the delete-stream walker (I-1 / C-23)'],
+  ['slotsByArgs', slotsCheck, 'ygSlots staging before the typeof check is killed by the R-Q1 row'],
+  ['rhomeFlStore', forgedFingerCheck, 'the R-P2 _fl = NIL store deleted is killed by the forged-exhaustion finger row'],
+]) {
+  test('mutant: ' + title, todoFor(key), async () => {
+    assert.equal(await mutantRow(check, ANCHORS[key]), false);
+  });
+}

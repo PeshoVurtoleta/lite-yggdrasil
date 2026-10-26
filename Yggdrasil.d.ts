@@ -1,4 +1,4 @@
-// Type declarations for @zakkster/lite-yggdrasil (rung S-R2: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain, the k >= 2 clear() free-walk, and join and append with the seam repair; splitAt not built yet).
+// Type declarations for @zakkster/lite-yggdrasil (rung S-R3: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain, the k >= 2 clear() free-walk, join and append with the seam repair, and splitAt with its seam repairs).
 export declare const VERSION: string;
 
 export interface SumSequenceOptions {
@@ -44,6 +44,8 @@ export declare class SumSequence {
   clear(): this;
   /** this := this ++ other (a view of the same arena), other := empty; returns this. RangeError operand / headroom / pool leaves both views unchanged. */
   append(other: SumSequence): this;
+  /** this := [0, i), out := [i, length) (an empty view of the same arena); returns this. RangeError index / operand / pool leaves both views unchanged. */
+  splitAt(i: number, out: SumSequence): this;
   /** Copy the 12 counters into out (length >= 12). */
   readCounters(out: Int32Array): void;
   resetCounters(): void;

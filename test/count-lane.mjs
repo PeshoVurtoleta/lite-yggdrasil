@@ -31,7 +31,12 @@
 // === [both non-empty and min(seam leaf lens) < m] (C-21), splits 0, fingerHits / fingerMisses 0,
 // joinSteps 0 when an operand is empty else <= HB(Lmax) (C-24), the operand's counters all delta 0
 // (RS-1 / C-8), both fingers NIL / 0 / 0 (C-5), both _cv false (C-6), the walker clean on the whole
-// arena and both views against the oracle. splitAt stays substituted (read instead) until S-R3.
+// arena and both views against the oracle.
+// splitAt (S-R3) runs for real in engine mode too, with an empty operand view (without one the lane's own
+// fallback is a plain clear() op, as in stub mode): touches === d(c) exact with 0 repairs (C-25; either side's
+// leaf on a boundary cut), <= d(c) + (rL+rR)*HB(Lmax) with repairs; seamRepairs === rL + rR (C-21); moves ===
+// cutMoves + the repair moves (C-18); splits 0 and fingerHits / fingerMisses 0 (C-26); out's counters all delta 0
+// (RS-1); both fingers NIL (C-5); both _cv false (C-6).
 // ASCII-only.
 
 import { walk } from './walker.mjs';
@@ -142,19 +147,7 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
     if (n === 0 && op !== 'insertAt' && op !== 'append' && op !== 'clear' && op !== 'indexAtSum') {
       op = live < C ? 'insertAt' : 'clear';
     }
-    // engine without the splitAt rung yet: read instead (same draws). append is NEVER
-    // substituted (S-R2): a missing append is a TypeError, i.e. a lane failure.
-    if (E && op === 'splitAt' && typeof v[op] !== 'function') {
-      op = n === 0 ? (live < C ? 'insertAt' : 'clear') : 'getMeasure';
-    }
-    // LANE LIMIT until S-R3: splitAt with no empty operand view would clear() inside splitAt
-    // (the real splitAt join is not built until S-R3); engine mode reads instead there.
-    // append runs for real (S-R2), as does a plain clear() op (free-walk or O(1) reset, S-R1).
-    if (E && n > 0 && live !== n && op === 'splitAt') {
-      let em = false;
-      for (let k = 1; k < count; k++) if (views[(vi + k) % count]._len === 0) em = true;
-      if (!em) op = 'getMeasure';
-    }
+    // S-R3: splitAt, append and clear all run for real in engine mode (no substitution).
     // finger-off mix: one op in four runs with the finger dropped first (C-4).
     const off = (r() % 4) === 0;
     if (!E && off && (op === 'insertAt' || op === 'removeAt' || op === 'setMeasure' ||
@@ -293,8 +286,13 @@ function runOne(mk, E, T, D, K, ctr, B, count, seed, ops, chk, res, stopped) {
           x.a = L[j].depth; x.alt = p === 0 ? L[j - 1].depth : -1; x.b = sr;
           if (sr > 0) x.row = SC.TOUCH_SPLITAT_REPAIRS;
         }
+        const onPre = E ? views[oi]._n.slice() : null;
         v.splitAt(i, views[oi]); or[vi].splitAt(i, or[oi]);
         expLeaf = 'nil';
+        if (E) { // out's counters: delta 0 on every counter (RS-1); both cursors invalid (C-6)
+          for (const nm of ctr) chk(views[oi]._n[K[nm]] === onPre[K[nm]], 'operand-counter', tag(op, `out ${nm} moved`), o);
+          chk(v._cv === false && views[oi]._cv === false, 'cv', tag(op, 'splitAt left a cursor valid'), o);
+        }
       }
     } else if (op === 'append') {
       oi = (vi + 1 + (r() % (count - 1))) % count;

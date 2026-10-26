@@ -3,7 +3,7 @@
  *
  * MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
- * Pre-release engine build (rung S-R2 of the E0 ladder): SumSequence init,
+ * Pre-release engine build (rung S-R3 of the E0 ladder): SumSequence init,
  * layout, pools, constructor validation, counters and getters (A-R1a), the
  * positional ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
  * seeks indexAtSum / sumBefore and clear(), with their C-10 checks (A-R1b),
@@ -12,15 +12,18 @@
  * the structural re-home, and the remove side (A-R3): the T-6 neighbour walk,
  * the one repair (merge / equalize), the delete rebalance and the drain, and
  * the k >= 2 clear() free-walk (S-R1), the T-3 join and append with its
- * C-21 seam repair (S-R2). splitAt is not built yet. Nothing is released
- * between rungs.
+ * C-21 seam repair (S-R2), and splitAt (S-R3): the T-4 split whose joins
+ * reuse the popped path nodes, and the C-21 rL + rR seam repairs. Nothing is
+ * released between rungs.
  *
  * Layout (0005 C-44). Every view owns, in this order: _root, _len, _fl, _fb,
  * _fdepth, _fpath, _cv, _n, then the hoisted refs _hdr, _left, _right, _weight,
  * _count, _inext, _sums, _llen, _lnext, _ent, _meas, _lsum, then _ar (the
  * shared arena record {C, B, shift, m, dims, Lmax, HL, views, sx, jstack,
- * sstack}: jstack is the T-3 join stack, sstack the split stack (append's seam
- * path; splitAt in S-R3), each Int32Array(H(Lmax))).
+ * sstack}, each Int32Array(H(Lmax)): jstack is the T-3 join stack, sstack the
+ * split stack. append's seam path uses BOTH: sstack = this's last-leaf path,
+ * jstack = other's first-leaf path (written only for a repair). splitAt's
+ * descent path and its seam paths go in sstack; its joins use jstack).
  * hdr = Int32Array(5) [live, lbump, lfree, ibump, ifree], END = -1.
  * A child ref >= 0 is an internal id; a ref < 0 is ~leafId. NIL = 0 (finger,
  * C-1); EMPTY_ROOT = 0x3FFFFFFF (C-8).
@@ -912,13 +915,16 @@ function ygJoinRotR(v, x, wr) {
 // T-3 join(a, b) of two non-empty trees of one arena (refs; a precedes b):
 // iterative BFS joinRight / joinLeft. Push the heavier tree's spine (right
 // spine of a, left spine of b) onto the arena join stack jstack until the
-// first node c balanced (I-1) against the other tree; one fresh internal node
-// (c, b) or (a, c); pop back up, relinking and recomputing weight, count and
-// every dim's sum (ygPullW), keeping each node that passes I-1 and rotating it
-// otherwise (ygJoinRotL / ygJoinRotR). The pool was pre-checked by append.
-// joinSteps += internal nodes pushed (C-24); the spine steps are not touches
-// (C-25). Returns the root ref of the joined tree.
-function ygJoin(v, a, b) {
+// first node c balanced (I-1) against the other tree; the caller's internal
+// node u becomes (c, b) or (a, c) (append: a fresh ygAllocInt node, its pool
+// pre-checked; splitAt: the popped path node, reused per T-4, so a split's
+// joins allocate nothing); pop back up, relinking and recomputing weight,
+// count and every dim's sum (ygPullW), keeping each node that passes I-1 and
+// rotating it otherwise (ygJoinRotL / ygJoinRotR). joinSteps += internal
+// nodes pushed (C-24); the spine steps are not touches (C-25). Pulls per R-J1
+// (C-20): 1 for u + 1 per popped node + 2 / 3 per rotation. Returns the root
+// ref of the joined tree.
+function ygJoin(v, a, b, u) {
   const left = v._left;
   const right = v._right;
   const weight = v._weight;
@@ -936,7 +942,6 @@ function ygJoin(v, a, b) {
     c = heavyA !== 0 ? right[c] : left[c];
     wc = c < 0 ? 1 : weight[c];
   }
-  const u = ygAllocInt(v);
   left[u] = heavyA !== 0 ? c : a;
   right[u] = heavyA !== 0 ? b : c;
   ygPullW(v, u);
@@ -1011,7 +1016,97 @@ function ygSeamJoin(v, o) {
   const b = o._root;
   if (a === YG_EMPTY_ROOT) return b;
   if (b === YG_EMPTY_ROOT) return a;
-  return ygJoin(v, a, b);
+  return ygJoin(v, a, b, ygAllocInt(v));
+}
+
+// ---- splitAt (cold; 0001 T-4, C-18, C-21, C-24, C-25, M-3) ------------------------
+
+// splitAt's tree work for 0 < at < length, after splitAt's descent wrote the
+// path to leaf c into sstack[0..d) and the pool pre-check passed. Cut c at
+// in-leaf position p (C-18): p > 0 moves [p, s) into one fresh leaf f (the left
+// part stays in c; s - p moves); p = 0 (a leaf boundary) moves nothing. Then
+// pop the path (T-4): a node x reached by its left child joins its right
+// subtree onto the right result, one reached by its right child joins its left
+// subtree before the left result, x itself being that join's node (ygJoin
+// with u = x; no allocation). The one identity join of a boundary cut (the
+// first x reached from the right, while the left result is still empty)
+// consumes no node: x is freed. Then the C-21 repairs, rX = [result X has
+// >= 2 leaves and its seam leaf < m], decided from the result's root and the
+// cut sizes (no seam search; a boundary cut never repairs). Writes both roots;
+// _len, live and the fingers are splitAt's. Counters into v._n (RS-1).
+function ygSplitCut(v, o, c, p, d) {
+  const ar = v._ar;
+  const left = v._left;
+  const right = v._right;
+  const llen = v._llen;
+  const ss = ar.sstack;
+  const s = llen[c];
+  let lt = YG_EMPTY_ROOT;
+  let rt = ~c;
+  if (p !== 0) {
+    const f = ygAllocLeaf(v);
+    ygMove(v, f << ar.shift, (c << ar.shift) + p, s - p);
+    llen[c] = p;
+    llen[f] = s - p;
+    ygRecount(v, c);
+    ygRecount(v, f);
+    v._n[YG_MOVES] += s - p;
+    lt = ~c;
+    rt = ~f;
+  }
+  let child = ~c;
+  for (let q = d - 1; q >= 0; q--) {
+    const x = ss[q];
+    const xl = left[x];
+    if (xl === child) {
+      rt = ygJoin(v, rt, right[x], x);
+    } else if (lt === YG_EMPTY_ROOT) {
+      lt = xl;
+      ygFreeInt(v, x);
+    } else {
+      lt = ygJoin(v, xl, lt, x);
+    }
+    child = x;
+  }
+  v._root = lt;
+  o._root = rt;
+  if (p !== 0) {
+    const m = ar.m;
+    if ((lt >= 0) & (p < m)) ygSplitSeam(v, v, 0);
+    if ((rt >= 0) & (s - p < m)) ygSplitSeam(v, o, 1);
+  }
+}
+
+// One C-21 seam repair of a splitAt result (a multi-leaf tree of view vu):
+// u = its last leaf (uLeft = 0, the left result) or its first leaf (uLeft = 1,
+// the right result), pushed into sstack[0..du); the T-6 walk from sibling(u)
+// pushes sstack[du..dv) to the neighbour w; repair(u, w) with sh = du (one
+// tree). touches += dv (the seam search, C-25); moves += rep (C-18).
+function ygSplitSeam(v, vu, uLeft) {
+  const left = v._left;
+  const right = v._right;
+  const ss = v._ar.sstack;
+  let ref = vu._root;
+  let du = 0;
+  while (ref >= 0) {
+    ss[du] = ref;
+    du++;
+    ref = uLeft !== 0 ? left[ref] : right[ref];
+  }
+  const u = ~ref;
+  const par = ss[du - 1];
+  ref = uLeft !== 0 ? right[par] : left[par];
+  let dv = du;
+  while (ref >= 0) {
+    ss[dv] = ref;
+    dv++;
+    ref = uLeft !== 0 ? left[ref] : right[ref];
+  }
+  const rep = ygRepair(v, vu, u, ~ref, uLeft, ss, du, ss, dv, du);
+  const cn = v._n;
+  cn[YG_TOUCHES] += dv;
+  cn[YG_MOVES] += rep;
+  cn[YG_SEAMS] += 1;
 }
 
 // ---- the view ---------------------------------------------------------------------
@@ -1582,6 +1677,75 @@ export class SumSequence {
     other._fdepth = 0;
     this._cv = false;
     other._cv = false;
+    return this;
+  }
+
+  // ---- splitAt (0004 A-3, A-4; 0001 T-4; C-3, C-5, C-6, C-10, C-21, C-24, C-25) ------
+  // this := [0, i), out := [i, length); returns this. Every check before the
+  // first write (C-10): the index first, then the operand (RS-6: not a view,
+  // self, another arena, out non-empty), then the R-E4 'pool' pre-check (one
+  // leaf, only for a mid-leaf cut, decided after the descent into the arena
+  // split stack; ygFail, so a throw changes nothing, A7-4). i in {0, length}
+  // or an empty view: no descent, touches 0, nothing allocated or freed (RS-3).
+  // Live is unchanged. Both fingers NIL / 0 / 0, both _cv false (C-5, C-6);
+  // counters into this._n only (RS-1); b = 0 (C-13).
+
+  splitAt(i, out) {
+    const n = this._len;
+    if (typeof i !== 'number') ygFail('index', 'must be a number');
+    if (((i >>> 0) !== i) | (i > n)) ygFail('index', 'must be an integer in [0, length]');
+    if (out === null || typeof out !== 'object' || !(#yg in out)) {
+      ygFail('operand', 'must be a SumSequence view');
+    }
+    if (out === this) ygFail('operand', 'must not be this view');
+    if (out._hdr !== this._hdr) {
+      ygFail('operand', 'is from another arena (views of one SumSequence.arena only)');
+    }
+    if (out._len !== 0) ygFail('operand', 'out must be empty');
+    const at = i >>> 0;
+    if ((at !== 0) & (at !== n)) {
+      const ar = this._ar;
+      const left = this._left;
+      const right = this._right;
+      const count = this._count;
+      const llen = this._llen;
+      const ss = ar.sstack;
+      let ref = this._root;
+      let k = at;
+      let depth = 0;
+      while (ref >= 0) {
+        ss[depth] = ref;
+        depth++;
+        const l = left[ref];
+        const cl = l < 0 ? llen[~l] : count[l];
+        if (k < cl) {
+          ref = l;
+        } else {
+          k -= cl;
+          ref = right[ref];
+        }
+      }
+      const hdr = this._hdr;
+      if ((k !== 0) & (hdr[YG_LFREE] === YG_END) & !(hdr[YG_LBUMP] < ar.Lmax)) {
+        ygFail('pool', 'leaf pool exhausted');
+      }
+      // ---- first write ----
+      this._n[YG_TOUCHES] += depth;
+      ygSplitCut(this, out, ~ref, k, depth);
+    } else if ((at === 0) & (n !== 0)) {
+      out._root = this._root;
+      this._root = YG_EMPTY_ROOT;
+    }
+    this._len = at;
+    out._len = n - at;
+    this._fl = YG_NIL;
+    this._fb = 0;
+    this._fdepth = 0;
+    out._fl = YG_NIL;
+    out._fb = 0;
+    out._fdepth = 0;
+    this._cv = false;
+    out._cv = false;
     return this;
   }
 

@@ -13,6 +13,7 @@
 // (buildMutant, C-46 M-8); the adapter is rebuilt over the mutant. The anchors are
 // literal [anchor, replacement, count] lists (a 'TODO' anchor would mark its row todo).
 // S-R2: the lane runs append in engine mode (count-lane.mjs header).
+// S-R3: the lane runs splitAt for real too (the read-instead substitution and the LANE LIMIT note are gone).
 // ASCII-only.
 
 import { test, after } from 'node:test';
@@ -70,6 +71,8 @@ for (const dims of [1, 2]) {
       // S-R2: append runs for real; >= 1 with both operands non-empty at every B, and >= 1 with a
       // seam repair at B 8 / 16 (at B = 4, m = 1: a leaf shorter than m cannot exist, C-21).
       kinds.push('append', 'appendBoth');
+      // S-R3: splitAt runs for real: >= 1 with an empty operand, and >= 1 mid-leaf cut, at every B (tripwire floors)
+      kinds.push('splitAt', 'splitCut', 'splitMid');
       if (B !== 4) kinds.push('appendSeam');
       for (const k of kinds) {
         assert.ok((res.seenB[B + ':' + k] || 0) > 0, `B=${B} dims=${dims}: op/case "${k}" never exercised`);

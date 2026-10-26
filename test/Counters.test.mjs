@@ -6,6 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SumSequence } from '../Yggdrasil.js';
 import { COUNTERS } from './stubs.mjs';
+import { engineFactory } from './adapter.mjs';
+import { walk } from './walker.mjs';
 
 const EMPTY_ROOT = 0x3FFFFFFF;
 
@@ -61,26 +63,41 @@ test('clear() on k=1 returns this and resets hdr / root / finger state (C-8, 000
   assert.equal(v._len, 0);
 });
 
-test('S-R1 placeholder: clear() of a non-empty view beside another holder throws and writes nothing', () => {
+test('clear() of a corrupt view (live = 2, _len = 1, _root EMPTY_ROOT) throws a plain Error before any write (R-S1)', () => {
   const vs = SumSequence.arena(8, undefined, 3);
   vs[0]._hdr[0] = 2;
   vs[0]._len = 1;
   const snap = () => vs.map((v) => JSON.stringify([v._root, v._len, v._fl, v._fb, v._fdepth, v._cv,
     Array.from(v._n), Array.from(v._fpath)])).join('|') + Array.from(vs[0]._hdr).join(',');
+  const pools = () => [vs[0]._left, vs[0]._right, vs[0]._llen, vs[0]._lnext, vs[0]._inext]
+    .map((a) => Array.from(a).join(',')).join('|');
   const before = snap();
-  assert.throws(() => vs[0].clear());
+  const pBefore = pools();
+  assert.throws(() => vs[0].clear(), (e) => {
+    assert.ok(e instanceof Error);
+    assert.ok(!(e instanceof RangeError), 'must be a plain Error');
+    assert.ok(e.message.startsWith('lite-yggdrasil: clear() corrupt view: '), e.message);
+    return true;
+  });
   assert.equal(snap(), before);
+  assert.equal(pools(), pBefore);
+  assert.equal(vs[0]._len, 1);
+  assert.equal(vs[0]._root, EMPTY_ROOT);
 });
 
-test('S-R1 placeholder (real insertAt): clear() of a non-empty view beside another holder throws, writes nothing; sole holder clears to fresh hdr', () => {
-  const vs = SumSequence.arena(8, undefined, 3);
-  vs[0].insertAt(0, 1, 2);
-  vs[1].insertAt(0, 2, 3);
-  const snap = () => vs.map((v) => JSON.stringify([v._root, v._len, v._fl, v._fb, v._fdepth, v._cv,
-    Array.from(v._n), Array.from(v._fpath)])).join('|') + Array.from(vs[0]._hdr).join(',');
-  const before = snap();
-  assert.throws(() => vs[0].clear());
-  assert.equal(snap(), before);
+test('real inserts on 2 views: clearing one leaves live === the other _len, counters delta 0, walker clean; sole holder clears to the fresh hdr', () => {
+  const f = engineFactory(12, { leafSize: 4, dims: 2 }, 2, {});
+  const [a, b] = f.views;
+  for (let i = 0; i < 6; i++) a.insertAt(i, i + 1, 2, 3);
+  for (let i = 0; i < 3; i++) b.insertAt(i, 10 + i, 1, 1);
+  const na = a._n.slice(), nb = b._n.slice();
+  a.clear();
+  assert.equal(a._len, 0);
+  assert.equal(a._hdr[0], b._len);
+  assert.equal(b._len, 3);
+  assert.deepEqual(Array.from(a._n), Array.from(na));
+  assert.deepEqual(Array.from(b._n), Array.from(nb));
+  assert.equal(walk(f.snapshot(), { B: 4, dims: 2 }), null);
   // k = 1 / sole holder: the view holds every live element and clears to the fresh hdr (C-8)
   const s = SumSequence.arena(8, undefined, 1)[0];
   s.insertAt(0, 1, 2);
@@ -89,6 +106,10 @@ test('S-R1 placeholder (real insertAt): clear() of a non-empty view beside anoth
   assert.deepEqual(Array.from(s._hdr), [0, 0, -1, 0, -1]);
   assert.equal(s._root, EMPTY_ROOT);
   assert.equal(s._len, 0);
+  // last view of the 2-view arena clears -> hdr equals a fresh arena's hdr
+  b.clear();
+  const fresh = SumSequence.arena(12, { leafSize: 4, dims: 2 }, 2)[0];
+  assert.deepEqual(Array.from(b._hdr), Array.from(fresh._hdr));
 });
 
 test('getters: available === C - live (whole arena); length === _len', () => {

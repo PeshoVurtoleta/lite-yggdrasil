@@ -19,6 +19,7 @@ These items are amended by decisions/0005-sumsequence-current.md (CURRENT, conso
 
 | ADR item | amended by |
 | --- | --- |
+| G-2 | C-31, C-34 |
 | G-4 | C-6, C-24 |
 | G-8 | C-8 |
 | G-11 | C-25 |

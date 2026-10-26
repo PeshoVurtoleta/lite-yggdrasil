@@ -21,6 +21,7 @@ These items are amended by decisions/0005-sumsequence-current.md (CURRENT, conso
 | --- | --- |
 | A-1 | C-6 |
 | A-2 | C-14 |
+| A-3 | C-10 |
 | A-4 | C-21 |
 | A-5 | C-1, C-15, C-16 |
 | A-6 | C-6, C-8 |

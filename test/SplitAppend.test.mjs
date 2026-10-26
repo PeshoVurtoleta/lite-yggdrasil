@@ -2,7 +2,7 @@
 // when no other view holds a node, else a free-walk of this view's nodes), 0005 C-8 (clear keeps _n; the cleared view
 // is the constructed state), C-15 (pools sized for count), C-25 (clear writes no counter), C-28 (walker I-7 census,
 // I-9 finger). Section 2 (rung 6 S-R2, append: join + seam repair) is appended below the section-1 rows; section 3
-// (splitAt) comes in a later rung.
+// (rung 7 S-R3, splitAt: cut + joins + repair) follows section 2.
 //
 // Oracle independence: expected values come from the spec text, never from the engine's clear. The model is
 // test/oracle.mjs (plain arrays); the pool census is this file's own traversal of an adapter snapshot (leaf count L_s,
@@ -1143,4 +1143,785 @@ for (const B of [4, 16]) {
       });
     }
   }
+}
+
+// ---- section 3: S-R3 splitAt (cut + T-3 joins + C-21 repair) ----
+// Spec: 0004 A-3 / A-4 (this := [0, i), out := [i, length), returns this; validation precedes all mutation), 0001 T-3
+// (join: push the heavier spine to the first node balanced against the other tree, one fresh node, pop with a single
+// rotation iff both new nodes pass I-1 else double) and T-4 (BFS split: bottom-up joins of the path siblings; a mid-leaf
+// cut allocates one leaf; an empty operand is the identity), 0005 C-3 / C-5 / C-6 (finger NIL on both views, _cv), C-10
+// (order: index, then operand: not a view, self, another arena, non-empty out; then the 'pool' pre-check, 1 leaf, only
+// when the cut is mid-leaf), C-18 (cut s-p moves, a boundary cut 0; repair moves), C-20 + R-J1 (join pulls: 1 + 1 per
+// popped spine node + 2 / 3 per single / double rotation), C-21 (rX = [result X has >= 2 leaves and its seam leaf < m];
+// the joins do no repair; a boundary cut never repairs), C-24 (counters into this._n, out._n delta 0), C-25 (touches:
+// 0 at i in {0, length} or an empty view; d(c) with 0 repairs; <= d(c) + (rL+rR)*HB(Lmax) with repairs), C-26 (hit /
+// miss delta 0), C-28 (walker). Every expected value is computed from the PRE snapshot by this file's own model
+// (modelOfSnap / refSplit / rjoin / repairExpect, a weight-only transcription of T-3 / T-4 / T-6, NOT the engine), by
+// hand traces (comments), or from test/stubs.mjs where it models the counter (moves / merges / equalizes / seamRepairs;
+// the stub never rotates, so touches / pulls / joinSteps / rotations come from the model).
+// READING S3-1: the T-4 joins run bottom-up along the cut path, nearest sibling first: the left result is built as
+// X := join(left sibling, X), the right one as R := join(R, right sibling). Pulls / joinSteps / rotations assume it.
+// READING S3-2: a repair's own pulls and touches are not fixed by a hand rule here (C-20 gives |anc(u) U anc(v)| for an
+// equalize only), so with seamRepairs > 0 pulls is asserted >= the joins' pulls and touches in [d(c), d(c) + reps*HL];
+// with 0 repairs both are exact.
+// READING S3-4: with merges > 0 the rotation counters are asserted >= the joins' (a merge's T-6 rebalance may rotate).
+// READING S3-3: touches for a boundary cut with 0 < i < length is d(c) of the leaf that STARTS at i (the stub's
+// descent lands on the leaf holding element i).
+
+const leafN = (len) => ({ len, w: 1, c: len });
+const isLeafN = (x) => x.l === undefined;
+const mkN = (l, r) => ({ l, r, w: l.w + r.w, c: l.c + r.c });
+const balN = (x, y) => 3 * x >= y && 3 * y >= x;
+
+function rjoin(a, b, acc) {
+  const heavyA = 3 * b.w < a.w;
+  let c = heavyA ? a : b;
+  const wo = heavyA ? b.w : a.w;
+  const stack = [];
+  while (!balN(c.w, wo) && !isLeafN(c)) { stack.push(c); c = heavyA ? c.r : c.l; }
+  let cur = heavyA ? mkN(c, b) : mkN(a, c);
+  let pulls = 1;
+  for (let q = stack.length - 1; q >= 0; q--) {
+    const p = stack[q];
+    const np = heavyA ? mkN(p.l, cur) : mkN(cur, p.r);
+    pulls++;
+    if (!balN(np.l.w, np.r.w)) {
+      if (heavyA) {
+        const x = np.l;
+        const y = np.r;
+        const nl = mkN(x, y.l);
+        if (isLeafN(y.l) || (balN(x.w, y.l.w) && balN(nl.w, y.r.w))) { cur = mkN(nl, y.r); acc.rs++; pulls += 2; } else { cur = mkN(mkN(x, y.l.l), mkN(y.l.r, y.r)); acc.rd++; pulls += 3; }
+      } else {
+        const x = np.l;
+        const z = np.r;
+        const nr = mkN(x.r, z);
+        if (isLeafN(x.r) || (balN(x.r.w, z.w) && balN(x.l.w, nr.w))) { cur = mkN(x.l, nr); acc.rs++; pulls += 2; } else { cur = mkN(mkN(x.l, x.r.l), mkN(x.r.r, z)); acc.rd++; pulls += 3; }
+      }
+    } else cur = np;
+  }
+  acc.js += stack.length;
+  acc.pulls += pulls;
+  acc.joins++;
+  return cur;
+}
+
+function modelOfSnap(s, vi) {
+  const vw = s.views[vi];
+  if (vw._len === 0) return null;
+  const f = (r) => (r < 0 ? leafN(s.leaf.len[~r]) : mkN(f(s.int.left[r]), f(s.int.right[r])));
+  return f(vw._root);
+}
+
+function lensOfModel(t) {
+  const out = [];
+  const st = [t];
+  while (st.length) {
+    const x = st.pop();
+    if (isLeafN(x)) out.push(x.len); else { st.push(x.r); st.push(x.l); }
+  }
+  return out;
+}
+
+// descent to the leaf holding element i (0 < i < n), then the bottom-up joins (READING S3-1)
+function refSplit(root, i) {
+  const path = [];
+  let t = root;
+  let off = i;
+  while (!isLeafN(t)) {
+    if (off < t.l.c) { path.push({ t, right: false }); t = t.l; } else { off -= t.l.c; path.push({ t, right: true }); t = t.r; }
+  }
+  const acc = { js: 0, rs: 0, rd: 0, pulls: 0, joins: 0 };
+  const p = off;
+  let X = p > 0 ? leafN(p) : null;
+  let R = p > 0 ? leafN(t.len - p) : t;
+  for (let q = path.length - 1; q >= 0; q--) {
+    const nd = path[q];
+    if (nd.right) X = X ? rjoin(nd.t.l, X, acc) : nd.t.l; else R = rjoin(R, nd.t.r, acc);
+  }
+  return { X, R, dc: path.length, p, len: t.len, acc };
+}
+
+// C-21 / C-18 / T-6: the repair of one result's seam leaf. side 'L': seam = last leaf (u right, v = its left
+// neighbour); side 'R': seam = first leaf (u left). merge iff t <= B/2; moves per C-18.
+function repairExpect(lens, side, B) {
+  const m = B >> 2;
+  const out = { lens, rep: 0, merges: 0, eqs: 0, moves: 0 };
+  if (lens.length < 2) return out;
+  const L = lens.length;
+  const su = side === 'L' ? lens[L - 1] : lens[0];
+  if (!(su < m)) return out;
+  const sv = side === 'L' ? lens[L - 2] : lens[1];
+  const t = su + sv;
+  out.rep = 1;
+  if (2 * t <= B) {
+    out.merges = 1;
+    out.moves = side === 'L' ? su : t;
+    out.lens = side === 'L' ? lens.slice(0, L - 2).concat([t]) : [t].concat(lens.slice(2));
+  } else {
+    out.eqs = 1;
+    out.moves = side === 'L' ? Math.ceil(t / 2) : sv;
+    const pair = [Math.floor(t / 2), Math.ceil(t / 2)];
+    out.lens = side === 'L' ? lens.slice(0, L - 2).concat(pair) : pair.concat(lens.slice(2));
+  }
+  return out;
+}
+
+function expectSplit(pre, a, i, B) {
+  const n = pre.views[a]._len;
+  const lens = leafLens(pre, a);
+  const z = { kind: 'cut', mid: false, dc: 0, joins: 0, reps: 0, merges: 0, eqs: 0, moves: 0, js: 0, rs: 0, rd: 0, pulls: 0 };
+  if (n === 0 || i === 0 || i === n) {
+    return Object.assign(z, { kind: n === 0 ? 'empty' : i === 0 ? 'all' : 'none', leftLens: i === 0 ? [] : lens, rightLens: i === 0 ? lens : [] });
+  }
+  const r = refSplit(modelOfSnap(pre, a), i);
+  const rl = repairExpect(lensOfModel(r.X), 'L', B);
+  const rr = repairExpect(lensOfModel(r.R), 'R', B);
+  return Object.assign(z, {
+    mid: r.p > 0, dc: r.dc, joins: r.acc.joins, reps: rl.rep + rr.rep, merges: rl.merges + rr.merges, eqs: rl.eqs + rr.eqs,
+    moves: (r.p > 0 ? r.len - r.p : 0) + rl.moves + rr.moves, js: r.acc.js, rs: r.acc.rs, rd: r.acc.rd, pulls: r.acc.pulls,
+    leftLens: rl.lens, rightLens: rr.lens,
+  });
+}
+
+// One successful a.splitAt(i, b) (b empty) with the whole C-3 .. C-28 surface.
+function checkSplit(ctx, a, b, i, tag) {
+  const { views, k, dims, B, orc, f } = ctx;
+  const T = views[a];
+  const O = views[b];
+  assert.equal(O.length, 0, tag + ': precondition, out empty');
+  const n = T.length;
+  const ansPre = json(answers(T, dims)); // reads move the finger: before the finger prime + snapshot
+  primeFinger(ctx, a);
+  for (let j = 0; j < k; j++) if (j !== b) views[j]._cv = true; // poke: "false afterwards" has teeth (out stays as is)
+  const cn = countersOf(views);
+  const pre = f.snapshot();
+  const hdrPre = Array.from(T._hdr);
+  const ihdr = [T._hdr[3], T._hdr[4]]; // ibump, ifree
+  // own traversal: the lowest path node reached from its RIGHT child (the one a boundary cut frees, T-4)
+  let freedId = -1;
+  if (n > 0 && i > 0 && i < n) {
+    const cnt = (r) => (r < 0 ? pre.leaf.len[~r] : cnt(pre.int.left[r]) + cnt(pre.int.right[r]));
+    let r = pre.views[a]._root;
+    let off = i;
+    while (r >= 0) {
+      const cl = cnt(pre.int.left[r]);
+      if (off < cl) r = pre.int.left[r]; else { off -= cl; freedId = r; r = pre.int.right[r]; }
+    }
+  }
+  const shT = shapeOf(pre, a);
+  const usedL = pre.leaf.bump - freeLen(pre.leaf.next, pre.leaf.free);
+  const usedI = pre.int.bump - freeLen(pre.int.next, pre.int.free);
+  const x = expectSplit(pre, a, i, B);
+  orc[a].splitAt(i, orc[b]);
+  const r = T.splitAt(i, O);
+  const where = tag + ' [' + a + '->' + b + ' n=' + n + ' i=' + i + ' ' + x.kind + (x.mid ? ' mid' : '') + ']';
+  assert.equal(r, T, where + ' returns this');
+  const post = f.snapshot();
+  assert.equal(T._len, i, where + ' this._len');
+  assert.equal(O._len, n - i, where + ' out._len');
+  assert.equal(T.length, i, where + ' this.length');
+  assert.equal(O.length, n - i, where + ' out.length');
+  if (i === 0) assert.equal(T._root, ctx.ER, where + ' this._root is EMPTY_ROOT');
+  if (n - i === 0) assert.equal(O._root, ctx.ER, where + ' out._root is EMPTY_ROOT');
+  for (const w of [T, O]) {
+    assert.equal(w._fl, ctx.NIL, where + ' _fl');
+    assert.equal(w._fb, 0, where + ' _fb');
+    assert.equal(w._fdepth, 0, where + ' _fdepth');
+    assert.equal(w._cv, false, where + ' _cv');
+  }
+  assert.equal(post.live, hdrPre[0], where + ' live unchanged');
+  // counters: all 12 on this, 0 on out and on every other view
+  const cnPost = countersOf(views);
+  const C_ = SumSequence.COUNTERS;
+  const dA = cnPost[a].map((v, q) => v - cn[a][q]);
+  assert.deepEqual(cnPost[b], cn[b], where + ' out._n delta 0 (all 12)');
+  for (let j = 0; j < k; j++) if (j !== a) assert.deepEqual(cnPost[j], cn[j], where + ' counters of view ' + j);
+  assert.equal(dA[C_.splits], 0, where + ' splits (a cut is not a Table-3 split)');
+  assert.equal(dA[C_.fingerHits], 0, where + ' fingerHits');
+  assert.equal(dA[C_.fingerMisses], 0, where + ' fingerMisses');
+  assert.equal(dA[C_.seamRepairs], x.reps, where + ' seamRepairs');
+  assert.equal(dA[C_.merges], x.merges, where + ' merges');
+  assert.equal(dA[C_.equalizes], x.eqs, where + ' equalizes');
+  assert.equal(dA[C_.moves], x.moves, where + ' moves (C-18)');
+  if (x.merges === 0) {
+    assert.equal(dA[C_.rotSingle], x.rs, where + ' rotSingle');
+    assert.equal(dA[C_.rotDouble], x.rd, where + ' rotDouble');
+  } else {
+    // READING S3-4: a repair MERGE splices parent(u) and runs the cold rebalance (C-20), which may rotate; an
+    // equalize changes no weight. So with merges > 0 the joins' rotations are a lower bound.
+    assert.ok(dA[C_.rotSingle] >= x.rs && dA[C_.rotDouble] >= x.rd, where + ' rotations >= the joins\' (merge may rebalance)');
+  }
+  assert.equal(dA[C_.joinSteps], x.js, where + ' joinSteps');
+  const HL = T._ar.HL;
+  if (x.kind !== 'cut') {
+    assert.equal(dA[C_.touches], 0, where + ' touches 0 (RS-3: no descent)');
+    assert.equal(dA[C_.pulls], 0, where + ' pulls 0');
+  } else if (x.reps === 0) {
+    assert.equal(dA[C_.touches], x.dc, where + ' touches == d(c)');
+    assert.equal(dA[C_.pulls], x.pulls, where + ' pulls (R-J1 joins)');
+  } else {
+    assert.ok(dA[C_.touches] >= x.dc && dA[C_.touches] <= x.dc + x.reps * HL, where + ' touches in [d(c), d(c) + reps*HB]: ' + dA[C_.touches] + ' d(c)=' + x.dc);
+    assert.ok(dA[C_.pulls] >= x.pulls, where + ' pulls >= the joins\' pulls: ' + dA[C_.pulls] + ' vs ' + x.pulls);
+  }
+  // the other views: untouched
+  for (let j = 0; j < k; j++) {
+    if (j === a || j === b) continue;
+    assert.equal(json(post.views[j]), json(pre.views[j]), where + ' view ' + j + ' fields untouched');
+    assert.equal(views[j]._cv, true, where + ' view ' + j + ' _cv untouched');
+  }
+  // leaf sizes left to right and the pool census
+  assert.deepEqual(leafLens(post, a), x.leftLens, where + ' this leaf sizes');
+  assert.deepEqual(leafLens(post, b), x.rightLens, where + ' out leaf sizes');
+  const shL = shapeOf(post, a);
+  const shR = shapeOf(post, b);
+  assert.equal(shL.leaves + shR.leaves, shT.leaves + (x.mid ? 1 : 0) - x.merges, where + ' leaves: +1 for a mid-leaf cut, -1 per merge');
+  assert.equal(shL.ints, Math.max(shL.leaves - 1, 0), where + ' this internals == leaves - 1');
+  assert.equal(shR.ints, Math.max(shR.leaves - 1, 0), where + ' out internals == leaves - 1');
+  assert.equal(post.leaf.bump - freeLen(post.leaf.next, post.leaf.free), usedL + (x.mid ? 1 : 0) - x.merges, where + ' used leaf ids');
+  assert.equal(post.int.bump - freeLen(post.int.next, post.int.free), usedI - shT.ints + shL.ints + shR.ints, where + ' used internal ids');
+  if (x.kind === 'cut' && x.mid && x.merges === 0) {
+    assert.deepEqual([T._hdr[3], T._hdr[4]], ihdr, where + ' T-4: split joins reuse path nodes, no internal alloc / free');
+  }
+  if (x.kind === 'cut' && !x.mid) {
+    assert.equal(T._hdr[3], ihdr[0], where + ' boundary cut: ibump unchanged');
+    assert.equal(T._hdr[4], freedId, where + ' boundary cut: the internal free head is the freed path node');
+    assert.equal(shL.ints + shR.ints, shT.ints - 1, where + ' boundary cut: exactly one path node freed');
+    assert.equal(dA[C_.moves], 0, where + ' boundary cut: 0 moves');
+    assert.equal(dA[C_.seamRepairs], 0, where + ' boundary cut: 0 repairs');
+  }
+  if (x.kind === 'cut' && x.mid && x.merges === 0) assert.equal(post.leaf.bump - freeLen(post.leaf.next, post.leaf.free), usedL + 1, where + ' mid-leaf cut: exactly one leaf allocated');
+  const wk = walk(post, ctx.walkOpts);
+  assert.equal(wk, null, where + ': walker ' + (wk && wk.code + ' ' + wk.detail));
+  for (let j = 0; j < k; j++) checkAgainstOracle(ctx, j, where);
+  if (i === n) assert.equal(json(answers(T, dims)), ansPre, where + ' i = length: this unchanged');
+  return { x, dA, leftLens: leafLens(post, a), rightLens: leafLens(post, b), n };
+}
+
+// leaves of the given sizes (each >= m, <= B) left to right in view vi, built by appending one-leaf operands from tmp.
+function buildLens(ctx, vi, tmp, lens) {
+  const v = ctx.views[vi];
+  for (let q = 0; q < lens.length; q++) {
+    const dst = q === 0 ? vi : tmp;
+    for (let e = 0; e < lens[q]; e++) ins(ctx, dst, ctx.views[dst].length, ctx.val() & 0xFFFF, ctx.val() % 1000, ctx.val() % 1000);
+    if (q > 0) { ctx.orc[vi].append(ctx.orc[tmp]); v.append(ctx.views[tmp]); }
+  }
+  assert.deepEqual(leafLens(ctx.f.snapshot(), vi), lens, 'build: leaf sizes');
+}
+
+// ---- model self-check: the weight-only join model vs the committed append engine (append rows are hand-pinned) ----
+
+test('S-R3 model self-check: rjoin == the engine append join (pulls, joinSteps, rotSingle, rotDouble) on 510 sequential pairs, B=4', () => {
+  const C_ = SumSequence.COUNTERS;
+  let cases = 0;
+  let rot = 0;
+  for (let na = 1; na <= 100; na += 3) {
+    for (let nb = 1; nb <= 100; nb += 7) {
+      const ctx = mkCtx(4, 1, 2, 5, 500);
+      for (let q = 0; q < na; q++) ins(ctx, 0, ctx.views[0].length, q, 1);
+      for (let q = 0; q < nb; q++) ins(ctx, 1, ctx.views[1].length, q, 1);
+      const s = ctx.f.snapshot();
+      const acc = { js: 0, rs: 0, rd: 0, pulls: 0, joins: 0 };
+      rjoin(modelOfSnap(s, 0), modelOfSnap(s, 1), acc);
+      const x = checkAppend(ctx, 0, 1, 'self-check ' + na + '+' + nb);
+      assert.equal(x.pulls, acc.pulls, 'pulls ' + na + '+' + nb);
+      assert.equal(x.js, acc.js, 'joinSteps');
+      assert.equal(x.rotS, acc.rs, 'rotSingle');
+      assert.equal(x.rotD, acc.rd, 'rotDouble');
+      if (acc.rs + acc.rd > 0) rot++;
+      cases++;
+    }
+  }
+  assert.equal(cases, 510);
+  assert.ok(rot >= 20, 'coverage: pairs that rotate ' + rot);
+});
+
+// ---- ASSERTION 1 tail, hand trace ----
+// B = 16, m = 4, arena(64, {leafSize: 16}, 2). 17 sequential appends: the 17th lands in the full leaf (16): append split
+// (B+1-m | m) = 13|4. Tree: one internal node (L13 L4), d(c) = 1 for the leaf holding element 14.
+// splitAt(14, out): descent: 14 >= 13 -> right leaf (fb = 13), p = 1 (mid-leaf). Cut: s - p = 4 - 1 = 3 moves; this's
+// leaf keeps 1, out gets a fresh leaf with 3. Path: the root went right, so the left result is join(L13, L1) = one
+// fresh node (pulls 1, joinSteps 0, no rotation); the right result is the single leaf [3]. rL: 2 leaves and the seam
+// (last) leaf 1 < m = 4 -> repair: u = 1, v = 13, t = 14, 2t = 28 > B = 16 -> equalize: moves ceil(14/2) = 7, sizes
+// floor | ceil = 7|7. rR: one leaf -> no repair. Totals: moves 3 + 7 = 10, seamRepairs 1, equalizes 1, merges 0,
+// splits 0, fingerHits / fingerMisses delta 0, both _fl NIL, out._n delta 0, _cv false.
+
+test('S-R3 ASSERTION 1 tail: 17 appends (13|4), splitAt(14, out) -> 7|7 and [3], moves 10, 1 repair, 1 equalize', () => {
+  const ctx = mkCtx(16, 1, 2, 3, 64);
+  for (let q = 0; q < 17; q++) ins(ctx, 0, ctx.views[0].length, ctx.val() & 0xFFFF, ctx.val() % 1000, 0);
+  assert.deepEqual(leafLens(ctx.f.snapshot(), 0), [13, 4], 'pre: 13|4');
+  const y = checkSplit(ctx, 0, 1, 14, 'ASSERTION 1');
+  const C_ = SumSequence.COUNTERS;
+  assert.deepEqual(y.leftLens, [7, 7]);
+  assert.deepEqual(y.rightLens, [3]);
+  assert.equal(y.dA[C_.moves], 10);
+  assert.equal(y.dA[C_.seamRepairs], 1);
+  assert.equal(y.dA[C_.equalizes], 1);
+  assert.equal(y.dA[C_.merges], 0);
+  assert.equal(y.dA[C_.splits], 0);
+  assert.equal(y.dA[C_.fingerHits], 0);
+  assert.equal(y.dA[C_.fingerMisses], 0);
+  assert.equal(ctx.views[0]._cv, false);
+  assert.equal(ctx.views[1]._cv, false);
+  // (_fl is asserted NIL inside checkSplit before its oracle reads move the finger.)
+});
+
+// ---- hand rows, B = 16 (m = 4), arena(64, ..., 2): every rL / rR combination, merge vs equalize, boundary, one-leaf ----
+// moves = (mid-leaf ? s - p : 0) + repair moves; repair moves per C-18: left result u = last leaf: merge su, equalize
+// ceil(t/2); right result u = first leaf: merge t, equalize sv. Merge iff 2t <= 16.
+for (const [lens, i, wantL, wantR, moves, reps, merges, eqs, label] of [
+  // boundary cut at the start of leaf 1 of [10, 10, 10]: no cut, no repair
+  [[10, 10, 10], 10, [10], [10, 10], 0, 0, 0, 0, 'rL=0 rR=0 boundary cut: 0 moves, 0 repairs'],
+  // mid-leaf cut of [10, 10] at 15 (p = 5): left [10, 5] (5 >= m), right [5]: moves s - p = 5
+  [[10, 10], 15, [10, 5], [5], 5, 0, 0, 0, 'rL=0 rR=0 mid-leaf cut: s - p = 5 moves'],
+  // rL only: [10, 8] cut at 11 (p = 1): left [10, 1] t = 11 -> equalize 6 -> [5, 6]; right [7]; moves 7 + 6
+  [[10, 8], 11, [5, 6], [7], 13, 1, 0, 1, 'rL=1 rR=0 equalize'],
+  // rR only: [8, 10, 7] cut at 17 (p = 9 of 10): left [8, 9]; right [1, 7] t = 8 -> merge, moves t = 8 -> [8]; 1 + 8
+  [[8, 10, 7], 17, [8, 9], [8], 9, 1, 1, 0, 'rL=0 rR=1 merge (t = 8 <= B/2)'],
+  // both, equalize + equalize: [8, 6, 8] cut at 11 (p = 3): left [8, 3] -> [5, 6] (6); right [3, 8] -> [5, 6] (8); cut 3
+  [[8, 6, 8], 11, [5, 6], [5, 6], 17, 2, 0, 2, 'rL=1 rR=1 both equalize'],
+  // both, merge + merge: [4, 6, 4] cut at 7 (p = 3): left [4, 3] t = 7 -> merge su = 3; right [3, 4] merge t = 7; cut 3
+  [[4, 6, 4], 7, [7], [7], 13, 2, 2, 0, 'rL=1 rR=1 both merge'],
+  // both, merge left + equalize right: [4, 6, 12] cut at 7: left [4, 3] merge 3 -> [7]; right [3, 12] t = 15 -> eq sv = 12 -> [7, 8]; cut 3
+  [[4, 6, 12], 7, [7], [7, 8], 18, 2, 1, 1, 'rL=1 rR=1 merge left, equalize right'],
+  // one-leaf result never repairs: [10] cut at 2: [2] (short, ONE leaf) and [8]; moves 10 - 2 = 8
+  [[10], 2, [2], [8], 8, 0, 0, 0, 'one-leaf view cut mid-leaf: a short one-leaf result is never repaired'],
+  // [10, 6] cut at 15 (p = 5 of 6): left [10, 5]; right [1] one leaf, short, no repair; moves 1
+  [[10, 6], 15, [10, 5], [1], 1, 0, 0, 0, 'a short ONE-leaf right result is never repaired'],
+  // boundary at the last leaf of [10, 10]: left [10], right [10]
+  [[10, 10], 10, [10], [10], 0, 0, 0, 0, 'boundary cut of two leaves: two one-leaf results'],
+]) {
+  test('S-R3 hand row B=16: ' + label, () => {
+    const ctx = mkCtx(16, 1, 3, 11, 96);
+    buildLens(ctx, 0, 2, lens);
+    const y = checkSplit(ctx, 0, 1, i, label);
+    const C_ = SumSequence.COUNTERS;
+    assert.deepEqual(y.leftLens, wantL, 'this leaf sizes');
+    assert.deepEqual(y.rightLens, wantR, 'out leaf sizes');
+    assert.equal(y.dA[C_.moves], moves, 'moves');
+    assert.equal(y.dA[C_.seamRepairs], reps, 'seamRepairs');
+    assert.equal(y.dA[C_.merges], merges, 'merges');
+    assert.equal(y.dA[C_.equalizes], eqs, 'equalizes');
+    assert.equal(y.dA[C_.splits], 0);
+  });
+}
+
+// touches by hand (0 repairs): [10, 10, 10] is ((L10 L10)w2 L10)w3 (join of two leaves, then a leaf: balanced, no spine).
+// splitAt(10): root: 10 < 20 -> left; (L10 L10): 10 >= 10 -> right, p = 0. d(c) = 2 (root + inner). Boundary: R = L10#2,
+// X = L10#1. Root went left: R := join(L10#2, L10#3) = fresh node, pulls 1, js 0. Inner went right: X = sibling L10#1.
+// touches 2, pulls 1, joinSteps 0, no rotation, 0 moves; one internal freed (2 -> 1).
+test('S-R3 hand trace: boundary cut of ((L10 L10) L10): touches 2, pulls 1, one path node freed', () => {
+  const ctx = mkCtx(16, 1, 3, 12, 96);
+  buildLens(ctx, 0, 2, [10, 10, 10]);
+  assert.equal(shapeStr(ctx.views[0]), '((L10 L10)w2 L10)w3');
+  const y = checkSplit(ctx, 0, 1, 10, 'boundary hand');
+  const C_ = SumSequence.COUNTERS;
+  assert.equal(y.dA[C_.touches], 2);
+  assert.equal(y.dA[C_.pulls], 1);
+  assert.equal(y.dA[C_.joinSteps], 0);
+  assert.equal(y.dA[C_.rotSingle] + y.dA[C_.rotDouble], 0);
+  assert.equal(y.dA[C_.moves], 0);
+});
+
+// mid-leaf cut of [10, 10] at 15: one internal (L10 L10), d(c) = 1. Root went right: X = join(L10, L5) = fresh node,
+// pulls 1. R = [5]. touches 1, pulls 1, moves 5, one leaf allocated, internals 1 -> 1 + 0.
+test('S-R3 hand trace: mid-leaf cut of (L10 L10) at 15: touches 1, pulls 1, moves 5, one leaf allocated', () => {
+  const ctx = mkCtx(16, 1, 2, 13, 64);
+  buildLens(ctx, 0, 1, [10, 10]);
+  ctx.views[1].clear(); ctx.orc[1].clear();
+  const y = checkSplit(ctx, 0, 1, 15, 'mid hand');
+  const C_ = SumSequence.COUNTERS;
+  assert.equal(y.dA[C_.touches], 1);
+  assert.equal(y.dA[C_.pulls], 1);
+  assert.equal(y.dA[C_.moves], 5);
+});
+
+// ---- R-J1 pulls inside splitAt: hand-traced rotation rows, B = 4 (m = 1: no repair can fire) ----
+// DOUBLE: view 0 = 16 sequential inserts = (L4 (L4 (L4 L4)w2)w3)w4 =: S (leaves 4|4|4|4); view 2 = 5 sequential inserts
+// = (L4 L1)w2 =: Q. S.append(Q): join(S w4, Q w2): 3*2 < 4 false -> c = Q, balanced against 4 (6 >= 4, 12 >= 2): no
+// spine, fresh node (S Q) w6: T = ((L4 (L4 (L4 L4)w2)w3)w4 (L4 L1)w2)w6.
+// splitAt(18): elements 0..15 are S, 16..19 are Q's first leaf: 18 is inside it, p = 2 (mid-leaf, s - p = 2 moves).
+// Path: root -> right (off 2), Q node -> left (off 2): d(c) = 2 = touches. Cut: X = L2 (left part), R = L2 (right part).
+// Bottom-up: Q node went left -> R := join(R = L2, sibling L1) = fresh node: pulls 1, js 0. Root went right -> X := join(S, X):
+// a = S w4, b = L2 w1: 3*1 < 4 -> heavy a, c = S; unbalanced (3*1 >= 4 fails) -> push S, c = (L4 (L4 L4)w2)w3: w 3 vs 1:
+// 9 >= 1 and 3 >= 3 -> stop. js = 1. Fresh u = (c, X) w4: 1 pull. Pop S: p = (L4, u): wl 1, wr 4: 3*1 >= 4 fails ->
+// rotate left; single would give nl = (L4 c) w4, top = (nl, X): bal(4, 1) fails -> DOUBLE: 3 pulls. Join pulls =
+// 1 + 1 + 3 = 5. Totals: touches 2, pulls 5 + 1 = 6, moves 2, joinSteps 1, rotSingle 0, rotDouble 1, repairs 0.
+// Results: this = 5 leaves [4, 4, 4, 4, 2], out = [2, 1].
+test('S-R3 R-J1 hand trace: splitAt(18) of ((S)(Q)) with an inner join that does one DOUBLE rotation', () => {
+  const ctx = mkCtx(4, 1, 3, 21, 200);
+  for (let q = 0; q < 16; q++) ins(ctx, 0, ctx.views[0].length, q, 1);
+  for (let q = 0; q < 5; q++) ins(ctx, 1, ctx.views[1].length, q, 1);
+  assert.equal(shapeStr(ctx.views[0]), '(L4 (L4 (L4 L4)w2)w3)w4');
+  assert.equal(shapeStr(ctx.views[1]), '(L4 L1)w2');
+  ctx.orc[0].append(ctx.orc[1]);
+  ctx.views[0].append(ctx.views[1]);
+  assert.equal(shapeStr(ctx.views[0]), '((L4 (L4 (L4 L4)w2)w3)w4 (L4 L1)w2)w6');
+  const y = checkSplit(ctx, 0, 2, 18, 'double rotation');
+  const C_ = SumSequence.COUNTERS;
+  assert.equal(y.dA[C_.touches], 2);
+  assert.equal(y.dA[C_.pulls], 6);
+  assert.equal(y.dA[C_.moves], 2);
+  assert.equal(y.dA[C_.joinSteps], 1);
+  assert.equal(y.dA[C_.rotSingle], 0);
+  assert.equal(y.dA[C_.rotDouble], 1);
+  assert.equal(y.dA[C_.seamRepairs], 0);
+  assert.deepEqual(y.leftLens, [4, 4, 4, 4, 2]);
+  assert.deepEqual(y.rightLens, [2, 1]);
+});
+
+// SINGLE: views a (1 element), b (29 sequential), c (5 sequential), out = view 3. a.append(b) then a.append(c). Shapes
+// (sequential inserts at B = 4, m = 1: append splits are 4|1): b = ((L4 L4)w2 ((L4 L4)w2... ; the joined tree, pinned
+// below as a string and traced by hand:
+//   T = ((L1 (L4 L4)w2)w3 (((L4 L4)w2 (L4 (L4 (L4 L1)w2)w3)w4)w6 (L4 L1)w2)w8)w11   (11 leaves, 35 elements)
+// splitAt(5): element 5 is the first element of the second L4 (L1 = idx 0, L4 = 1..4, L4 = 5..8): a BOUNDARY cut, p = 0.
+// Path: root -> left (5 < 9), (L1, (L4 L4)) -> right (off 4), (L4 L4) -> right (off 0): d(c) = 3 = touches.
+// R = that whole L4 (#2), X = null. Bottom-up: inner went right -> X = sibling L4#1. Middle went right -> X := join(L1, L4#1) =
+// fresh node, pulls 1, js 0 (balanced pair). Root went left -> R := join(L4#2, W8) with W8 = (W6 (L4 L1)w2): a = leaf w1,
+// b = W8: 3*8 < 1 false -> c = b, wo = 1; 8 vs 1 unbalanced -> push W8, c = W6 (6 vs 1 unbalanced) -> push W6,
+// c = (L4 L4)w2 (2 vs 1: 6 >= 1 and 3 >= 2 balanced) -> stop: js = 2. Fresh u = (L4#2, (L4 L4)w2) w3: pull 1. Pop W6:
+// (u w3, (L4 (L4 (L4 L1)w2)w3)w4): wl 3, wr 4 balanced: pull 2. Pop W8: (that w7, (L4 L1)w2): wl 7, wr 2: 3*2 >= 7
+// fails -> rotate right: x = (u w3, V w4), z = (L4 L1) w2: single gives nr = (V w4, z w2) w6 and top = (u w3, nr w6): bal(4,2)
+// ok (6 >= 4), bal(3,6) ok (9 >= 6) -> SINGLE rotation: pulls 3 + 2 = 5. Join pulls: 1 + 1 + 1 ... counted as: fresh 1,
+// pop W6 1, pop W8 1, rotation 2 = 5. Left join 1. Totals: touches 3, pulls 6, moves 0, joinSteps 2, rotSingle 1,
+// rotDouble 0, repairs 0. Results: this [1, 4]; out [4, 4, 4, 4, 4, 4, 1, 4, 1] (30 elements).
+test('S-R3 R-J1 hand trace: splitAt(5) boundary cut whose right-side join does one SINGLE rotation', () => {
+  const ctx = mkCtx(4, 1, 4, 22, 200);
+  ins(ctx, 0, 0, 0, 1);
+  for (let q = 0; q < 29; q++) ins(ctx, 1, ctx.views[1].length, q, 1);
+  for (let q = 0; q < 5; q++) ins(ctx, 2, ctx.views[2].length, q, 1);
+  ctx.orc[0].append(ctx.orc[1]); ctx.views[0].append(ctx.views[1]);
+  ctx.orc[0].append(ctx.orc[2]); ctx.views[0].append(ctx.views[2]);
+  assert.equal(shapeStr(ctx.views[0]), '((L1 (L4 L4)w2)w3 (((L4 L4)w2 (L4 (L4 (L4 L1)w2)w3)w4)w6 (L4 L1)w2)w8)w11');
+  const y = checkSplit(ctx, 0, 3, 5, 'single rotation');
+  const C_ = SumSequence.COUNTERS;
+  assert.equal(y.dA[C_.touches], 3);
+  assert.equal(y.dA[C_.pulls], 6);
+  assert.equal(y.dA[C_.moves], 0);
+  assert.equal(y.dA[C_.joinSteps], 2);
+  assert.equal(y.dA[C_.rotSingle], 1);
+  assert.equal(y.dA[C_.rotDouble], 0);
+  assert.equal(y.dA[C_.seamRepairs], 0);
+  assert.deepEqual(y.leftLens, [1, 4]);
+  assert.deepEqual(y.rightLens, [4, 4, 4, 4, 4, 4, 1, 4, 1]);
+});
+
+// ---- RS-3 guard sides: i = 0, i = length, empty this ----
+for (const B of [4, 16]) {
+  for (const dims of [1, 2]) {
+    for (const k of [2, 3]) {
+      test('S-R3 guard sides i = 0 / i = length / empty this: B=' + B + ' dims=' + dims + ' k=' + k + ' (touches 0, no node allocated or freed)', () => {
+        let rows = 0;
+        for (const shape of ['E', 'S', 'O', 'M']) {
+          if (shape === 'S' && (B >> 2) < 2) continue;
+          for (const at of ['zero', 'end']) {
+            const ctx = mkCtx(B, dims, k, 31 + rows);
+            if (k === 3) fillShape(ctx, 2, 'M', 'this');
+            fillShape(ctx, 0, shape, 'this');
+            const n = ctx.views[0].length;
+            const i = at === 'zero' ? 0 : n;
+            const hdrPre = Array.from(ctx.views[0]._hdr);
+            const poolPre = ctx.f.snapshot();
+            const y = checkSplit(ctx, 0, 1, i, shape + '/' + at);
+            const C_ = SumSequence.COUNTERS;
+            assert.deepEqual(y.dA, new Array(NC).fill(0), 'all 12 counters 0');
+            assert.deepEqual(Array.from(ctx.views[0]._hdr), hdrPre, 'hdr (live, bumps, free heads) unchanged: no node allocated or freed');
+            const poolPost = ctx.f.snapshot();
+            assert.equal(json(poolPost.int) + json(poolPost.leaf), json(poolPre.int) + json(poolPre.leaf), 'no pool write');
+            assert.equal(C_.touches, 0);
+            // the finished split leaves both views usable and reversible
+            checkAppend(ctx, 0, 1, shape + '/' + at + ' re-append');
+            rows++;
+          }
+        }
+        assert.ok(rows >= 6, 'coverage ' + rows);
+      });
+    }
+  }
+}
+
+test('S-R3 index -0 acts as 0 (C-10): splitAt(-0, out) moves the whole view', () => {
+  const ctx = mkCtx(4, 1, 2, 41);
+  fillShape(ctx, 0, 'M', 'this');
+  const n = ctx.views[0].length;
+  ctx.orc[0].splitAt(0, ctx.orc[1]);
+  const r = ctx.views[0].splitAt(-0, ctx.views[1]);
+  assert.equal(r, ctx.views[0]);
+  assert.equal(ctx.views[0].length, 0);
+  assert.equal(ctx.views[1].length, n);
+  assert.equal(walk(ctx.f.snapshot(), ctx.walkOpts), null);
+  for (let j = 0; j < 2; j++) checkAgainstOracle(ctx, j, '-0');
+});
+
+// ---- the grid: every cut position of seeded shapes, B = 4 / 8 / 16, dims 1 / 2: the whole surface ----
+for (const [B, dims] of [[4, 1], [8, 2], [16, 1]]) {
+  test('S-R3 every cut position: B=' + B + ' dims=' + dims + ' (all i in [0, n] on seeded multi-level shapes, whole surface, round trip)', () => {
+    const cov = { cuts: 0, mid: 0, boundary: 0, ends: 0, reps: 0, rot: 0, merges: 0, eqs: 0 };
+    for (let seed = 0; seed < 3; seed++) {
+      const ctx = mkCtx(B, dims, 3, 500 + seed * 7 + B, 6 * 10 * B);
+      fillShape(ctx, 0, 'M', 'this');
+      for (let q = 0; q < 4 * B; q++) insRand(ctx, 0);
+      fillShape(ctx, 2, 'M', 'this');
+      const n = ctx.views[0].length;
+      const ansWhole = json(answers(ctx.views[0], dims));
+      for (let i = 0; i <= n; i++) {
+        const y = checkSplit(ctx, 0, 1, i, 'seed ' + seed);
+        cov.cuts++;
+        if (y.x.kind === 'cut') { if (y.x.mid) cov.mid++; else cov.boundary++; } else cov.ends++;
+        cov.reps += y.x.reps;
+        cov.merges += y.x.merges;
+        cov.eqs += y.x.eqs;
+        if (y.x.rs + y.x.rd > 0) cov.rot++;
+        // round trip: append(out) restores the sequence; the full append surface runs too
+        checkAppend(ctx, 0, 1, 'seed ' + seed + ' i=' + i + ' re-append');
+        assert.equal(ctx.views[0].length, n);
+        assert.equal(json(answers(ctx.views[0], dims)), ansWhole, 'round trip restores the sequence at i=' + i);
+        assert.equal(json(oracleAnswers(ctx.orc[0], dims)), ansWhole, 'oracle agrees');
+      }
+    }
+    assert.ok(cov.mid >= 40 && cov.boundary >= (B === 4 ? 4 : 0) && cov.ends >= 6, 'coverage floor: ' + json(cov));
+    assert.ok(cov.rot >= (B === 4 ? 4 : 0), 'coverage floor: cuts whose joins rotate ' + cov.rot);
+    if (B >= 8) assert.ok(cov.reps >= 6 && cov.merges >= 1 && cov.eqs >= 1, 'coverage floor: repairs ' + json(cov));
+    else assert.equal(cov.reps, 0, 'B = 4 (m = 1): no leaf is short');
+  });
+}
+
+// ---- errors (ASSERTION 3): both views (and a third at k = 3) byte-identical, RangeError, token ----
+
+function expectSplitErr(v, i, out, re, all, label) {
+  const before = stateAll(all);
+  let err = null;
+  try { v.splitAt(i, out); } catch (e) { err = e; }
+  assert.ok(err !== null, label + ': must throw');
+  assert.ok(err instanceof RangeError, label + ': RangeError, got ' + (err && err.constructor.name));
+  assert.match(err.message, re, label + ': token');
+  assert.equal(stateAll(all), before, label + ': both views, all columns, hdr, fingers (_fl/_fb/_fdepth/_fpath), _cv, counters byte-identical');
+  return err;
+}
+
+for (const B of [4, 16]) {
+  for (const dims of [1, 2]) {
+    for (const k of [2, 3]) {
+      test('S-R3 splitAt errors: index, operand, order, B=' + B + ' dims=' + dims + ' k=' + k, TMO, () => {
+        const ctx = errCtx(B, dims, k, 81);
+        const [v, w] = ctx.views;
+        const all = ctx.views;
+        const n = v.length;
+        const Y = errCtx(B, dims, 2, 82);
+        const allXY = ctx.views.concat(Y.views);
+        // non-empty out (same arena), a valid index: operand
+        expectSplitErr(v, 1, w, /operand/, all, 'non-empty out');
+        expectSplitErr(v, 0, w, /operand/, all, 'non-empty out, i = 0');
+        expectSplitErr(v, n, w, /operand/, all, 'non-empty out, i = length');
+        // an empty out: the last view, cleared (k = 2: w itself)
+        const e = ctx.views[k - 1];
+        if (k === 2) { w.clear(); ctx.orc[1].clear(); }
+        else { e.clear(); ctx.orc[2].clear(); }
+        for (const w2 of ctx.views) { primeFinger(ctx, ctx.views.indexOf(w2)); w2._cv = true; }
+        // index errors with a VALID empty out
+        const forgedPlain = Object.assign({}, e);
+        const stub = synthStub(64, { leafSize: B, dims }, 1).views[0];
+        const bads = [-1, n + 1, n + 1000, 1.5, NaN, Infinity, -Infinity, '1', null, undefined, {}, [], true, 2 ** 53, 2 ** 31, -(2 ** 31)];
+        for (const bad of bads) {
+          expectSplitErr(v, bad, e, /index/, allXY, 'bad index ' + String(bad));
+          // index BEFORE operand (C-10): a bad index with a bad / foreign / self / non-empty operand still says index
+          expectSplitErr(v, bad, Y.views[0], /index/, allXY, 'bad index ' + String(bad) + ' + foreign out');
+          expectSplitErr(v, bad, undefined, /index/, allXY, 'bad index ' + String(bad) + ' + not a view');
+          expectSplitErr(v, bad, v, /index/, allXY, 'bad index ' + String(bad) + ' + self');
+        }
+        expectSplitErr(v, -1, Y.views[0], /index/, allXY, 'splitAt(-1, foreign): index first');
+        assert.doesNotMatch(String(expectSplitErr(v, -1, Y.views[0], /index/, allXY, 'msg').message), /operand/);
+        // operand errors with a valid index
+        let cnt = 0;
+        for (const bad of [undefined, null, 5, 'x', {}, [], () => 0, forgedPlain, Object.assign(Object.create(SumSequence.prototype), e), new Oracle(dims), stub]) {
+          expectSplitErr(v, 1, bad, /operand/, allXY, 'not a view #' + cnt++);
+        }
+        expectSplitErr(v, 1, v, /operand/, allXY, 'out === this');
+        expectSplitErr(v, 0, v, /operand/, allXY, 'out === this, i = 0');
+        expectSplitErr(v, n, v, /operand/, allXY, 'out === this, i = length');
+        // cross-arena, incl. non-empty foreign (arena check before non-empty)
+        expectSplitErr(v, 1, Y.views[0], /operand/, allXY, 'cross-arena non-empty out');
+        expectSplitErr(v, 1, Y.views[0], /SumSequence\.arena/, allXY, 'cross-arena names SumSequence.arena');
+        Y.views[1].clear(); Y.orc[1].clear();
+        expectSplitErr(v, 1, Y.views[1], /SumSequence\.arena/, allXY, 'cross-arena empty out names SumSequence.arena');
+        // an empty this: index 1 is length + 1
+        expectSplitErr(e, 1, Y.views[1], /index/, allXY, 'empty this, i = 1: index');
+        expectSplitErr(e, 0, Y.views[1], /SumSequence\.arena/, allXY, 'empty this, cross-arena');
+        expectSplitErr(e, 0, e, /operand/, allXY, 'empty this, out === this');
+        // k = 1 ctor views (each its own arena)
+        const o = { leafSize: B, dims };
+        const c1 = new SumSequence(64, o);
+        const c2 = new SumSequence(64, o);
+        for (let q = 0; q < 6; q++) c1.insertAt(q, q, 1, dims === 1 ? undefined : 1);
+        const trio = [c1, c2, e, v];
+        expectSplitErr(c1, 1, c2, /SumSequence\.arena/, trio, 'ctor vs ctor');
+        expectSplitErr(c1, 1, e, /SumSequence\.arena/, trio, 'ctor this, arena out');
+        expectSplitErr(e, 0, c2, /SumSequence\.arena/, trio, 'arena this, ctor out');
+        expectSplitErr(c2, 0, c1, /operand/, trio, 'empty ctor this, non-empty ctor out');
+        expectSplitErr(c2, 1, c1, /index/, trio, 'empty ctor this, i = 1');
+        assert.equal(cnt, 11);
+      });
+    }
+  }
+}
+
+// the 'pool' pre-check (C-3, C-10, R-E4): the LEAF pool poked exhausted. A MID-leaf cut needs one leaf -> RangeError 'pool',
+// nothing changed (the finger is NOT invalidated); a BOUNDARY cut, i = 0, i = length need none -> succeed.
+for (const B of [4, 16]) {
+  for (const dims of [1, 2]) {
+    for (const k of [2, 3]) {
+      test('S-R3 splitAt pool pre-check: B=' + B + ' dims=' + dims + ' k=' + k + ' (leaf pool exhausted: mid-leaf cut fails clean, boundary / ends succeed)', TMO, () => {
+        const ctx = errCtx(B, dims, k, 91);
+        const [v, w] = ctx.views;
+        w.clear(); ctx.orc[1].clear(); // out empty
+        primeFinger(ctx, 0);
+        for (const x of ctx.views) x._cv = true;
+        const pre = ctx.f.snapshot();
+        const n = v.length;
+        const mt = modelOfSnap(pre, 0);
+        let mid = -1;
+        let bnd = -1;
+        for (let i = 1; i < n; i++) {
+          const p = refSplit(mt, i).p;
+          if (p > 0 && mid < 0) mid = i;
+          if (p === 0 && bnd < 0) bnd = i;
+        }
+        assert.ok(mid > 0 && bnd > 0, 'precondition: a mid-leaf and a boundary position exist');
+        const hdr = v._hdr;
+        const saveB = hdr[1];
+        const saveF = hdr[2];
+        const fl = v._fl;
+        const fb = v._fb;
+        const fd = v._fdepth;
+        hdr[1] = v._ar.Lmax; // YG_LBUMP at its max
+        hdr[2] = -1;         // YG_LFREE = END
+        try {
+          expectSplitErr(v, mid, w, /pool/, ctx.views, 'leaf pool exhausted, mid-leaf cut at ' + mid);
+          assert.equal(v._fl, fl, 'finger NOT invalidated by the pre-check');
+          assert.equal(v._fb, fb);
+          assert.equal(v._fdepth, fd);
+          assert.notEqual(v._fl, ctx.NIL);
+          assert.equal(v._cv, true);
+          // a boundary cut needs no leaf
+          ctx.orc[0].splitAt(bnd, ctx.orc[1]);
+          const r = v.splitAt(bnd, w);
+          assert.equal(r, v);
+          assert.equal(v.length, bnd);
+          assert.equal(w.length, n - bnd);
+          assert.equal(hdr[1], v._ar.Lmax, 'no leaf allocated');
+          assert.equal(hdr[2], -1, 'no leaf freed (a boundary cut never repairs)');
+        } finally { hdr[1] = saveB; hdr[2] = saveF; }
+        assert.equal(walk(ctx.f.snapshot(), ctx.walkOpts), null);
+        for (let j = 0; j < k; j++) checkAgainstOracle(ctx, j, 'after the boundary cut under a poked pool');
+        // restored: re-append, then the same mid cut now succeeds
+        checkAppend(ctx, 0, 1, 'restore');
+        checkSplit(ctx, 0, 1, mid, 'mid cut after restore');
+        checkAppend(ctx, 0, 1, 'before the free-list-only row');
+        // the free-list term alone: bump exhausted, free list NON-empty (w.clear() put w's leaves there) -> a mid cut succeeds.
+        // (checkSplit's walker would flag the poked bump as a leak, so the split runs inline and the bump is restored first.)
+        {
+          const fHead = hdr[2];
+          assert.notEqual(fHead, -1, 'precondition: the leaf free list is non-empty');
+          const bumpReal = hdr[1];
+          const mt2 = modelOfSnap(ctx.f.snapshot(), 0); // the re-append may have reshaped the tree: pick a mid-leaf cut again
+          let mid2 = -1;
+          for (let q = 1; q < v.length && mid2 < 0; q++) if (refSplit(mt2, q).p > 0) mid2 = q;
+          assert.ok(mid2 > 0, 'precondition: a mid-leaf position');
+          ctx.orc[0].splitAt(mid2, ctx.orc[1]);
+          hdr[1] = v._ar.Lmax;
+          let r2;
+          try { r2 = v.splitAt(mid2, w); } finally { const bumped = hdr[1]; hdr[1] = bumpReal; assert.equal(bumped, v._ar.Lmax, 'bump still at Lmax (bump not used)'); }
+          assert.equal(r2, v);
+          assert.notEqual(hdr[2], fHead, 'bump exhausted, free list non-empty: the free head was used');
+          assert.equal(hdr[1], bumpReal);
+          assert.equal(v.length, mid2);
+          assert.equal(walk(ctx.f.snapshot(), ctx.walkOpts), null);
+          for (let j = 0; j < k; j++) checkAgainstOracle(ctx, j, 'free-list-only row');
+        }
+        // i = 0 and i = length under a poked pool
+        for (const at of ['zero', 'end']) {
+          checkAppend(ctx, 0, 1, 'again');
+          const len = v.length;
+          const sB = hdr[1];
+          const sF = hdr[2];
+          hdr[1] = v._ar.Lmax; hdr[2] = -1;
+          try {
+            ctx.orc[0].splitAt(at === 'zero' ? 0 : len, ctx.orc[1]);
+            v.splitAt(at === 'zero' ? 0 : len, w);
+          } finally { hdr[1] = sB; hdr[2] = sF; }
+          assert.equal(v.length, at === 'zero' ? 0 : len);
+          assert.equal(walk(ctx.f.snapshot(), ctx.walkOpts), null);
+          for (let j = 0; j < k; j++) checkAgainstOracle(ctx, j, 'poked pool, ' + at);
+        }
+      });
+    }
+  }
+}
+
+// ---- lane: seeded cycles of insertAt / removeAt / splitAt (+ append back), walker + oracle after EVERY op ----
+for (const B of [4, 8, 16]) {
+  test('S-R3 lane: B=' + B + ', 120 seeded cycles of insertAt / removeAt / splitAt / append (random cut positions, ends, leaf boundaries), whole surface after every split', () => {
+    const dims = B === 8 ? 2 : 1;
+    const C = B === 16 ? 600 : B === 8 ? 300 : 150;
+    const keyR = xs(0x51A1C0DE ^ B);     // positions
+    const valR = xs(0x7E57DA7A + B);     // entity / measure values
+    const opR = xs(0xFACE0000 + B);      // op kind, view picks
+    const cov = { ops: 0, splits: 0, mid: 0, boundary: 0, ends: 0, reps: 0, merges: 0, eqs: 0, both: 0, rot: 0, back: 0 };
+    for (let cyc = 0; cyc < 120; cyc++) {
+      const ctx = mkCtx(B, dims, 3, 2000 + cyc, C);
+      ctx.key = keyR; ctx.val = valR;
+      const nOps = 80 + (opR() % 30);
+      for (let s = 0; s < nOps; s++) {
+        const j = opR() % 3;
+        const v = ctx.views[j];
+        const kind = opR() % 100;
+        const live = v._hdr[0];
+        if (kind < 16 && v.length >= 2) {
+          let b = -1;
+          for (let q = 1; q < 3; q++) if (ctx.views[(j + q) % 3].length === 0) { b = (j + q) % 3; break; }
+          if (b < 0) { b = (j + 1 + (opR() % 2)) % 3; ctx.views[b].clear(); ctx.orc[b].clear(); }
+          const n = v.length;
+          const pick = opR() % 16;
+          let i;
+          if (pick === 0) i = 0;
+          else if (pick === 1) i = n;
+          else if (pick < 6 && n > 0) { // a leaf boundary
+            const lens = leafLens(ctx.f.snapshot(), j);
+            let acc = 0;
+            const starts = [];
+            for (const l of lens) { starts.push(acc); acc += l; }
+            i = starts.length > 1 ? starts[1 + (opR() % (starts.length - 1))] : starts[0];
+          } else if (pick < 10 && n > 0) { // one element off a leaf edge: the cut leaves a short part (repair candidates)
+            const lens = leafLens(ctx.f.snapshot(), j);
+            const q = opR() % lens.length;
+            let acc = 0;
+            for (let r = 0; r < q; r++) acc += lens[r];
+            i = acc + (opR() % 2 === 0 ? 1 : Math.max(lens[q] - 1, 1));
+            if (i > n) i = n;
+          } else i = keyR() % (n + 1);
+          const y = checkSplit(ctx, j, b, i, 'lane B=' + B + ' cyc ' + cyc + ' op ' + s);
+          cov.splits++;
+          if (y.x.kind === 'cut') { if (y.x.mid) cov.mid++; else cov.boundary++; } else cov.ends++;
+          cov.reps += y.x.reps; cov.merges += y.x.merges; cov.eqs += y.x.eqs;
+          if (y.x.reps === 2) cov.both++;
+          if (y.x.rs + y.x.rd > 0) cov.rot++;
+          if (opR() % 2 === 0) { checkAppend(ctx, j, b, 'lane back'); cov.back++; }
+        } else if (kind < 26 && v.length > 0) {
+          const at = keyR() % v.length;
+          assert.equal(v.removeAt(at), ctx.orc[j].removeAt(at));
+        } else if (live < C) {
+          insRand(ctx, j);
+        }
+        cov.ops++;
+        walkOk(ctx, 'lane B=' + B + ' cyc ' + cyc + ' op ' + s);
+        for (let q = 0; q < 3; q++) checkAgainstOracle(ctx, q, 'lane B=' + B + ' cyc ' + cyc + ' op ' + s);
+      }
+    }
+    assert.ok(cov.splits >= 1000, 'coverage floor: splits ' + json(cov));
+    assert.ok(cov.mid >= 400, 'coverage floor: mid-leaf cuts ' + json(cov));
+    assert.ok(cov.ends >= 60, 'coverage floor: i in {0, length} / empty ' + json(cov));
+    assert.ok(cov.boundary >= (B === 4 ? 30 : 5), 'coverage floor: boundary cuts ' + json(cov));
+    assert.ok(cov.back >= 300, 'coverage floor: split + append back ' + json(cov));
+    if (B >= 8) assert.ok(cov.reps >= 8 && cov.merges >= 2 && cov.eqs >= 2, 'coverage floor: repairs (m = 2: a short leaf is 1) ' + json(cov));
+    else assert.equal(cov.reps, 0, 'B = 4 (m = 1): no repair');
+  });
 }

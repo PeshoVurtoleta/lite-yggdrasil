@@ -57,3 +57,10 @@ void ap;
 
 // @ts-expect-error -- append takes a view.
 views[0].append(5);
+
+// splitAt (rung S-R3): takes an index and an empty view of the same arena, returns this.
+const sp: SumSequence = views[0].splitAt(0, views[1]);
+void sp;
+
+// @ts-expect-error -- splitAt takes a view as out.
+views[0].splitAt(0, 5);

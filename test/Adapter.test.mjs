@@ -114,7 +114,22 @@ test('arena sharing: views of one arena share _hdr / columns by identity; anothe
   }
 });
 
-test.todo('control: 5 appends, then weight[root] += 1 fails I-1 weight (needs a split: rung 3 A-R2)');
+test('control: 5 appends at B=4, then weight[root] += 1 fails I-1 weight; restore is clean', () => {
+  const { views, snapshot } = engineFactory(C, { leafSize: 4, dims: 1 }, 1);
+  const v = views[0];
+  for (let j = 0; j < 5; j++) v.insertAt(j, j, 1); // the 5th insert splits the full leaf (C-18): two leaves
+  assert.equal(walk(snapshot(), { B: 4, dims: 1 }), null);
+  const root = v._root;
+  assert.ok(root >= 0 && root !== 0x3FFFFFFF, 'root is an internal node after a split');
+  assert.equal(v._weight[root], 2, 'stored weight = leaf count (I-1)');
+  v._weight[root] += 1;
+  const r = walk(snapshot(), { B: 4, dims: 1 });
+  assert.ok(r !== null, 'corruption must be caught');
+  assert.equal(r.code, 'I-1');
+  assert.ok(r.detail.startsWith('weight'), r.detail);
+  v._weight[root] -= 1;
+  assert.equal(walk(snapshot(), { B: 4, dims: 1 }), null);
+});
 
 test('cfg row: any cfg key is a RangeError naming cfg', () => {
   assert.throws(() => engineFactory(64, {}, 1, { x: 1 }), (e) => e instanceof RangeError && /cfg/.test(e.message));

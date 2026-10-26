@@ -520,6 +520,12 @@ test('ASSERTION 5: every export is 0 B/op over 1e5 calls, maxMajor 0 (child --ex
   assert.deepEqual(names.slice().sort(), Object.keys(SC).filter((k) => typeof SC[k] === 'function').sort(),
     'GC lane covers every function export');
   assert.deepEqual(r.exports.slice().sort(), names.slice().sort(), 'child saw the same export set');
+  // Threshold < 0.5 B/op, kept as documented by maintainer ruling 2026-10-26
+  // ("Keep 0.5, documented"). What it proves: the window is 1e5 calls with no
+  // scavenge (64 MiB semi-space), so < 0.5 B/op means < 50 KB over the whole
+  // window, i.e. fewer than one heap object per ~32 calls (the smallest heap
+  // object is >= 16 B). It is not an exact-0 assert because heapUsed carries
+  // JIT / IC noise, which could make an exact-0 check flake.
   for (const k of names) assert.ok(r.bpo[k] < 0.5, k + ' allocated ' + r.bpo[k] + ' B/op');
   assert.equal(r.major, 0, 'maxMajor 0');
   assert.equal(r.minor, 0, 'no scavenge in the asserted profiler window');

@@ -14,6 +14,8 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
 - ADDENDUM 12 (0005's own, rulings R-C1 / R-B1, G-B2 engine-lane readings and rung 9 (K-R1, cursor) readings): written
   against e4b5de5 + the K-R1 tree (Yggdrasil.js 4f1a2e3a)
 - ADDENDUM 13 (0005's own, the bc unit's readings): written against cdfe5d4 + the bc tree (Yggdrasil.js 5eb49244)
+- ADDENDUM 14 (0005's own, the K-R2 rung (rung 10, cursor next()) readings): written against 17ffcab + the K-R2 tree
+  (Yggdrasil.js 287d10c1, test/exhaustive.mjs 6734c7aa)
 - Re-consolidated at ADDENDUM 9 (A4..A9 were past the B1 consolidation): the D8 nits are folded (the A8-1 quote form,
   the C-8 guard tag, the Status and legend wrapping, long headings split into a heading + a Sources line).
 - Re-consolidated at ADDENDUM 12 (A10..A12 were past the ADDENDUM 9 consolidation): every rule changed by A10-1..A10-11,
@@ -22,8 +24,8 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
 - Status: CURRENT, consolidated through ADDENDUM 12 (not RULED). The maintainer rulings are R-D1..R-D4, R-E1..R-E5,
   R-Q1, R-P1, R-P2, R-S1..R-S3, R-J1, R-C1 and R-B1 (quoted in "Maintainer rulings"; R-C1 and R-B1 are A12-14 and
   A12-15). Every other rule is a planner rule or a reading (NOT ruled): DB-1 r1..r3, A4-1..A4-14, A5-1..A5-34 (incl. the
-  merge rulings M-1..M-8), A6-3 (Q4), A7-1..A7-5, A8-4, A9-2..A9-8, A10-1..A10-11, A11-1..A11-8, A12-1..A12-13 and
-  A13-1..A13-5.
+  merge rulings M-1..M-8), A6-3 (Q4), A7-1..A7-5, A8-4, A9-2..A9-8, A10-1..A10-11, A11-1..A11-8, A12-1..A12-13,
+  A13-1..A13-5 and A14-1..A14-13.
 - Date: 2026-10-26
 - Session: SumSequence CURRENT consolidation (docs unit B1)
 - Provenance of this text: consolidated from .handoff/PLAN-G-A.md (body, rulings, ADDENDA 1-3), .handoff/PLAN-G-B.md
@@ -31,7 +33,7 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
   pass) from .handoff/PLAN-E0.md (the merge: M-1..M-8, R-E1..R-E4; its reconciliations win over the six plans) and its
   six plans PLAN-E0-A / -F / -K / -S / -V / -G. Rule ids cite those files by name (Sources legend);
   the plan files are gitignored and archived at release. The rung ladder lives in PLAN-E0.md, never here.
-- Precedence: ADDENDUM 13 > ADDENDUM 12 > ADDENDUM 11 > ADDENDUM 10 > ADDENDUM 9 > ADDENDUM 8 >
+- Precedence: ADDENDUM 14 > ADDENDUM 13 > ADDENDUM 12 > ADDENDUM 11 > ADDENDUM 10 > ADDENDUM 9 > ADDENDUM 8 >
   ADDENDUM 7 > ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 >
   ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 > body. Every rule below is the FINAL rule, stated in full.
   A superseded rule is not repeated here (it lives in the plan files and the Source map says where it went).
@@ -122,6 +124,9 @@ AskUserQuestion, 2026-10-27 (D12 burst; relayed by the orchestrator session, ADD
 
 ## Sources legend
 
+- 0005 A14-1..A14-13 = this file's own ADDENDUM 14 (below; the K-R2 rung (rung 10, cursor next()) readings, NOT ruled;
+  no maintainer ruling was given in K-R2). Every A14 item names the CURRENT rules it changed and every changed rule
+  cites its A14 ids.
 - 0005 A13-1..A13-5 = this file's own ADDENDUM 13 (below; the R-C1 byte-cap unit bc: readings, NOT ruled; no new
   ruling, R-C1 is quoted above). Every A13 item names the CURRENT rules it changed and every changed rule cites its A13
   ids.
@@ -240,7 +245,8 @@ Sources: G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-
 ### Cursor
 
 ### C-6 No epoch counter; the cursor bit _cv
-Sources: G-A B-18 -> G-A-D3 -> G-A A2-4 -> G-A A3-4 -> 0005 A5-3, A5-22 -> 0005 A12-7, A12-8, A12-10
+Sources: G-A B-18 -> G-A-D3 -> G-A A2-4 -> G-A A3-4 -> 0005 A5-3, A5-22 -> 0005 A12-7, A12-8, A12-10 ->
+  0005 A14-1, A14-4, A14-5, A14-13
 
 - No epoch counter exists. The finger is never stale (C-3), so the only invalidation state is the view's one cursor
   (Y-11). Its `valid`, `index` and `entity` are prototype getters over view state; `valid` returns the boolean _cv.
@@ -255,18 +261,29 @@ Sources: G-A B-18 -> G-A-D3 -> G-A A2-4 -> G-A A3-4 -> 0005 A5-3, A5-22 -> 0005 
 - Only _cv is cursor state on the view (RK-5, A5-22): the C-27 snapshot is unchanged; the cursor's leaf, position,
   stack and running offsets live in its own preallocated state, and the cursor class is not exported.
 - Landing (A12-7; C-7, C-43): rung K-R1 landed the `_cv = false` store of all six mutators (append's other and splitAt's
-  out included), the cursor, the getters and the seeks; next() and the stack writes land in K-R2.
+  out included), the cursor, the getters and the seeks; rung K-R2 landed next() and the stack writes (A14-13).
 - The view's one extra own field (A12-8, K1-R1, reviewer ACCEPT): `_cur`, the cursor object reference, set once in the
   constructor after `_cv` and never reassigned. A reference is not cursor state: the C-27 snapshot and the walker's
   WK_VIEW_FIELDS are unchanged, and single and arena views share one hidden class (%HaveSameMap).
 - An end seek partly rewrites the cursor's running offsets while _cv stays false (A12-10, K1-R4 / K1-R5, reviewer
   ACCEPT); never observable, offset(d) is NaN while invalid. The state slot [0] holds the leaf id (not ~id). The
-  Int32Array(HL) stack is allocated in K-R1 and written from K-R2 (shape stable across rungs). The `_cv = false` store
-  in each seek on an empty view is a dead write (an equivalent mutant: an empty view's _cv is always false).
+  Int32Array(HL) stack is allocated in K-R1 and written by the seeks and next() since K-R2 (shape stable across
+  rungs; A14-1).
+- Stack and leaf length (A14-1, K2-R1, reviewer ACCEPT): each seek stores every internal node of its descent in
+  _stk[depth] before descending (the d(t) stores, trailing `// cr:push`); state slot 2 (YG_CLEN renamed YG_CDEP) holds
+  the leaf's stack depth; next() reads the leaf length from v._llen[leaf], valid because every mutator clears _cv
+  first (the 8 `// cv:` stores). Shape and ygBytes are unchanged (A12-10). Hot cost: one property load plus one
+  Int32Array read in next(); one Int32Array store per level in each seek.
+- Running offset at the end (A14-4, K2-R4, reviewer ACCEPT): next() carries _off before the end check, so off the last
+  element _off holds the total while _cv is false; unobservable (offset() is NaN while invalid), the same class as
+  A12-10.
+- Empty-view seek store (A14-5, K2-O1, reviewer ACCEPT): the `_cv = false` stores in both seeks on an empty view are
+  kept: cold, equivalent today (an empty view's _cv is always false), fail closed.
 - Amends 0004 A-1 / A-6 / A-7 (epoch per view; "bump"), 0003 G-4 (the engine-read field is _cv, a separate field
   from the never-read `_n`), 0002 M-5 ("finger or epoch" -> "finger or _cv").
 
-### C-7 Cursor API (G-A B-24 -> 0005 A5-3, A5-19, A5-20, A5-21 -> 0005 A12-7, A12-9, A12-10, A12-11)
+### C-7 Cursor API (G-A B-24 -> 0005 A5-3, A5-19, A5-20, A5-21 -> 0005 A12-7, A12-9, A12-10, A12-11 -> 0005 A14-1,
+  A14-2, A14-3, A14-13)
 
 - view.cursor() returns the view's ONE cursor: seekIndex(i), seekSum(d, y), next(); fields valid, index, entity;
   methods offset(d), measure(d). Invalid state as C-6. The cursor has its own stack and allocates nothing.
@@ -280,7 +297,12 @@ Sources: G-A B-18 -> G-A-D3 -> G-A A2-4 -> G-A A3-4 -> 0005 A5-3, A5-22 -> 0005 
 - Cost (RK-4, A5-21): offset(d) is O(1), read from the cursor's running Float64Array of offsets; offset(d) and
   measure(d) each return a boxed double (b = 1, C-13).
 - Landed in rung K-R1 (A12-7; C-6, C-43): cursor(), the valid / index / entity getters, offset(d) / measure(d),
-  seekIndex and seekSum; next() lands in K-R2.
+  seekIndex and seekSum. Landed in rung K-R2 (A14-13): next() (the leaf walk and _cross, the leaf crossing) and the
+  stack writes of the seeks (A14-1).
+- Crossing (A14-3, K2-R3, reviewer ACCEPT; C-25): _cross's lca test is `left[u] === child` (child starts as ~leaf, then
+  the popped node); a crossing adds depth - top touches, top = depth(lca) + 1, so d(t') - depth(lca) - 1 (trailing
+  `// cr:pop`). The end crossing (off the last element) pushes nothing and adds 0 (A14-2); _cross sets _cv false and
+  returns false (`// cr:end`).
 - seekSum's text (A12-9, K1-R2 / K1-R3, reviewer ACCEPT): the indexAtSum rule is written `if (acc + sl > y) {` and
   `if (y < acc + m) break;` (equivalent, NaN and -0 included) so Core.test's indexAtSum source anchors stay unique;
   future seekSum anchors use this text. Its end test is the in-leaf scan reaching j === len, equal to y >= total(d)
@@ -417,7 +439,8 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
 
 ### Capacity
 
-### C-14 Caps (G-A B-28 -> G-A-D5 -> G-A A2-5 -> 0005 A5-6, A5-29, A5-32 -> 0005 A12-14 -> 0005 A13-1..A13-5)
+### C-14 Caps (G-A B-28 -> G-A-D5 -> G-A A2-5 -> 0005 A5-6, A5-29, A5-32 -> 0005 A12-14 -> 0005 A13-1..A13-5
+  -> 0005 A14-6)
 
 - Slot ids stay Smi: Lmax*B <= 2^30, so C <= 2^28 - m*k (B=4: 2^28-k, B=8: 2^28-2k, B=16: 2^28-4k, B=32: 2^28-8k). C is
   an integer >= 1. MAX_VIEWS = 4096: count is an integer in [1, min(C, 4096)]. dims is an integer in 1..4. leafSize per
@@ -435,13 +458,18 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
 - Byte cap (R-C1, A12-14, RULED: the sum and the 2^32 cap; implemented in unit bc, A13-1..A13-4, readings NOT ruled):
   the constructor sums the bytes of every typed array the arena will hold with ygBytes(C, B, k, dims) (the formula is
   A13-1); a total > 2^32 bytes throws RangeError 'capacity', message 'arena typed arrays must total <= 2^32 bytes'. The
-  comparison is strict: exactly 2^32 bytes is accepted (A13-2). The check is one line after the unchanged C cap line and
+  comparison is strict: exactly 2^32 bytes is accepted (A13-2). Its text is `if (!(ygBytes(C, B, k, dims) <=
+  YG_BYTE_CAP)) ygFail('capacity', ...)` (A14-6, amends A13-2's wording): exactly 2^32 is still accepted and a NaN
+  total throws (fail closed by construction). The check is one line after the unchanged C cap line and
   BEFORE the allocation marker (Yggdrasil.js "allocation: no check below this line"). Plain JS containers (the meas /
   lsum / sums column arrays, views[], the view objects) are not counted. The byte cap rejects C = 2^28 - m*k for every
   legal (B, dims, count), so the C cap never decides alone: it fires first only for C > 2^28 - m*count, and it keeps
   ygBytes' terms below 2^53 (exact integers). One token 'capacity' serves both caps, told apart by message ('2^28' vs
   '2^32 bytes') (A13-3). Gates (A13-4): the Capacity.test.mjs byte-cap rows, the largest accepted C per cell from the
-  test's own oracle, a recording sentinel at C* and C* + 1, a check-order row and the mutants M1..M3.
+  test's own oracle, a recording sentinel at C* and C* + 1, a check-order row and the mutants M1..M3, and (A14-6) a
+  NaN row: ygBytes patched to return NaN throws RangeError 'capacity' with 0 typed-array calls (it fails on the
+  17ffcab build, Yggdrasil.js 5eb49244). The recorder points every other typed-array constructor at a throwing
+  sentinel; Capacity.test's A_BYTE anchor follows the new text.
 - Cap teeth (RV-6, A5-32): a cap too strict by 1 passes every row above, so one ctor call runs with
   globalThis.Float64Array / Int32Array replaced by a sentinel and the requested lengths are asserted; the engine must
   therefore read the typed-array constructors at call time and not alias them at module scope. That sentinel call now
@@ -574,7 +602,7 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
 
 ### C-25 Touches
 Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 0005 A5-3, A5-14, A5-24, A5-25 ->
-  0005 A7-1 -> 0005 A9-6 -> 0005 A10-1, A10-7, A10-8, A10-11
+  0005 A7-1 -> 0005 A9-6 -> 0005 A10-1, A10-7, A10-8, A10-11 -> 0005 A14-2, A14-3
 
 - touches = internal nodes PUSHED onto a descent's path stack: the main descent, the neighbour walk from sibling(u),
   the F-3 re-home, the seam search, and a cursor leaf crossing. Never the leaf itself, never pulls, rotations or join
@@ -585,6 +613,8 @@ Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 000
   still pays d(t) although the cursor ends invalid (R-E3); splitAt at i in {0, length}, or on an empty view, has no
   leaf c: touches 0, no descent (RS-3; the stub short-circuits); append's seam repair is counted before the join
   (R-E5, C-21).
+- Cursor crossings (A14-2, A14-3; C-7): C-25 counts pushes only. The end crossing (off the last element) pushes nothing
+  and adds 0 touches; a leaf crossing adds depth - top touches, top = depth(lca) + 1, = d(t') - depth(lca) - 1.
 - Append descents (A9-6): append counts touches += d_a + d_b once, when both operands are non-empty. The d_b descent
   (other's first leaf) pushes nothing and only measures d_b; only a repair re-walks that path into jstack, uncounted.
   Either way the touches counted equal the nodes of the two descents.
@@ -619,7 +649,8 @@ Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 000
 
 ### Harness
 
-### C-27 Snapshot, finger-off, walker state (G-B-D3 -> G-B B2-1 -> G-B B2-2 -> G-A A3-1 -> 0005 A4-6, A4-7, A4-11)
+### C-27 Snapshot, finger-off, walker state (G-B-D3 -> G-B B2-1 -> G-B B2-2 -> G-A A3-1 -> 0005 A4-6, A4-7, A4-11
+  -> 0005 A14-8)
 
 - Snapshot contract per view: _root, _len, _fl, _fb, _fdepth, _fpath (Int32Array, [k] = node at depth k), _cv.
 - The binding SNAPSHOT shape is the header of test/walker.mjs (sha256 3a163137), which the engine adapter
@@ -633,6 +664,8 @@ Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 000
   harness asserts Object.hasOwn(view, f) for f in _fl, _fb, _fdepth, _fpath (a renamed field, or one that lives on the
   prototype, fails here with code C-27, op null, witnessLength 0). Finger off = before each op write NIL / 0 / 0 into
   _fl / _fb / _fdepth.
+- Cursor ops in the drivers (A14-8; C-31): seekIndex / seekSum / next join EX_OPS and EX_NEUTRAL in
+  test/exhaustive.mjs, so sweepLane's `cursor` option checks them against this finger-neutral rule.
 - "Walker state" = the walk() verdict plus the snapshot minus _fl / _fb / _fdepth / _fpath. Answers (compared with
   Object.is) and walker state are compared on == off after EVERY op. The finger fields are compared on == off only
   after positional ops, splitAt, append and clear, and only the op's own view's (both views for splitAt / append).
@@ -664,15 +697,16 @@ Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 000
 - Per-code fixtures (clean passes; each fails with exactly its code): I-1 (M-1 shape, stored 5|5), I-2, I-3 (-0;
   total 2^53), I-5, I-7, I-8, I-9a, XG-1, I-9c, I-9d, I-9e. I-6 is "n/a" (no keys). The snapshot contract is C-27.
 
-### C-29 Oracle (G-B TASK 3 -> G-B-D8 -> 0005 A12-5)
+### C-29 Oracle (G-B TASK 3 -> G-B-D8 -> 0005 A12-5 -> 0005 A14-7)
 
 - oracle.mjs is a plain-array model per I-3 / I-4 / M-1..M-8 with boundary rows. Its entity rule is C-9 via the
   B-22 test (no hook). Oracle.test.mjs covers it; the walker and the oracle run after every op in the lanes.
 - clear() return (A12-5; harness, C-46): Oracle.clear and the stubs return undefined, the engine returns this (0004),
-  and exhaustive.mjs compares returns by kind, so an unwrapped engine sweep fails ORACLE at the first clear. Both G-B2
-  files (test/EngineLanes.test.mjs, test/engine-lanes.mjs) wrap clear as an own property: call the real clear, throw
-  unless it returned the view, return undefined (test/engine-lanes.mjs also counts non-empty clears). The owner of the
-  real fix is the K-R2 M-6 re-pin of exhaustive.mjs / oracle.mjs (+ stubs).
+  and exhaustive.mjs compared returns by kind. Fixed in the driver at K-R2 (A14-7): exInvoke in test/exhaustive.mjs
+  reads a clear() that returns the view as undefined (oracle and stubs unchanged).
+  test/EngineLanes.test.mjs runs every lane on the unwrapped engineFactory (two clear rows replaced the G-B2 clear
+  wrapper rows; v.clear() === v is still asserted there); test/engine-lanes.mjs keeps one counting wrapper with no
+  return shim. Gate: on the HEAD driver the unwrapped CAPS sweeps (B 4 / 8) and the clear row fail.
 
 ### C-30 spec-counts (G-B SPEC -> ASSERTIONS 1 and 5 -> G-B B2-6)
 
@@ -687,7 +721,7 @@ Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 000
 
 ### C-31 Lanes
 Sources: G-B B-32 -> G-B-D1 -> B2-1 -> B2-6 -> DB1 P-01 -> 0005 A4-2, A4-5, A4-6, A4-11..14, A5-1, A5-23, A5-34 -> 0005
-  A7-5 -> 0005 A12-1, A12-2, A12-3
+  A7-5 -> 0005 A12-1, A12-2, A12-3 -> 0005 A14-8
 
 - Shape-only BFS stays the state generator, closed under insertAt / removeAt / splitAt + append at every position,
   with walker and oracle after every op. At EVERY state, for each j in {NIL, 0..L-1}: replay the witness; j = NIL ->
@@ -740,7 +774,8 @@ Sources: G-B B-32 -> G-B-D1 -> B2-1 -> B2-6 -> DB1 P-01 -> 0005 A4-2, A4-5, A4-6
 - Driver contract (0005 A4-13): for every pair the driver builds the finger-ON arena first, then the finger-OFF arena.
   The test's off-only wrapper controls rely on this order.
 - Engine-time coverage: see C-32 (0005 A4-14, A7-5).
-- Cursor suffixes, the 2^22 runs and the nMax / nSweep 9/15 and 7/11 figures stay with the engine group.
+- The 2^22 runs and the nMax / nSweep 9/15 and 7/11 figures stay with the engine group. The cursor suffixes at CAPS
+  landed in K-R2 (A14-8, next bullets).
 - Where the lanes run (R-E1, G R-3, A5-1): the CAPS-size lanes run on the engine adapter in npm test; the ENGINE-size
   lanes (2^22 applications, nMax 9 / 15, nSweep 7 / 11, 2e4 deep) run in `npm run test:lanes` (test/engine-lanes.mjs,
   not a *.test file), untimed and DETERMINISTIC, chained into `npm run verify`. A lane over its cap lowers nMax /
@@ -750,6 +785,11 @@ Sources: G-B B-32 -> G-B-D1 -> B2-1 -> B2-6 -> DB1 P-01 -> 0005 A4-2, A4-5, A4-6
   (ret, valid, index, entity, offset(0), measure(0)) is compared with Object.is; the cursor ops join the finger-neutral
   set (C-27). It has its own 2^18 cap (over it: nSweep - 1 and an addendum). Without `cursor` every stub lane report
   stays byte-identical (C-46, M-6).
+- Cursor sweep landed (A14-8, K-R2; reading, NOT ruled): `cursor` is as above. Own 2^18 cap. Deterministic counts at
+  CAPS (TASK 0(c)): B 4 nSweep 5: 2872 applied (2390 ops); B 8 nSweep 8: 3988 applied (3522 ops); both under the cap,
+  so no nSweep reduction beyond A12-1's B = 8 figure. test/CursorLane.test.mjs (14 tests): the engine sweep at B 4 / 8,
+  the option checks, a no-patch forwarding control that must pass, and at B 4 and 8 the 4 wrapper controls that must
+  fail with their code (ORACLE offset + 1, ORACLE seekSum y + 1, C-27 a seek writes _fl, C-26 a seek adds a miss).
 - Engine control mutants (G R-4, A5-34, A12-3): B-1a (weight = element count) fails the CAPS bfsLane with code 'I-1'.
   B-1b (balance by element count, stored weight correct) shows no failure at n <= 6 on the engine (the CAPS bfsLane at
   B=4, nMax 6 passes, applied 24188), so its row runs in test:lanes at bfsLane B=4, nMax 9 (CAPS never raised): first
@@ -836,7 +876,7 @@ Sources: G-B-D6 -> G-B B2-3 -> G-B B2-5 -> 0005 A4-1, A4-2, A4-5, A4-10..A4-12, 
 ### Gates
 
 ### C-34 A1: finger on == finger off
-Sources: G-A A1 -> G-A-D1 -> G-A A2-7 -> G-A A3-1..A3-3 -> 0005 A5-1 -> 0005 A11-7, A11-8
+Sources: G-A A1 -> G-A-D1 -> G-A A2-7 -> G-A A3-1..A3-3 -> 0005 A5-1 -> 0005 A11-7, A11-8 -> 0005 A14-10
 
 - Streams: xorshift32 (x^=x<<13; x^=x>>>17; x^=x<<5; x>>>0), three independent states op 0x9E3779B9^s, index
   0x85EBCA6B^s, measure 0xC2B2AE35^s; seeds s in {1,2,3} x B in {8,16}, arena(4096, {dims:1}, 3); 1e4 executed ops;
@@ -856,7 +896,7 @@ Sources: G-A A1 -> G-A-D1 -> G-A A2-7 -> G-A A3-1..A3-3 -> 0005 A5-1 -> 0005 A11
   model.
 - Golden stream (A11-7, R8-3): the rung-8 coder's golden stream (1e4 DRAWS, 10328 executed at B8 s1) gives fingerHits
   2062 against the leaf model's 2069 (B8 s1, floors bullet below; its streams count 1e4 executed ops). Informational,
-  above the 2000 floor; reconcile when the A1 lane (test:lanes) lands.
+  above the 2000 floor; confirmed by the A1 lane (A14-10): B8 s1 fingerHits 2062 equals the golden stream's.
 - Floors per stream, counted on the finger-on run (deterministic: below a floor the test FAILS, never re-run):
   splits >= 100, merges >= 25, equalizes >= 25 (COUNTERS deltas across insertAt / removeAt only; seam repairs from
   splitAt+append excluded), hit-after-structural >= 25 (the immediately next stream op is a positional op on the
@@ -870,8 +910,17 @@ Sources: G-A A1 -> G-A-D1 -> G-A A2-7 -> G-A A3-1..A3-3 -> 0005 A5-1 -> 0005 A11
 - Standing invariants: hits + misses == positional ops. Teeth: C-35.
 - Where it runs (R-E1, A5-1): A1 (about 1.2e5 full-pool snapshots) runs in `npm run test:lanes`, chained into
   `npm run verify`; DETERMINISTIC, so a missed floor fails and is never re-run. CAPS-size lanes stay in npm test.
+- A1 lane (A14-10, K-R2; R-E1 pointer only, the ruling is quoted above and unchanged): test/a1-lane.mjs runs the
+  6 streams (s 1..3 x B 8 / 16) and exports runA1() -> {failures, lines}; `npm run test:lanes` SECTION 3 imports it
+  with no try/catch (fail closed). Every floor is met, 0 divergences, hits + misses == positional, off-run fingerHits
+  0. Deterministic counts (splits / merges / equalizes / hit-after-structural / fingerHits): B8 s1 363 / 518 / 195 /
+  182 / 2062; B8 s2 366 / 455 / 198 / 159 / 2187; B8 s3 370 / 482 / 179 / 186 / 2212; B16 s1 130 / 273 / 200 / 127 /
+  2603; B16 s2 148 / 250 / 212 / 113 / 2663; B16 s3 149 / 275 / 200 / 125 / 2736. splitAt+append 324 / 271 / 290 and
+  clearsLive 3 / 3 / 2 per seed (s 1 / 2 / 3). B8 s1 fingerHits 2062 is 7 under the leaf model's 2069. Controls: the
+  MF-2 and MF-4 wrappers (C-35) diverge; an all-off run misses the fingerHits >= 2000 floor. test/Finger.test.mjs
+  part 3 runs a 1500-op A1 row (B 8, s 1) in npm test (no floors asserted at that length).
 
-### C-35 Mutants MF-1..MF-5 (G-A-D2 -> G-A A2-1 -> 0005 A5-18)
+### C-35 Mutants MF-1..MF-5 (G-A-D2 -> G-A A2-1 -> 0005 A5-18 -> 0005 A14-11)
 
 - Rows carry entity i and measure i+1 unless stated.
 - MF-1 indexAtSum keeps (leaf, index base, sum base) of its last answer and starts from it when y >= sum base:
@@ -883,6 +932,9 @@ Sources: G-A A1 -> G-A-D1 -> G-A A2-7 -> G-A A3-1..A3-3 -> 0005 A5-1 -> 0005 A11
 - MF-4 a structural op without re-home: the same 17 appends, removeAt(16) -> 8|8 (true fb 8), removeAt(14) returns 14;
   the mutant returns 9. A keyed copy is carried to SumMap (C-42).
 - MF-5 clear() that keeps the finger: fails A5 (C-39).
+- Equivalent engine mutants (A11-3, A14-11): reviewer mutant R6 singleLeafGt0 (`_fdepth === 0 ? 1` -> `? 0` in
+  removeAt) is a second EQUIVALENT row in test/Finger.test.mjs beside nilDropped: n === 1 drains before the hit test
+  (Yggdrasil.js :1379), so the changed arm is never reached with len 1.
 - Wrappers (RF-3, A5-18): MF-2..MF-5 and the rule-1 re-home mutant are TEST WRAPPERS that rewrite the view's own finger
   fields around the correct build (no source anchor, C-46). MF-4 = the structural op re-homes to the touched leaf
   with its pre-op fb and path (the only reading that gives C-35's 9).
@@ -953,7 +1005,7 @@ Sources: G-A A1 -> G-A-D1 -> G-A A2-7 -> G-A A3-1..A3-3 -> 0005 A5-1 -> 0005 A11
 
 ### C-42 Deferred
 Sources: G-A XG-2 -> G-A XG-4 -> G-A-D11 -> G-A TASKS 5-8 -> DB1 P-10 -> 0005 A4-12, A5-11, A5-28, A5-33 ->
-  0005 A9-7, A9-8 -> 0005 A12-1, A12-14, A12-15, A13-5
+  0005 A9-7, A9-8 -> 0005 A12-1, A12-14, A12-15, A13-5 -> 0005 A14-10
 
 - PENDING bench (R-B1, A12-15, RULED; owns ADR 0003 O-4; it does not apply to 0.1.0, Bench-ADOPT follows 0.1.0): a
   release whose bench is PENDING ships no benchmark numbers. The README Benchmarks section says 'PENDING for
@@ -978,14 +1030,14 @@ Sources: G-A XG-2 -> G-A XG-4 -> G-A-D11 -> G-A TASKS 5-8 -> DB1 P-10 -> 0005 A4
   read the children of z = the inner child of y, and have no leaf guard). O-1 stays OPEN.
 - 0001 M-4 (the gamma rotation rule inside join; not C-43's M-4) "record whether killed" (A9-8): the gamma-inside-join
   mutant SURVIVES. Recorded as a fact; the engine's join keeps BFS's own rule (no gamma).
-- UNVERIFIED: the C-34 floors on the real engine (the leaf model always takes the right neighbour unless u is last;
-  fingerHits margin 3.5%); the C-32 cells on the real engine; the C-14 byte cap's formula against real allocations
-  (implemented in unit bc, A13-5); the U reachable counts (C-31).
+- UNVERIFIED: the C-32 cells on the real engine; the C-14 byte cap's formula against real allocations (implemented in
+  unit bc, A13-5); the U reachable counts (C-31). The C-34 floors are measured on the engine (A14-10, test:lanes).
 
 ### Engine build (E0)
 
 ### C-43 Engine landing contracts
-Sources: PLAN-E0 M-1 -> M-2 -> M-3 -> M-4 -> M-5 -> 0005 A5-5..A5-8 -> 0005 A7-2 -> 0005 A11-1 -> 0005 A12-7
+Sources: PLAN-E0 M-1 -> M-2 -> M-3 -> M-4 -> M-5 -> 0005 A5-5..A5-8 -> 0005 A7-2 -> 0005 A11-1 -> 0005 A12-7 ->
+  0005 A14-13
 
 - Orchestrator merge rulings, not maintainer rulings; they bind the engine build. The rung ladder is PLAN-E0.md's.
 - M-1 (A5-5): the finger WRITE side lives in the engine core. From the rung that adds each positional op, the op
@@ -995,7 +1047,7 @@ Sources: PLAN-E0 M-1 -> M-2 -> M-3 -> M-4 -> M-5 -> 0005 A5-5..A5-8 -> 0005 A7-2
   written alongside the trunk insert-side rung (M-1).
 - Cursor landing (A12-7; C-6, C-7): rung K-R1 landed cursor(), the valid / index / entity getters, offset(d) /
   measure(d), seekIndex, seekSum and the `_cv = false` stores in all six mutators (append's other and splitAt's out
-  included); next() and the stack writes land in K-R2.
+  included); rung K-R2 landed next() and the stack writes (A14-13).
 - M-2 (A5-6): `new SumSequence(C, o)` is `arena(C, o, 1)` through ONE init, with pools sized for k views (C-15) and the
   full constructor validation (C-11, C-14, C-16) from its first version. After it, the only arena-specific addition is
   the k >= 2 clear free-walk (0004 A-6); its teeth: an O(1) pool reset while another view is live fails I-7 'shared';
@@ -1033,13 +1085,21 @@ Sources: PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6
   (C-27). The gate is walker I-2 (C-28).
 
 ### C-46 Engine test infrastructure
-Sources: PLAN-E0 M-6 -> M-7 -> M-8 -> PLAN-E0-G G R-2 -> 0005 A5-9, A5-18 -> 0005 A12-5, A12-9
+Sources: PLAN-E0 M-6 -> M-7 -> M-8 -> PLAN-E0-G G R-2 -> 0005 A5-9, A5-18 -> 0005 A12-5, A12-9 ->
+  0005 A14-7, A14-9, A14-12
 
 - M-6 (A5-9): test/exhaustive.mjs stays byte-identical to HEAD (the G parity pin) until the cursor-suffix batch (C-31);
   that batch re-pins it with a golden of every stub lane report, byte-identical: bfs 7,095 / 24,532, sweep 40,623 /
   154,475, deep 4,226 / 4,222 (B=4 / B=8; the C-31 counts).
-- M-6 owner of the clear fix (A12-5; C-29): the K-R2 M-6 re-pin of exhaustive.mjs / oracle.mjs (+ stubs) owns the real
-  clear() return fix; until then both G-B2 files wrap clear.
+- M-6 re-pin landed (A14-9, K-R2): golden (b) (every stub lane at CAPS, the frozen HEAD driver against the live driver
+  with cursor off) is byte-identical (bfs 7095 / 24532, sweep 40623 / 154475, deep 4226 / 4222); the Exhaustive.test
+  pin is fce39b1a -> 6734c7aa ("re-pinned at K-R2"); CAPS, ENGINE and the exports are unchanged.
+- M-6 clear fix (A12-5, A14-7; C-29): landed in the driver (exInvoke reads a clear() that returns the view as
+  undefined); the G-B2 clear wrappers are gone (C-29 has the text).
+- Cursor anchors (A14-12; C-7, C-25): the cursor source anchors are trailing `// cr:<site>` comments, one per site, 7
+  in Yggdrasil.js: cr:push x2 (the two seeks), cr:guard, cr:carry, cr:cross, cr:pop, cr:end (`ck:` collided with
+  jstack: / sstack: / check:). test/Cursor.test.mjs MK-1..MK-5 and the cr:cross / cr:pop / cr:push mutants are built
+  on them with buildMutant (M-8).
 - Source anchors (A12-9; C-7): Core.test's indexAtSum source anchors stay unique because seekSum writes `if (acc + sl >
   y) {` and `if (y < acc + m) break;`; future seekSum anchors use that text.
 - M-7 (A5-9): StubCounts stays stub-only. Its runLane moves into test/count-lane.mjs with a factory parameter (stub /
@@ -1423,6 +1483,19 @@ Each source item maps to a C-id or reads "history-only". Rule text is not repeat
 | 0005 A13-3 | C-14 |
 | 0005 A13-4 | C-14 |
 | 0005 A13-5 | C-17, C-42 |
+| 0005 A14-1 | C-6, C-7 |
+| 0005 A14-2 | C-7, C-25 |
+| 0005 A14-3 | C-7, C-25 |
+| 0005 A14-4 | C-6 |
+| 0005 A14-5 | C-6 |
+| 0005 A14-6 | C-14 |
+| 0005 A14-7 | C-29, C-46 |
+| 0005 A14-8 | C-27, C-31 |
+| 0005 A14-9 | C-46 |
+| 0005 A14-10 | C-34, C-42 |
+| 0005 A14-11 | C-35 |
+| 0005 A14-12 | C-46 |
+| 0005 A14-13 | C-6, C-7, C-43 |
 
 Count note: this map has 128 rows: G-A 61 (body 13, D-1..D-3 3, R-D1..R-D3 3, TASKS 0-8 9, A1..A5 5, RISK 3, G-A-D1..D11
 11, A2-1..A2-8 8, A3-1..A3-5 5, plus the shared R-D4 row), G-B 39 (O-4, B-19, B-25, B-26, B-27, B-29, B-32, XG-1;
@@ -1438,7 +1511,9 @@ rows in all); the 11 rows 0005 A10-1..A10-11 follow those (265 rows; the rung-7 
 in the ADDENDUM 10 item, no separate source row); the 8 rows 0005 A11-1..A11-8 follow those (273 rows; the rung-8
 readings carry their R8 tag in the ADDENDUM 11 item, no separate source row); the 2 ruling rows R-C1, R-B1 and the 15
 rows 0005 A12-1..A12-15 follow those (290 rows; A12-14 and A12-15 are the two rulings, the readings carry no separate
-source row); the 5 rows 0005 A13-1..A13-5 follow those (295 rows; the bc readings carry no separate source row).
+source row); the 5 rows 0005 A13-1..A13-5 follow those (295 rows; the bc readings carry no separate source row);
+the 13 rows 0005 A14-1..A14-13 follow those (308 rows; the K-R2 readings carry their K2-id tag in the ADDENDUM 14
+item, no separate source row).
 No E0 or rung-3/4/5/6 source item is history-only: each one changed a CURRENT rule.
 
 ## Addenda
@@ -1865,5 +1940,70 @@ re-consolidation (the "consolidated through" line stays at ADDENDUM 12); A13 is 
   dims 4, count 1 (the ruling's NOMINAL ~72M / ~18M). npm test 761 -> 770.
 - A13-5 (reading, NOT ruled) -> C-17, C-42. R-C1 is implemented; nothing is PENDING. C-17 points to the implemented
   byte cap and C-42's UNVERIFIED list no longer carries it as not yet implemented.
+
+OPEN (not folded, maintainer decision pending): none.
+
+### ADDENDUM 14 (2026-10-27) -- the K-R2 rung (rung 10, cursor next()) readings, 0005's own
+
+Tier: DETERMINISTIC (source anchors, exact call and move counts, sha pins; no timing). A14-1..A14-13 are readings of the
+K-R2 rung, NOT rulings and NOT ruled: no maintainer ruling was given in K-R2. Written against 17ffcab + the K-R2 tree
+(Yggdrasil.js sha256 287d10c1, test/exhaustive.mjs 6734c7aa; K-R2 review APPROVED; npm test 770 -> 806). Each item
+names the CURRENT rules it changed; the rule text above is already amended (same edit). The map rows are in the Source
+map. No item amends an ADR rule, so the Amends table gains no row. This is not a re-consolidation (the "consolidated
+through" line stays at ADDENDUM 12); A13 and A14 are past it.
+
+- A14-1 (K2-R1, reviewer ACCEPT; reading, NOT ruled) -> C-6, C-7. Each seek stores every internal node of its descent
+  in _stk[depth] before descending (the d(t) stores, `// cr:push`, Yggdrasil.js :1961 / :2031); state slot 2 (YG_CLEN
+  renamed YG_CDEP) holds the leaf's stack depth; next() reads the leaf length from v._llen[leaf] (valid: every mutator
+  clears _cv first; the 8 `// cv:` stores). Shape and ygBytes unchanged (A12-10). Hot cost: one property load and one
+  Int32Array read in next(); one Int32Array store per level in each seek. (Yggdrasil.js :69, :1990, :2070, :2081-2097.)
+- A14-2 (K2-R2, reviewer ACCEPT; reading, NOT ruled) -> C-7, C-25. The end crossing (off the last element) pushes
+  nothing and adds 0 touches; C-25 counts pushes only. _cross sets _cv false and returns false (`// cr:end`, :2131). The
+  reviewer killed an endTouches mutant.
+- A14-3 (K2-R3, reviewer ACCEPT; reading, NOT ruled) -> C-7, C-25. _cross's lca test is `left[u] === child` (child
+  starts as ~leaf, then the popped node); a crossing adds depth - top touches, top = depth(lca) + 1, = d(t') -
+  depth(lca) - 1 (`// cr:pop`, :2123).
+- A14-4 (K2-R4, reviewer ACCEPT; reading, NOT ruled) -> C-6. next() carries _off before the end check, so off the last
+  element _off holds the total while _cv is false: unobservable (offset() is NaN while invalid), the same class as
+  A12-10.
+- A14-5 (K2-O1, reviewer ACCEPT; reading, NOT ruled) -> C-6. The empty-view `_cv = false` stores in both seeks are kept
+  (cold, equivalent today, fail closed).
+- A14-6 (byte check form; reading, NOT ruled) -> C-14. Amends A13-2's wording (A13-2 stays). The constructor line is
+  now `if (!(ygBytes(C, B, k, dims) <= YG_BYTE_CAP)) ygFail('capacity', ...)` (Yggdrasil.js :184): exactly 2^32 is still
+  accepted, a NaN total now throws (fail closed by construction). Capacity.test: A_BYTE follows the new text; a NaN row
+  (ygBytes patched to return NaN -> RangeError 'capacity', 0 typed-array calls) fails on 17ffcab (5eb49244); the
+  installRecorder points every other typed-array constructor at a throwing sentinel.
+- A14-7 (C-29 A12-5 clear-return fix; reading, NOT ruled) -> C-29, C-46. The fix lives in the driver:
+  test/exhaustive.mjs exInvoke reads a clear() that returns the view as undefined (oracle and stubs unchanged).
+  EngineLanes.test.mjs runs every lane on the unwrapped engineFactory (the G-B2 clear wrapper rows are replaced by two
+  clear rows; v.clear() === v is still asserted there); engine-lanes.mjs keeps one counting wrapper with no return
+  shim. Gate: on the HEAD driver the unwrapped CAPS sweeps (B 4 / 8) and the clear row fail.
+- A14-8 (cursor sweep; reading, NOT ruled) -> C-27, C-31. sweepLane gains option `cursor` (boolean, default false; the
+  default report is unchanged); the cursor ops seekIndex / seekSum / next join EX_OPS and EX_NEUTRAL; per state
+  seekIndex(i) + next() to false, then seekSum(0, sumBefore(0, i)) + next() to false. Own 2^18 cap. TASK 0(c) at CAPS:
+  B 4 nSweep 5: 2872 applied (2390 ops); B 8 nSweep 8: 3988 applied (3522 ops); under the cap, no nSweep reduction.
+  test/CursorLane.test.mjs (new, 14 tests): the engine sweep at B 4 / 8, the option rows, a no-patch forwarding control
+  and 4 wrapper controls per B (ORACLE offset + 1, ORACLE seekSum y + 1, C-27 a seek writes _fl, C-26 a seek adds a
+  miss).
+- A14-9 (M-6 re-pin; reading, NOT ruled) -> C-46. Golden (b) (every stub lane at CAPS, frozen HEAD driver against the
+  live driver with cursor off) is byte-identical (bfs 7095 / 24532, sweep 40623 / 154475, deep 4226 / 4222);
+  Exhaustive.test pin fce39b1a -> 6734c7aa, "re-pinned at K-R2"; CAPS, ENGINE and the exports are unchanged.
+- A14-10 (A1 lane; reading, NOT ruled) -> C-34, C-42 (R-E1 pointer only; R-E1 is a ruling, its quote is not edited).
+  test/a1-lane.mjs (new) runs C-34 A1 (6 streams, s 1..3 x B 8 / 16) and exports runA1() -> {failures, lines};
+  test:lanes SECTION 3 imports it with no try/catch (fail closed). All floors are met, 0 divergences, hits + misses ==
+  positional, off-run fingerHits 0. Floors table (deterministic counts): B8 s1 splits 363 merges 518 equalizes 195
+  hitAfterStr 182 fingerHits 2062; B8 s2 366/455/198/159/2187; B8 s3 370/482/179/186/2212; B16 s1
+  130/273/200/127/2603; B16 s2 148/250/212/113/2663; B16 s3 149/275/200/125/2736 (splitAt+append 324/271/290,
+  clearsLive 3/3/2 per seed). B8 s1 fingerHits 2062 = the golden stream's 2062 (A11-7), 7 under the leaf model's 2069.
+  Controls: MF-2 and MF-4 (C-35) diverge; all-off misses the fingerHits >= 2000 floor. Finger.test.mjs part 3: a 1500-op
+  A1 row (B 8, s 1) in npm test. C-42's UNVERIFIED list drops the C-34 floors on the real engine.
+- A14-11 (C-35 / A11-3; reviewer mutant R6; reading, NOT ruled) -> C-35. R6 singleLeafGt0 (`_fdepth === 0 ? 1` -> `? 0`
+  in removeAt) is a second EQUIVALENT row beside nilDropped: n === 1 drains before the hit test (Yggdrasil.js :1379).
+- A14-12 (anchors; reading, NOT ruled) -> C-46. The cursor anchors are trailing `// cr:<site>` comments, one per site,
+  7 in the file: cr:push x2, cr:guard, cr:carry, cr:cross, cr:pop, cr:end (`ck:` collided with jstack: / sstack: /
+  check:). Cursor.test MK-1..MK-5 (plus the cr:cross / cr:pop / cr:push mutants) are built on them with buildMutant.
+- A14-13 (landing; reading, NOT ruled) -> C-6, C-7, C-43. next() and the stack writes, stated as future ("land in
+  K-R2" in 0005 C-6 / C-43, "_stk not written" in the 17ffcab Yggdrasil.js comment :1867), are implemented: C-6, C-7
+  and C-43 now state them as landed in K-R2.
 
 OPEN (not folded, maintainer decision pending): none.

@@ -538,7 +538,8 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   brand check is added (a forged receiver stays R-S3). The census, test/AuditFixes3.test.mjs, gates it: 74 throw guards
   scanned, 0 violations live, exactly 16 guards carry the new text; on the frozen 73de8dca it reports exactly the 16
   lines 1241 1278 1392 1482 1485 1557 1560 1606 1655 1704 1706 1816 1941 1951 1966 2029. Its exemptions: the arity
-  switch `(dims > 2) & (typeof m2 ...)` and `<` / `<=` against a numeric literal (lower bounds). Reviewer nit, not a
+  switch `(dims > 2) & (typeof m2 ...)` and `<` / `<=` against a numeric literal on the right (lower bounds); `<` / `<=` is checked only with `n` or `dims`
+  on its left. Reviewer nit, not a
   hole today (the engine has neither spelling): `4 <= i` and `this._len <= i` pass the census (A18-10). readCounters'
   length check is the same form for a lower bound, `!(len >= YG_NC)`, now on the TRUE length (R-A8, C-24); a forged
   `length` no longer reaches it. The AF2 bytecode pins (< 460 B) stay green (C-13, A18-8).
@@ -616,7 +617,7 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
 - Bytecode (A16-4, REPORTED, node v26.8.2): getMeasure hoists the misses slot (`const j = YG_MISSES - h; cn[j] = (cn[j]
   + 1) | 0;`, still the 0003 G-5 form) and is 455 bytes at 8052b70f (464 at 92e67fa0, 443 at 287d10c1; 5 B under V8's
   460-byte inline limit) and 457 at ab2090ca (AF3, R-A9's NaN-closed guards: 3 B under the limit; A18-8); entityAt 400
-  -> 401, indexAtSum 420 -> 421, sumBefore 422 -> 424, cursor offset 81 -> 82, measure 115 -> 116 (8052b70f ->
+  -> 401, indexAtSum 420 -> 421, sumBefore 422 -> 424, cursor offset 81 -> 82, measure 115 -> 116 (73de8dca = 8052b70f + the VERSION line ->
   ab2090ca). Pinned < 460 in npm test (fails on 92e67fa0,
   A16-8; test/AuditFixes2.test.mjs: child process with a timeout, fail closed). The cursor offset(d) / measure(d)
   invalid branch returns `0 / 0` instead of the global NaN (A16-5; results unchanged, NaN while invalid; bytecode
@@ -814,7 +815,8 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   'counters'), while an Int32Array(4) with an own NaN `length` throws RangeError 'counters out.length must be >= 12'.
   Pass 3's 3d (a genuine Int32Array(12) with an own `length` valueOf spy) has true length 12, so it succeeds with 0
   spy calls; only 3a / 3b / 3c throw.
-- Readings (A5-15): readCounters() and resetCounters() ship as the 0003 G-8 rules (resetCounters = fill(0), cold;
+- Readings (A5-15): resetCounters() and the readCounters copy ship as the 0003 G-8 rules (readCounters' checks are R-A8's, above; G-8's
+  `out.length < NC` is superseded) (resetCounters = fill(0), cold;
   C-12 never listed them) (RA-6). splitAt and append count into this._n, as the stubs and StubCounts do; splitAt's
   out._n delta is 0 (RS-1). joinSteps = internal nodes pushed on the join stack, at most HB(Lmax) per join (RS-5;
   0003 row 10 cites a bound that 0001 never stated).
@@ -1415,7 +1417,7 @@ Batch B2 copies these rows into each ADR's pointer block; the ADR column is the 
 | 0002 DB-1 B-24 | C-7, C-12 |
 | 0003 G-2 | C-31, C-34 |
 | 0003 G-4 | C-6, C-24 |
-| 0003 G-8 | C-8 |
+| 0003 G-8 | C-8, C-24 |
 | 0003 G-11 | C-25 |
 | 0003 G-12 | C-4, C-19, C-26 |
 | 0003 G-13 | C-23 |
@@ -2586,8 +2588,8 @@ A18-11, which are REPORTED. A18-1..A18-6 are the maintainer rulings R-A7..R-A12 
 AskUserQuestion 2026-10-27); A18-7..A18-12 are readings of the AF3 unit and the 0.1.0 release, NOT rulings and NOT
 ruled. Written against 06b6d10 (v0.1.0) + the AF3 tree (Yggdrasil.js sha256 ab2090ca, before 73de8dca; the review r1
 was REJECTED test-only, r2 APPROVED; npm test 838 -> 856). Each item names the CURRENT rules it changed; the rule text
-above is already amended (same edit). The map rows are in the Source map. No item amends an ADR rule (0003 G-5 / G-6
-are applied as written), so the Amends table gains no row (as for A17).
+above is already amended (same edit). The map rows are in the Source map. A18-2 (R-A8) amends 0003 G-8's `out.length < NC`
+check (brand + true length), so the Amends row 0003 G-8 gains C-24; 0003 G-5 / G-6 are applied as written.
 
 This is not a re-consolidation (the "consolidated through" line stays at ADDENDUM 17); A18 is past it, as A13 was past
 ADDENDUM 12.
@@ -2636,7 +2638,8 @@ ADDENDUM 12.
   SumCursor constructor 66 -> 91. The AF2 pin (< 460) holds: getMeasure keeps 3 B of headroom (it had 5).
 - A18-9 (AF3 gates; reading, NOT ruled) -> C-10, C-38. Golden (a): byte-identical, sha a832efbb49e3bd42, 10000 ops,
   2449007 bytes (coder/golden-check.log); parity 8 configs / 48000 ops byte-identical (coder/parity.log). Torture (review
-  r2, quiet lock, QUIET, load1 2.80-2.95, review/torture-head.log): exit 0, worst alloc lane 63.9375 B/op vs bound 65, 22
+  r1 on ab2090ca, 2026-10-27 19:27, quiet lock QUIET, load1 2.80 vs baseline 2.21, review/torture-head.log; r2 changed
+  tests only): exit 0, worst alloc lane 63.9375 B/op vs bound 65, 22
   lanes + 6 controls ok, jit nil-guard 5/5 (engine region major 0, windows 166/166). npm test 856/856 (838 at v0.1.0;
   integrate/npm-test-r2.log): the 18 rows of test/AuditFixes3.test.mjs on 73de8dca: 12 fail, 6 [PASS-both] pass
   (helper/r2-old.log). The ms10 fixture anchor in test/SplitAppendMutants.test.mjs moved from `(i > n)` to the new
@@ -2645,8 +2648,8 @@ ADDENDUM 12.
   mutant g (the key stored on the cursor) and mutant h (`.call` looked up at call time) both survived 854/854. The helper
   added 2 rows (one per surviving mutant) and tightened the census; r2 APPROVED (mutants
   killed: r2-mut-d1..d4, g, h). Engine Yggdrasil.js 73de8dca -> ab2090ca. Reviewer r2 nit, not a hole today (the engine
-  has neither spelling): `4 <= i` and `this._len <= i` pass the R-A9 census (its exemption is `<` / `<=` against a
-  numeric literal).
+  has neither spelling): `4 <= i` and `this._len <= i` pass the R-A9 census (the census checks `<` / `<=` only with `n`
+  or `dims` on its left: `n <= i`, `ar.dims <= d`).
 - A18-11 (release revert-check; REPORTED reading, NOT ruled) -> C-13. Pre-release revert-check of 0.1.0
   (release/revert-check.txt, 2026-10-27 ~10:08Z, node v26.8.2, host PRELIMINARY, load1 4.6-5.02 vs baseline 2.21; B/op
   verdicts are deterministic under R-G5): big.offset FAILS on both old builds under the C-38 flags (15.609 on 92e67fa0,

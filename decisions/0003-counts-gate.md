@@ -22,7 +22,7 @@ These items are amended by decisions/0005-sumsequence-current.md (CURRENT, conso
 | --- | --- |
 | G-2 | C-31, C-34 |
 | G-4 | C-6, C-24 |
-| G-8 | C-8 |
+| G-8 | C-8, C-24 |
 | G-11 | C-25 |
 | G-12 | C-4, C-19, C-26 |
 | G-13 | C-23 |

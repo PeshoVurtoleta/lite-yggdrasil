@@ -11,8 +11,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The cursor class was constructible through `v.cursor().constructor`. It now throws
   `TypeError 'lite-yggdrasil: SumCursor is not constructible'` with any arguments; only the engine creates cursors.
   (audit AF3, R-A7)
-- The 16 `index` / `dim` upper-bound guards are written NaN-closed (`!(i <= n)`). Same throw text; hardening only,
+- The 16 `index` / `dim` upper-bound guards are written NaN-closed (`!(i <= n)`, `!(i < n)`, `!(d < dims)`). Same throw text; hardening only,
   no behavior change on a reachable input. (audit AF3, R-A9)
+- `readCounters` on a fake or short `out` (`Object.create(Int32Array.prototype)`, an `Int32Array(4)` with an own
+  `length` of 12) threw a `TypeError` or an untokened `RangeError 'offset is out of bounds'`; it now throws
+  `RangeError 'counters'`, and an own `length` valueOf is never called. (audit AF3, R-A8)
 
 ### Changed
 

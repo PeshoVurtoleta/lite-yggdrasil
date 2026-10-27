@@ -6,3 +6,4 @@
 
 # a SIGKILLed XftWitness run leaves its mutant copy behind
 /test/_xftw-mutant-*
+/audit/

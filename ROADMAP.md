@@ -4,6 +4,8 @@
 > 0001-0004; scaffolding at 0.0.0 (npm test green). 24 design bugs logged (RESEARCH
 > section 6 B-9..B-32); the 13 from the DB-1 review (B-17..B-29) are closed / deferred in decisions/0005 (CURRENT).** D7 is RULED (both, distinct). Nothing
 > is published; git repo initialized (e14e2f3).
+>
+> **UPDATE (2026-10-27): the SumSequence engine is built and gated (`npm run verify`: 838 tests, types, lanes, torture); the 0.1.0 docs are written; the release itself (version bump, tag, publish) is still pending.**
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -29,7 +31,7 @@ assistant never commits, publishes, pushes or tags (the suite git guard enforces
 | npm name   | `@zakkster/lite-yggdrasil` (scope `@zakkster`, one `s`)        |
 | folder     | `LiteYggdrasil`                                                |
 | main file  | `Yggdrasil.js` (single PascalCase)                             |
-| error tag  | `[lite-yggdrasil]`                                             |
+| error tag  | none: RangeError message = token + ' ' + detail (as built, 0005 C-10) |
 | exports    | `SumSequence`, `SumMap`, `IntervalMap`, `Yggdrasil` (+ `VERSION`) |
 
 **UNPUBLISHED.** Git initialized 2026-10-25 (e14e2f3). Every version below is a first issue.
@@ -46,7 +48,7 @@ steady-state hot path proven by `node --expose-gc test/torture.mjs`, every gate 
 Family deltas (RESEARCH.md section 5 states them as invariants I-1..I-9):
 
 1. **Measures are integers** stored in Float64, every SUM dim >= 0 (ADR 0002 M-1), each dim's TOTAL <= 2^53 - 1;
-   anything else throws `RangeError [lite-yggdrasil]`, set unchanged.
+   anything else throws a `RangeError` whose message is token + ' ' + detail (as built; no `[lite-yggdrasil]` tag), set unchanged.
 2. **No user callback in a hot loop.** Summary kinds are fixed (COUNT, SUM, MAX); a polymorphic call
    in the pull loop is a rejected design.
 3. **Int32 ids, negative leaves.** No value >= 2^31 is read out of a Uint32Array on a hot path.
@@ -92,7 +94,10 @@ control fails, and the reviewer has asked of every test "would this fail if the 
 Mirror `LiteLogN/` (package.json scripts, test layout, decisions/, benchmark/ copied from Bench v2).
 `npm test` (deterministic only), `npm run torture`, `npm run test:perf`, `npm run bench`,
 `npm run verify` (test + types + torture + perf, timed parts under quiet-lock).
-Ruled 2026-10-25 (R-SC): S0 ships `npm test`, `test:types`, `verify` only; `torture` / `test:perf` arrive with SumSequence and `bench` with Bench-ADOPT, so no script is ever green on nothing.
+AS BUILT (2026-10-27): the scripts are `test`, `test:types`, `test:lanes`, `torture` and `verify`, and
+`verify` = test -> test:types -> test:lanes -> torture (`test:perf` and `bench` do not exist; no statistical
+tier, Y-13).
+Ruled 2026-10-25 (R-SC): S0 ships `npm test`, `test:types`, `verify` only; `torture` / `test:perf` arrive with SumSequence and `bench` with Bench-ADOPT, so no script is ever green on nothing. (`test:lanes` and `torture` arrived with SumSequence; `test:perf` and `bench` have not.)
 
 ### 3.2 Oracle gate (DETERMINISTIC)
 Fuzz vs an INDEPENDENT oracle written from the spec, not from the engine: a plain JS array of
@@ -249,7 +254,7 @@ What blocks what:
 ---
 package: "@zakkster/lite-yggdrasil"
 version_target: none (no release)
-status: in progress (2026-10-25)
+status: done (SumSequence, which depends on S0, is built; see the 2026-10-27 UPDATE at the top)
 peers: ["@zakkster/lite-gc-profiler", "@zakkster/lite-leak", "@zakkster/lite-perf-gate"]
 depends_on: []
 blocks: [SumSequence, SumMap, IntervalMap, Yggdrasil]
@@ -290,9 +295,9 @@ DONE WHEN
 ---
 package: "@zakkster/lite-yggdrasil"
 version_target: 0.1.0
-status: planned
+status: built, release pending (2026-10-27)
 gc_maxMajor: 0
-alloc_bytes_per_op: 0
+alloc_bytes_per_op: "0 on the Smi lane (< 2^30); big lane <= 16*b + 1 per C-13, insertAt b = dims (R-A1)"
 peers: ["@zakkster/lite-gc-profiler", "@zakkster/lite-leak", "@zakkster/lite-perf-gate"]
 depends_on: [S0]
 blocks: [Bench-ADOPT, SumMap]

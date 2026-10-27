@@ -1,19 +1,63 @@
 # @zakkster/lite-yggdrasil
 
-> A zero-GC engine for mutable ordered sequences where the position of anything is a running total (planned).
+> A zero-GC summary tree for mutable ordered sequences: splice anywhere, seek by any running total (count, pixels, bytes, milliseconds).
 
 Version: 0.0.0
-Status: pre-release. Nothing is built yet; the engine is planned, not shipped.
+Release note: this text describes the 0.1.0 content; package.json, VERSION and the Version line above are bumped together at release.
+Main file: Yggdrasil.js (ESM, single file, zero runtime dependencies). Types: Yggdrasil.d.ts.
+Exports: SumSequence (class), VERSION (string). Nothing else. The cursor class is not exported (type SumCursor only).
 
-Current export: VERSION (string).
+## What it is
 
-PLANNED exports (not implemented, do not call them):
-- SumSequence (first engine, planned v0.1.0)
-- SumMap
-- IntervalMap
-- Yggdrasil
+SumSequence: a mutable ordered sequence. Each element = one entity id + 1..4 integer measures ("dims").
+Tree nodes cache per-dimension subtree sums, so you can seek by ANY dimension. Insert / remove / setMeasure /
+seek are O(log n); total(d) is O(1). Storage is typed arrays sized once at construction (fixed capacity, no growth).
 
-Planned idea: the summary with dimensions -- seek by any running total.
-Main file: Yggdrasil.js (ESM). Types: Yggdrasil.d.ts. Error tag (planned): [lite-yggdrasil].
-Plan: ROADMAP.md, RESEARCH.md, SCOPE.md (repo only, not in the npm package).
-License: MIT (c) 2026 Zahary Shinikchiev
+## API
+
+new SumSequence(capacity, options?)       options: undefined | plain object { dims: 1..4 (default 1), leafSize: 4|8|16|32 (default 16; 4 and 8 are test-only) }
+SumSequence.arena(capacity, options, count) -> SumSequence[]   count views (1..min(capacity, 4096)) sharing ONE arena and ONE capacity
+SumSequence.COUNTERS  frozen read-only binding {touches:0,pulls:1,moves:2,splits:3,merges:4,equalizes:5,rotSingle:6,rotDouble:7,fingerHits:8,fingerMisses:9,joinSteps:10,seamRepairs:11}; strict-mode assignment throws TypeError
+
+Getters: length, capacity (arena-wide), available (arena-wide free slots)
+Reads:   total(d) O(1) | getMeasure(i, d) | entityAt(i) | sumBefore(d, i) (i in [0, length]) | indexAtSum(d, y) (smallest i with sumBefore(d,i)+getMeasure(i,d) > y, else length; y finite >= 0)
+Writes:  insertAt(i, e, m0, m1?, m2?, m3?) (i in [0, length]; slots >= dims must be undefined) | removeAt(i) -> entity | setMeasure(i, d, m)
+         splitAt(i, out) (this := [0,i), out := [i,length), out must be an EMPTY view of the same arena; returns this)
+         append(other) (this := this ++ other, other := empty; same arena; returns this) | clear() (returns this; keeps counters)
+Cursor:  view.cursor() -> the view's ONE reusable cursor (same object every call)
+         fields valid, index (-1 if not valid), entity (-1 if not valid); offset(d), measure(d) (NaN while not valid; RangeError 'dim' checked first)
+         seekIndex(i) i in [0, length] | seekSum(d, y) (same strict rule as indexAtSum) | next(); each returns the new valid (boolean)
+         a seek to the end / next() off the last element leaves valid false. ANY successful mutation of the view invalidates its cursor (append: both views).
+Counters: readCounters(out: Int32Array, length >= 12) | resetCounters(). Per view; wrap as int32; read windows as (after - before) | 0.
+
+## Domains
+
+entity: integer [0, 2^30 - 1] (-0 stored as 0). measure: integer [0, 2^53 - 1]. Every total must stay <= 2^53 - 1 (else RangeError 'headroom').
+capacity: integer >= 1, <= 2^28 - (leafSize/4)*count, and the arena's typed arrays must total <= 2^32 bytes (largest capacity for one view: 72,796,032 at leafSize 16 / dims 1).
+Capacity is fixed; to grow, pre-size, watch `available`, or rebuild into a bigger arena.
+
+## Errors
+
+Argument errors are RangeError with message = token + ' ' + detail (there is no other tag). The sequence is unchanged after a throw.
+Tokens: index, dim, entity, measure, extra, capacity, headroom, seek, options, dims, count, operand, counters, pool (unreachable backstop).
+insertAt check order: index, entity, measures, extra slots, capacity, headroom.
+Reads of an invalid cursor return NaN / -1 / false rather than throw (offset / measure still throw 'dim' for a bad d).
+clear() runs a guard on private state first; a forged / corrupt view throws a plain Error 'lite-yggdrasil: clear() corrupt view: ...' (not a RangeError).
+Forged _len inside [0, live] on a valid root, or a ref naming another view's node, is NOT detected. Only _len / root are checked before any write; a bad child ref or cycle found mid-walk (k >= 2 views) throws after partial frees; the arena is not trusted after it.
+
+## Allocation (qualified; do NOT quote as "zero allocation across the whole range")
+
+Gated on Node v26.8.2 (npm run torture; one run 2026-10-27, host QUIET, load1 3.10; maxMajor 0):
+- Values below 2^30 ("Smi lane"): seekIndex / seekSum + next, getMeasure, entityAt, insertAt + removeAt at dims 4 = 0 B/op.
+- Values in [2^30, 2^40] ("big lane"): bound 16*b + 1 B/op, b = boxed boundary values per call.
+  b = 1: setMeasure, sumBefore, total, indexAtSum, getMeasure, seekSum, cursor offset / measure. b = 0: removeAt, entityAt, seekIndex, next, splitAt, append.
+  Measured: setMeasure 15.98, seekSum 16; sumBefore / total / indexAtSum 0; getMeasure, offset, measure 0 (gated <= 1 as a TurboFan-only regression row on this Node, not a contract).
+- insertAt documented limit: b = dims, i.e. <= 16*dims + 1 B/op on the big lane (<= 17 at dims 1 ... <= 65 at dims 4). Measured 15.98 / 31.97 / 47.95 / 63.94.
+- Other V8 builds and values outside these lanes are not gated. maxPauseMs is REPORTED, not gated. No timing or speed claims exist (no statistical tier).
+
+## Gates
+
+npm test (838 cases), npm run test:types, npm run test:lanes, npm run torture (node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 --no-concurrent-recompilation test/torture.mjs), npm run verify (test -> test:types -> test:lanes -> torture).
+Binding spec (repo only): decisions/0005-sumsequence-current.md. Plan: ROADMAP.md, RESEARCH.md, SCOPE.md (repo only, not in the npm package).
+Not in 0.1.0: capacity growth, entity-to-index lookup, readRange, SumMap, IntervalMap.
+License: MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>

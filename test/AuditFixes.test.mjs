@@ -361,15 +361,37 @@ function stripSrc(src) { // comments and string literals blanked, newlines kept
 }
 
 // FAIL-ON-OLD: 287d10c1 validated the slots by calling ygMeasure(sx[d]) (a Float64 crossing a call).
-test('AF-3 (b) [FAIL-ON-OLD]: function ygSlots has no call carrying an sx element and no ygMeasure', () => {
-  const t = stripSrc(fs.readFileSync(new URL('../Yggdrasil.js', import.meta.url), 'utf8'));
+// CL-5: the gate is call-shape based -- every `yg*(` call inside the stripped ygSlots body must be ygFail(
+// (a cold throw), so `const m = sx[d]; ygChk(m);` is caught too.
+function ygSlotsBody(src) {
+  const t = stripSrc(src);
   const a = t.indexOf('function ygSlots');
   assert.ok(a >= 0, 'ygSlots not found');
   const o = t.indexOf('{', a);
   let depth = 0, e = o;
   for (; e < t.length; e++) { if (t[e] === '{') depth++; else if (t[e] === '}' && --depth === 0) break; }
-  const body = t.slice(o, e + 1);
+  return t.slice(o, e + 1);
+}
+function ygSlotsOnlyFailCalls(body) {
+  const calls = body.match(/\byg\w+\s*\(/g) || [];
+  return calls.length > 0 && calls.every((c) => /^ygFail\s*\($/.test(c));
+}
+test('AF-3 (b) [FAIL-ON-OLD]: function ygSlots calls only ygFail( among yg* functions, and no ygMeasure', () => {
+  const src = fs.readFileSync(new URL('../Yggdrasil.js', import.meta.url), 'utf8');
+  const body = ygSlotsBody(src);
   assert.ok(body.length > 40, 'body sliced');
+  assert.ok(ygSlotsOnlyFailCalls(body), 'a non-ygFail yg*( call in ygSlots');
   assert.ok(!/\(\s*sx\s*\[/.test(body), 'a call carries sx[...]');
   assert.ok(!/\bygMeasure\b/.test(body), 'ygMeasure referenced');
+  // teeth (must-fail fixtures): an interposed ygChk(m) call must make the check say "not clean"
+  const anchor = 'if (m % 1 !== 0)';
+  assert.ok(src.includes(anchor), 'fixture anchor present');
+  const bad1 = src.replace(anchor, 'ygChk(m);\n    ' + anchor);
+  const bad2 = src.replace('const m = sx[d];', 'const m = sx[d]; ygChk(m);');
+  assert.ok(bad1 !== src && bad2 !== src, 'fixtures differ from source');
+  assert.ok(!ygSlotsOnlyFailCalls(ygSlotsBody(bad1)), 'control 1: ygChk(m) line not caught');
+  assert.ok(!ygSlotsOnlyFailCalls(ygSlotsBody(bad2)), 'control 2: const m = sx[d]; ygChk(m); not caught');
+  const bad3 = src.replace('const m = sx[d];', 'const m = sx[d]; chk(sx[d]);');
+  assert.ok(bad3 !== src, 'fixture 3 differs from source');
+  assert.ok(/\(\s*sx\s*\[/.test(ygSlotsBody(bad3)), 'control 3: chk(sx[d]) not caught');
 });

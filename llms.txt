@@ -2,7 +2,7 @@
 
 > A zero-GC summary tree for mutable ordered sequences: splice anywhere, seek by any running total (count, pixels, bytes, milliseconds).
 
-Version: 0.1.0
+Version: 0.1.1
 Main file: Yggdrasil.js (ESM, single file, zero runtime dependencies). Types: Yggdrasil.d.ts.
 Exports: SumSequence (class), VERSION (string). Nothing else. The cursor class is not exported (type SumCursor only) and not constructible.
 
@@ -56,7 +56,7 @@ Gated on Node v26.8.2 (npm run torture; one run 2026-10-27, host QUIET, load1 3.
 
 ## Gates
 
-npm test (838 cases), npm run test:types, npm run test:lanes, npm run torture (node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 --no-concurrent-recompilation test/torture.mjs), npm run verify (test -> test:types -> test:lanes -> torture).
+npm test (856 cases), npm run test:types, npm run test:lanes, npm run torture (node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 --no-concurrent-recompilation test/torture.mjs), npm run verify (test -> test:types -> test:lanes -> torture).
 Binding spec (repo only): decisions/0005-sumsequence-current.md. Plan: ROADMAP.md, RESEARCH.md, SCOPE.md (repo only, not in the npm package).
-Not in 0.1.0: capacity growth, entity-to-index lookup, readRange, SumMap, IntervalMap.
+Not in 0.1.1: capacity growth, entity-to-index lookup, readRange, SumMap, IntervalMap.
 License: MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>

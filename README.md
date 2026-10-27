@@ -348,7 +348,7 @@ GC verdict for the engine windows (166 of 166 windows gated): 0 major GCs, 9 min
 
 ## Benchmarks
 
-PENDING for 0.1.0. This release ships no benchmark numbers and no timing claims, and no earlier release has a measured table to point back to. Performance is stated as exact operation counts (the counters above), which are gated.
+PENDING for 0.1.1. This release ships no benchmark numbers and no timing claims, and no earlier release has a measured table to point back to. Performance is stated as exact operation counts (the counters above), which are gated.
 
 ## Design decisions worth knowing
 
@@ -357,7 +357,7 @@ PENDING for 0.1.0. This release ships no benchmark numbers and no timing claims,
 - **Strict seeks.** `indexAtSum` / `seekSum` use `>`, so a zero-measure element is never landed on, and seeking exactly at the total is "off the end".
 - **The end is not an element.** A seek to the end and `next()` off the last element leave the cursor invalid, the same state as an empty view. A walk is `while (cur.valid)`.
 - **The cursor dies on mutation.** One cursor per view, invalidated by any successful mutation, so a stale cursor can never read a moved element.
-- **Entity ids are yours.** The tree stores a 30-bit id per element and never looks it up in reverse; there is no entity-to-index map in 0.1.0.
+- **Entity ids are yours.** The tree stores a 30-bit id per element and never looks it up in reverse; there is no entity-to-index map in 0.1.1.
 - **Shared arena, many views.** `SumSequence.arena()` gives views that share storage, so `splitAt` / `append` move ranges without an element-by-element copy.
 - **NaN and bad values fail closed.** Guards are written so a NaN takes the throw branch, and a mutating call throws before it writes anything.
 - **`COUNTERS` is a read-only binding.** In strict mode, assigning `SumSequence.COUNTERS = ...` throws `TypeError` (a sloppy-mode script silently ignores it).
@@ -367,10 +367,10 @@ Repo-only documents (not in the npm package): [ROADMAP.md](ROADMAP.md) (the plan
 
 ## Testing
 
-**838 tests, all pass** (`node --test`, 0 failed, 0 skipped; one `npm run verify` run, 2026-10-27, Node v26.8.2, QUIET host), plus engine lanes, a type test and a torture gate.
+**856 tests, all pass** (`node --test`, 0 failed, 0 skipped; one `npm run verify` run, 2026-10-27, Node v26.8.2, QUIET host), plus engine lanes, a type test and a torture gate.
 
 ```bash
-npm test            # 838 node:test cases: contract, boundary, oracle, walker, mutants, counts
+npm test            # 856 node:test cases: contract, boundary, oracle, walker, mutants, counts
 npm run test:types  # tsc type test against Yggdrasil.d.ts
 npm run test:lanes  # exhaustive engine-size lanes (BFS, sweep, deep, finger on == finger off)
 npm run torture     # node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 --no-concurrent-recompilation test/torture.mjs
@@ -384,7 +384,7 @@ Verification tiers. Every claim in this README belongs to one of two tiers:
 - **DETERMINISTIC**: correctness, error tokens, the types, finger on/off parity, exact operation counts, allocation B/op per lane, and the engine-window major-GC count (`maxMajor 0`). Gated on every `npm run verify`.
 - **REPORTED**: figures printed with provenance and gating nothing (the max GC pause, the engine-window minor-GC count, and the whole-window GC counts above).
 
-There is no statistical tier in 0.1.0: no timing ratio or speed number is claimed anywhere.
+There is no statistical tier in 0.1.1: no timing ratio or speed number is claimed anywhere.
 
 ## What this is not
 

@@ -38,9 +38,12 @@ export interface SumCursor {
 }
 
 export declare class SumSequence {
-  /** Fixed capacity C (arena-wide); C <= 2^28 - (leafSize / 4) * count. */
+  /**
+   * Fixed capacity C (arena-wide); C <= 2^28 - (leafSize / 4) * count, and the typed arrays of the arena total
+   * <= 2^32 bytes. Either cap failing throws RangeError 'capacity' before anything is allocated.
+   */
   constructor(capacity: number, options?: SumSequenceOptions);
-  /** count views sharing one arena of capacity C; count in 1..min(C, 4096). */
+  /** count views sharing one arena of capacity C; count in 1..min(C, 4096); the constructor's caps apply. */
   static arena(capacity: number, options: SumSequenceOptions | undefined, count: number): SumSequence[];
   /** Index of each counter in readCounters(out). */
   static readonly COUNTERS: Readonly<{

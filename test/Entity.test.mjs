@@ -462,7 +462,7 @@ const ENT = "if (typeof e !== 'number' || (e & 0x3FFFFFFF) !== e) ygFail('entity
 const IDX = "insertAt(i, e, m0, m1, m2, m3) {\n    const n = this._len;\n    if (typeof i !== 'number') ygFail('index', 'must be a number');";
 const LIVE = '    hdr[YG_LIVE] += 1;\n    this._len = n + 1;';
 const CAP = "    if (!(hdr[YG_LIVE] < ar.C)) ygFail('capacity', 'live + 1 > C');";
-const HEAD = '    if (m > YG_MAX - t) {\n      ar.sx[0] = m;';
+const HEAD = '    if (!(m <= YG_MAX - t)) {\n      ar.sx[0] = m;';
 
 function throwsRange(fn) {
   try { fn(); } catch (e) { return e instanceof RangeError; }

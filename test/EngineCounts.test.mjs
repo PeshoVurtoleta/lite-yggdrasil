@@ -33,9 +33,9 @@ const APATH = HERE('./adapter.mjs');
 // rehomeLe: the structural re-home descent goes left on `<=` (class 're-home').
 const ANCHORS = {
   // all five `cn[YG_TOUCHES] += depth;` adds (main positional descents) -> 2 per level
-  touchesPlus2: [['cn[YG_TOUCHES] += depth & (h - 1);', 'cn[YG_TOUCHES] += (depth & (h - 1)) * 2;', 5]],
+  touchesPlus2: [['cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;', 'cn[YG_TOUCHES] = (cn[YG_TOUCHES] + ((depth & (h - 1)) * 2)) | 0;', 5]],
   // C-25: a hit adds 0 touches; the hit mask `& (h - 1)` dropped makes a hit add its depth (class 'touches')
-  hitTouchesDepth: [['cn[YG_TOUCHES] += depth & (h - 1);', 'cn[YG_TOUCHES] += depth;', 5]],
+  hitTouchesDepth: [['cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;', 'cn[YG_TOUCHES] = (cn[YG_TOUCHES] + depth) | 0;', 5]],
   // C-4 insert lo `fb - ((fb-1)>>>31)` widened to `fb - 1`: i = fb now counts as a hit (class 'hit')
   loWiden: [['fb - ((fb - 1) >>> 31) < at', 'fb - 1 < at', 1]],
   // C-4 element range `at < fb + len` widened to `<=` (all three sites): i = fb+len hits (class 'value': wrong-leaf answer)

@@ -455,7 +455,7 @@ test('control (arithmetic): Lmax + 1 and ceil(C/m) both fail the (4096, 16, 6) p
 
 // ---- source mutants (C-46 M-8, buildMutant) ------------------------------------------
 
-const A_CAP = 'if (C > YG_SLOT_CAP - m * k)';
+const A_CAP = 'if (!(C <= YG_SLOT_CAP - m * k))';
 const A_ALLOC = 'const ent = new Int32Array(LB);';
 const A_BYTE = "if (!(ygBytes(C, B, k, dims) <= YG_BYTE_CAP)) " +
   "ygFail('capacity', 'arena typed arrays must total <= 2^32 bytes');";
@@ -469,7 +469,7 @@ async function withBuild(patches, fn) {
 
 // Count-4097 row at C = 2^20: validate-after-allocate (count check moved below the first allocation).
 // The anchor is the count check; the mutant re-checks it after `ent` is allocated.
-const A_COUNT = "if (typeof k !== 'number' || !Number.isInteger(k) || k < 1 || k > YG_MAX_VIEWS || k > C) {";
+const A_COUNT = "if (typeof k !== 'number' || !Number.isInteger(k) || k < 1 || !(k <= YG_MAX_VIEWS) || !(k <= C)) {";
 
 function row4097(ns) {
   const before = ab();

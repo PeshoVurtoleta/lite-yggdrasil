@@ -6,7 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-The first engine release (0.1.0 content). Nothing was published before it; the unpublished 0.0.0 scaffold exported only `VERSION`.
+## [0.1.0] - 2026-10-27
+
+The first engine release. Nothing was published before it; the unpublished 0.0.0 scaffold exported only
+`VERSION`.
 
 ### Added
 
@@ -38,14 +41,17 @@ The first engine release (0.1.0 content). Nothing was published before it; the u
 ### Fixed
 
 - `clear()` checks the view's internal state before it writes and throws a plain `Error` (`lite-yggdrasil:
-  clear() corrupt view: ...`) when `_len` or the root is corrupt, instead of looping forever; a bad child ref or a cycle found mid-walk throws after partial frees (the arena is not trusted after it), and a ref naming another view's node is not detected. (audit AF)
+  clear() corrupt view: ...`) when `_len` or the root is corrupt, instead of looping forever; a bad child ref or a
+  cycle found mid-walk throws after partial frees (the arena is not trusted after it), and a ref naming another
+  view's node is not detected. (audit AF)
 - The headroom, capacity, `dims` and `count` guards are written so a NaN takes the throw branch (fail closed),
   including a NaN cached total on a damaged view. (audit AF)
 - `readCounters` with a NaN `out.length` throws `RangeError 'counters'`. (audit AF2)
 - `getMeasure` now fits under V8's inlining limit, so a big-value read no longer boxes a double on the gated
   lane; the cursor's `offset(d)` / `measure(d)` no longer box on an invalid cursor. (audit AF2)
 - Every counter write uses the documented wrap-to-int32 form `(n + x) | 0`; values are unchanged below 2^31. (audit AF)
-- Views dropped from a `SumSequence.arena()` can be garbage-collected: the shared arena no longer holds a list of its views. (audit AF)
+- Views dropped from a `SumSequence.arena()` can be garbage-collected: the shared arena no longer holds a list of
+  its views. (audit AF)
 
 ### Known limits
 

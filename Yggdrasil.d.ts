@@ -10,7 +10,7 @@ export interface SumSequenceOptions {
 }
 
 /**
- * A reusable cursor over one SumSequence view (type-only; the class is not exported).
+ * A reusable cursor over one SumSequence view (type-only; the class is not exported and not constructible: `new (v.cursor().constructor)()` throws TypeError).
  * valid is false until a seek lands on an element, and after a seek to the end or on an empty view.
  */
 export interface SumCursor {
@@ -101,7 +101,7 @@ export declare class SumSequence {
   splitAt(i: number, out: SumSequence): this;
   /** The view's one cursor (the same object on every call; allocates nothing). Not valid until a seek lands on an element; every successful mutation of this view (and append() for the other view too) leaves it invalid. */
   cursor(): SumCursor;
-  /** Copy the 12 counters into out. RangeError 'counters' when out is not an Int32Array or out.length is not >= 12 (NaN included). */
+  /** Copy the 12 counters into out. out must be a genuine Int32Array (brand checked through the internal slot, so another realm's Int32Array counts) whose true length is >= 12; an own `length` property is ignored. Otherwise RangeError 'counters'. */
   readCounters(out: Int32Array): void;
   /** Zero the 12 counters of this view (clear() keeps them). */
   resetCounters(): void;

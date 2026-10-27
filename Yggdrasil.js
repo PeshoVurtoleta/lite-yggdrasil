@@ -70,10 +70,20 @@ const YG_CDEP = 2;
 const YG_CIDX = 3;
 // 2^53-1, the measure / total bound (0002 M-1, M-4). The one non-Smi constant.
 const YG_MAX = 9007199254740991;
+// SumCursor's construction key (R-A7): module-private, never stored, never exported.
+const YG_KEY = {};
 
 // Handoff from arena() to the constructor: the pending arena columns while
 // arena() builds its views, null at every other time. Cold only.
 let ygPend = null;
+
+// readCounters' brand / length checks (R-A8): the %TypedArray%.prototype
+// [Symbol.toStringTag] and length getters, cached at module load and called
+// through a bound Function.prototype.call (no lookup on a user-patchable
+// object at call time, no user code runs). Cold only.
+const ygTAProto = Object.getPrototypeOf(Int32Array.prototype);
+const ygTag = Function.prototype.call.bind(Object.getOwnPropertyDescriptor(ygTAProto, Symbol.toStringTag).get);
+const ygLen = Function.prototype.call.bind(Object.getOwnPropertyDescriptor(ygTAProto, 'length').get);
 
 // ---- cold helpers -------------------------------------------------------------
 
@@ -1182,7 +1192,7 @@ export class SumSequence {
     const ar = p.ar;
     const fpath = new Int32Array(ar.HL);
     const n = new Int32Array(YG_NC);
-    const cur = new SumCursor(this, ar);
+    const cur = new SumCursor(this, ar, YG_KEY);
     this._root = YG_EMPTY_ROOT;
     this._len = 0;
     this._fl = YG_NIL;
@@ -1238,7 +1248,7 @@ export class SumSequence {
 
   // O(1) total of dim d (C-12); a boxed double on return (C-13, b = 1).
   total(d) {
-    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= this._ar.dims))) {
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | !(d < this._ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
     const r = this._root;
@@ -1275,7 +1285,7 @@ export class SumSequence {
   insertAt(i, e, m0, m1, m2, m3) {
     const n = this._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
-    if (((i >>> 0) !== i) | (i > n)) ygFail('index', 'must be an integer in [0, length]');
+    if (((i >>> 0) !== i) | !(i <= n)) ygFail('index', 'must be an integer in [0, length]');
     const at = i >>> 0;
     if (typeof e !== 'number' || (e & 0x3FFFFFFF) !== e) ygFail('entity', 'must be an integer in [0, 2^30-1]');
     if (typeof m0 !== 'number') ygFail('measure', 'must be a number');
@@ -1389,7 +1399,7 @@ export class SumSequence {
   removeAt(i) {
     const n = this._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
-    if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
+    if (((i >>> 0) !== i) | !(i < n)) ygFail('index', 'must be an integer in [0, length)');
     this._cv = false; // cv:removeAt
     const at = i >>> 0;
     const r = this._root;
@@ -1479,10 +1489,10 @@ export class SumSequence {
   setMeasure(i, d, m) {
     const n = this._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
-    if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
+    if (((i >>> 0) !== i) | !(i < n)) ygFail('index', 'must be an integer in [0, length)');
     const at = i >>> 0;
     const ar = this._ar;
-    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | !(d < ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
     const dd = d >>> 0;
@@ -1554,10 +1564,10 @@ export class SumSequence {
   getMeasure(i, d) {
     const n = this._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
-    if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
+    if (((i >>> 0) !== i) | !(i < n)) ygFail('index', 'must be an integer in [0, length)');
     const at = i >>> 0;
     const ar = this._ar;
-    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | !(d < ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
     const left = this._left;
@@ -1603,7 +1613,7 @@ export class SumSequence {
   entityAt(i) {
     const n = this._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
-    if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
+    if (((i >>> 0) !== i) | !(i < n)) ygFail('index', 'must be an integer in [0, length)');
     const at = i >>> 0;
     const left = this._left;
     const right = this._right;
@@ -1652,7 +1662,7 @@ export class SumSequence {
   // goes right at every node and the leaf scan runs off the last leaf: length.
   indexAtSum(d, y) {
     const ar = this._ar;
-    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | !(d < ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
     if (typeof y !== 'number' || !((y >= 0) & (y < Infinity))) {
@@ -1701,9 +1711,9 @@ export class SumSequence {
   sumBefore(d, i) {
     const n = this._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
-    if (((i >>> 0) !== i) | (i > n)) ygFail('index', 'must be an integer in [0, length]');
+    if (((i >>> 0) !== i) | !(i <= n)) ygFail('index', 'must be an integer in [0, length]');
     const ar = this._ar;
-    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | !(d < ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
     let ref = this._root;
@@ -1813,7 +1823,7 @@ export class SumSequence {
   splitAt(i, out) {
     const n = this._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
-    if (((i >>> 0) !== i) | (i > n)) ygFail('index', 'must be an integer in [0, length]');
+    if (((i >>> 0) !== i) | !(i <= n)) ygFail('index', 'must be an integer in [0, length]');
     if (out === null || typeof out !== 'object' || !(#yg in out)) {
       ygFail('operand', 'must be a SumSequence view');
     }
@@ -1872,8 +1882,8 @@ export class SumSequence {
   // ---- counters (0003 G-8, C-24) ----------------------------------------------------
 
   readCounters(out) {
-    if (!(out instanceof Int32Array)) ygFail('counters', 'out must be an Int32Array');
-    if (!(out.length >= YG_NC)) ygFail('counters', 'out.length must be >= 12'); // NaN-closed (CL-4)
+    if (ygTag(out) !== 'Int32Array') ygFail('counters', 'out must be an Int32Array'); // R-A8
+    if (!(ygLen(out) >= YG_NC)) ygFail('counters', 'out.length must be >= 12'); // NaN-closed (CL-4), R-A8
     out.set(this._n);
   }
 
@@ -1913,7 +1923,8 @@ Object.defineProperty(SumSequence, 'COUNTERS', { writable: false, configurable: 
 // off the last element pushes nothing, adds 0 and leaves _cv false (R-E3, K2-R2).
 
 class SumCursor {
-  constructor(v, ar) {
+  constructor(v, ar, key) {
+    if (key !== YG_KEY) throw new TypeError('lite-yggdrasil: SumCursor is not constructible'); // R-A7
     this._st = new Int32Array(4);
     this._stk = new Int32Array(ar.HL);
     this._off = new Float64Array(ar.dims);
@@ -1938,7 +1949,7 @@ class SumCursor {
   // S_index of dim d, O(1) from _off (RK-4); a boxed double (C-13, b = 1).
   offset(d) {
     const v = this._v;
-    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= v._ar.dims))) {
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | !(d < v._ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
     return v._cv ? this._off[d >>> 0] : 0 / 0; // 0 / 0, not the global NaN: no box (pass 2 F3)
@@ -1948,7 +1959,7 @@ class SumCursor {
   measure(d) {
     const v = this._v;
     const ar = v._ar;
-    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | !(d < ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
     if (!v._cv) return 0 / 0; // not the global NaN: no box (pass 2 F3)
@@ -1963,7 +1974,7 @@ class SumCursor {
     const v = this._v;
     const n = v._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
-    if (((i >>> 0) !== i) | (i > n)) ygFail('index', 'must be an integer in [0, length]');
+    if (((i >>> 0) !== i) | !(i <= n)) ygFail('index', 'must be an integer in [0, length]');
     let ref = v._root;
     if (ref === YG_EMPTY_ROOT) {
       v._cv = false;
@@ -2026,7 +2037,7 @@ class SumCursor {
   seekSum(d, y) {
     const v = this._v;
     const ar = v._ar;
-    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | !(d < ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
     if (typeof y !== 'number' || !((y >= 0) & (y < Infinity))) {

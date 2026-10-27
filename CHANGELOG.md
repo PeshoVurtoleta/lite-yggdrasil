@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The cursor class was constructible through `v.cursor().constructor`. It now throws
+  `TypeError 'lite-yggdrasil: SumCursor is not constructible'` with any arguments; only the engine creates cursors.
+  (audit AF3, R-A7)
+- The 16 `index` / `dim` upper-bound guards are written NaN-closed (`!(i <= n)`). Same throw text; hardening only,
+  no behavior change on a reachable input. (audit AF3, R-A9)
+
+### Changed
+
+- `readCounters(out)` checks `out` through the `%TypedArray%` toStringTag getter (must be `'Int32Array'`) and its
+  true length (internal slot) `>= 12`, both cached at module load, so the checks run no user code; otherwise
+  `RangeError 'counters'`. (audit AF3, R-A8, R-A11)
+- `readCounters` accepts an `Int32Array` from another realm (vm / iframe); 0.1.0 rejected it. (audit AF3, R-A8)
+- `readCounters` ignores an own `length` property on `out`: a genuine `Int32Array(12)` with an own NaN `length`
+  now copies instead of throwing. (audit AF3, R-A8)
+- `readCounters` on a genuine `Int32Array` whose prototype was swapped (null / `Object.prototype`) throws
+  `TypeError 'out.set is not a function'` (0.1.0: `RangeError 'counters'`); the copy still calls `out.set`.
+  (audit AF3, R-A11)
+
 ## [0.1.0] - 2026-10-27
 
 The first engine release. Nothing was published before it; the unpublished 0.0.0 scaffold exported only

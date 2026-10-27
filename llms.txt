@@ -2,8 +2,7 @@
 
 > A zero-GC summary tree for mutable ordered sequences: splice anywhere, seek by any running total (count, pixels, bytes, milliseconds).
 
-Version: 0.0.0
-Release note: this text describes the 0.1.0 content; package.json, VERSION and the Version line above are bumped together at release.
+Version: 0.1.0
 Main file: Yggdrasil.js (ESM, single file, zero runtime dependencies). Types: Yggdrasil.d.ts.
 Exports: SumSequence (class), VERSION (string). Nothing else. The cursor class is not exported (type SumCursor only).
 

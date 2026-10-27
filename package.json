@@ -1,7 +1,7 @@
 {
   "name": "@zakkster/lite-yggdrasil",
   "author": "Zahary Shinikchiev <shinikchiev@yahoo.com>",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Zero-dependency, zero-GC summary tree for mutable ordered sequences: SumSequence inserts, removes and resizes anywhere in O(log n) and seeks by any running total (count, pixels, bytes, milliseconds) over 1 to 4 integer measures per element.",
   "type": "module",
   "main": "./Yggdrasil.js",

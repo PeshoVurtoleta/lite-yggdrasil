@@ -37,7 +37,7 @@
  * C-1); EMPTY_ROOT = 0x3FFFFFFF (C-8).
  */
 
-export const VERSION = '0.0.0';
+export const VERSION = '0.1.0';
 
 // ---- constants (Smi only) ---------------------------------------------------
 

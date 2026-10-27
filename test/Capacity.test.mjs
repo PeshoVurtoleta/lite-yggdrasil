@@ -19,6 +19,7 @@ const SRC = fileURLToPath(new URL('../Yggdrasil.js', import.meta.url));
 const MIB = 1024 * 1024;
 const TWO28 = 2 ** 28;
 const TWO30 = 2 ** 30;
+const TWO32 = 2 ** 32;
 const BS = [4, 8, 16, 32];
 const KS_CAP = [1, 3, 6, 4096];
 
@@ -203,39 +204,167 @@ test('C-11 RV-3: an inherited Object.prototype.dims is ignored (dims stays 1)', 
   assert.equal(Object.prototype.hasOwnProperty.call(Object.prototype, 'dims'), false);
 });
 
-// ---- C-14 RV-6: the at-cap sentinel (no 8 GiB allocation) -----------------------
+// ---- C-14 RV-6 / R-C1: the byte cap binds below the C cap; no real allocation -------------
 
-test('C-14 RV-6: C = cap reaches the typed-array sentinel; C = cap + 1 throws RangeError before it', () => {
+// Independent byte oracle (R-C1), from the arena allocation list, not from the engine's formula.
+// Int32 = 4 B, Float64 = 8 B. Lmax = ceil(C/m) + k; LB = Lmax*B; NI = Lmax - 1; HL = H(Lmax).
+//   arena: ent Int32(LB); meas dims x F64(LB); llen, lnext Int32(Lmax); lsum dims x F64(Lmax);
+//          left, right, weight, count, inext Int32(NI); sums dims x F64(NI); hdr Int32(5); sx F64(4);
+//          jstack, sstack Int32(HL)
+//   per view (x k): _fpath Int32(HL), _n Int32(12), _st Int32(4), _stk Int32(HL), _off F64(dims)
+function oracleBytes(C, B, k, dims) {
+  const Lmax = Math.ceil(C / (B / 4)) + k;
+  const LB = Lmax * B;
+  const NI = Lmax - 1;
+  const HLm = H(Lmax);
+  const arenaB = 4 * LB + 8 * dims * LB + 4 * 2 * Lmax + 8 * dims * Lmax +
+    4 * 5 * NI + 8 * dims * NI + 4 * 5 + 8 * 4 + 4 * 2 * HLm;
+  const viewB = 4 * HLm + 4 * 12 + 4 * 4 + 4 * HLm + 8 * dims;
+  return arenaB + k * viewB;
+}
+
+// Largest C with oracleBytes(C) <= 2^32 (oracleBytes is non-decreasing in C), searched in [k, cap].
+function bigC(B, k, dims) {
+  let lo = k;
+  let hi = capOf(B, k);
+  assert.ok(oracleBytes(lo, B, k, dims) <= TWO32, 'smallest C already over the byte cap');
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    if (oracleBytes(mid, B, k, dims) <= TWO32) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+// Recording sentinel: replaces the global typed-array constructors, records (bytes) per call and
+// returns a zero-length REAL array, so construction completes with no allocation.
+function installRecorder() {
+  const RealI = globalThis.Int32Array;
+  const RealF = globalThis.Float64Array;
+  const rec = { calls: 0, bytes: 0, firstLen: -1, RealI, RealF };
+  function note(len, size) { if (rec.calls === 0) rec.firstLen = len; rec.calls++; rec.bytes += len * size; }
+  globalThis.Int32Array = function (len) { note(len, 4); return new RealI(0); };
+  globalThis.Float64Array = function (len) { note(len, 8); return new RealF(0); };
+  rec.restore = () => { globalThis.Int32Array = RealI; globalThis.Float64Array = RealF; };
+  return rec;
+}
+
+// Run fn(rec) with the recorder installed; always restores.
+function withRecorder(fn) {
+  const rec = installRecorder();
+  try { return fn(rec); } finally { rec.restore(); }
+}
+
+function tryCall(fn) {
+  try { return { v: fn(), err: null }; } catch (e) { return { v: null, err: e }; }
+}
+
+const DIMS_ALL = [1, 2, 3, 4];
+
+test('R-C1: oracle sanity (hand-computed): C = 1, B = 4, dims = 1, k = 1', () => {
+  // Lmax = 1 + 1 = 2, LB = 8, NI = 1, H(2) = 1 (floor(3*2/4) = 1).
+  // arena: 4*8 + 8*8 + 4*4 + 8*2 + 4*5*1 + 8*1 + 20 + 32 + 4*2*1 = 32+64+16+16+20+8+20+32+8 = 216
+  // view : 4*1 + 48 + 16 + 4*1 + 8 = 80. Total 296.
+  assert.equal(oracleBytes(1, 4, 1, 1), 296);
+});
+
+test('R-C1: byte cap binds below the C cap in all 64 cells (C* < 2^28 - m*k)', () => {
+  let n = 0;
+  for (const B of BS) for (const d of DIMS_ALL) for (const k of KS_CAP) {
+    const Cs = bigC(B, k, d);
+    assert.ok(Cs < capOf(B, k), 'B=' + B + ' d=' + d + ' k=' + k + ' C*=' + Cs);
+    assert.ok(oracleBytes(Cs, B, k, d) <= TWO32);
+    assert.ok(oracleBytes(Cs + 1, B, k, d) > TWO32);
+    n++;
+  }
+  assert.equal(n, 64);
+});
+
+test('R-C1: at C* the ctor requests exactly oracleBytes (<= 2^32); C*+1 is a RangeError, 0 calls', () => {
+  const RealI = globalThis.Int32Array;
+  const RealF = globalThis.Float64Array;
+  let cells = 0;
+  for (const B of BS) for (const d of DIMS_ALL) for (const k of KS_CAP) {
+    const Cs = bigC(B, k, d);
+    const tag = 'B=' + B + ' d=' + d + ' k=' + k + ' C*=' + Cs;
+    withRecorder((rec) => {
+      const r = tryCall(() => SumSequence.arena(Cs, { leafSize: B, dims: d }, k));
+      assert.equal(r.err, null, tag + ' at C*: ' + String(r.err));
+      assert.equal(r.v.length, k, tag);
+      assert.equal(rec.firstLen, (Math.ceil(Cs / (B / 4)) + k) * B, tag + ' first length is Lmax*B');
+      assert.equal(rec.bytes, oracleBytes(Cs, B, k, d), tag + ' total bytes');
+      assert.ok(rec.bytes <= TWO32, tag);
+    });
+    withRecorder((rec) => {
+      const r = tryCall(() => SumSequence.arena(Cs + 1, { leafSize: B, dims: d }, k));
+      assert.ok(r.err instanceof RangeError, tag + ' C*+1: ' + String(r.err));
+      assert.ok(String(r.err.message).includes('2^32 bytes'), tag + ' message: ' + r.err.message);
+      assert.equal(rec.calls, 0, tag + ' C*+1 reached the allocator');
+    });
+    cells++;
+  }
+  assert.equal(cells, 64);
+  assert.equal(globalThis.Int32Array, RealI);
+  assert.equal(globalThis.Float64Array, RealF);
+});
+
+test('R-C1: the plain ctor (= arena(C, o, 1)) at C* and C*+1, B x dims (16 cells)', () => {
+  let cells = 0;
+  for (const B of BS) for (const d of DIMS_ALL) {
+    const Cs = bigC(B, 1, d);
+    const tag = 'new B=' + B + ' d=' + d + ' C*=' + Cs;
+    withRecorder((rec) => {
+      const r = tryCall(() => new SumSequence(Cs, { leafSize: B, dims: d }));
+      assert.equal(r.err, null, tag + ': ' + String(r.err));
+      assert.equal(rec.bytes, oracleBytes(Cs, B, 1, d), tag + ' total bytes');
+      assert.ok(rec.bytes <= TWO32, tag);
+    });
+    withRecorder((rec) => {
+      const r = tryCall(() => new SumSequence(Cs + 1, { leafSize: B, dims: d }));
+      assert.ok(r.err instanceof RangeError, tag + ' C*+1: ' + String(r.err));
+      assert.ok(String(r.err.message).includes('2^32 bytes'), tag + ' message: ' + r.err.message);
+      assert.equal(rec.calls, 0, tag + ' C*+1 reached the allocator');
+    });
+    cells++;
+  }
+  assert.equal(cells, 16);
+});
+
+test('R-C1: check order -- C = 2^28 - m*k + 1 (both caps fail) reports the C cap, not the byte cap', () => {
+  let cells = 0;
+  for (const B of BS) for (const k of KS_CAP) {
+    withRecorder((rec) => {
+      const r = tryCall(() => SumSequence.arena(capOf(B, k) + 1, { leafSize: B, dims: 4 }, k));
+      assert.ok(r.err instanceof RangeError, 'B=' + B + ' k=' + k);
+      assert.ok(String(r.err.message).includes('2^28'), 'message: ' + r.err.message);
+      assert.ok(!String(r.err.message).includes('2^32'), 'message: ' + r.err.message);
+      assert.equal(rec.calls, 0);
+    });
+    cells++;
+  }
+  assert.equal(cells, 16);
+});
+
+test('C-14 RV-6: C = cap now hits the byte cap (2^32 bytes), cap + 1 the C cap (2^28); sentinel never called', () => {
   const RealF = globalThis.Float64Array;
   const RealI = globalThis.Int32Array;
-  const seen = [];
-  const firstLen = [];
-  class SentinelHit extends Error {}
-  function sentinel(len) { seen.push(len); throw new SentinelHit('sentinel'); }
-  let reached = 0;
   let cells = 0;
   try {
     for (const B of BS) {
       for (const k of KS_CAP) {
         const cap = capOf(B, k);
-        // at the cap: every check passes, so the first typed-array allocation hits the sentinel.
-        globalThis.Float64Array = sentinel;
-        globalThis.Int32Array = sentinel;
-        let atCap = null;
-        const n0 = seen.length;
-        try { SumSequence.arena(cap, { leafSize: B }, k); } catch (e) { atCap = e; }
-        firstLen.push(seen[n0]);
-        // cap + 1: a RangeError from the checks, the sentinel never called.
-        const before = seen.length;
-        let over = null;
-        try { SumSequence.arena(cap + 1, { leafSize: B }, k); } catch (e) { over = e; }
-        const overSeen = seen.length - before;
-        globalThis.Float64Array = RealF;
-        globalThis.Int32Array = RealI;
-        assert.ok(atCap instanceof SentinelHit, 'B=' + B + ' k=' + k + ' at cap: expected the sentinel, got ' + String(atCap));
-        assert.ok(over instanceof RangeError, 'B=' + B + ' k=' + k + ' cap+1: expected RangeError, got ' + String(over));
-        assert.equal(overSeen, 0, 'B=' + B + ' k=' + k + ' cap+1 reached the allocator');
-        reached++;
+        const rec = installRecorder();
+        const a = tryCall(() => SumSequence.arena(cap, { leafSize: B }, k));
+        const callsAtCap = rec.calls;
+        const b = tryCall(() => SumSequence.arena(cap + 1, { leafSize: B }, k));
+        const callsTotal = rec.calls;
+        rec.restore();
+        const tag = 'B=' + B + ' k=' + k;
+        assert.ok(a.err instanceof RangeError, tag + ' at cap: ' + String(a.err));
+        assert.ok(String(a.err.message).includes('2^32 bytes'), tag + ' at cap message: ' + a.err.message);
+        assert.equal(callsAtCap, 0, tag + ' at cap reached the allocator');
+        assert.ok(b.err instanceof RangeError, tag + ' cap+1: ' + String(b.err));
+        assert.ok(String(b.err.message).includes('2^28'), tag + ' cap+1 message: ' + b.err.message);
+        assert.equal(callsTotal, 0, tag + ' cap+1 reached the allocator');
         cells++;
       }
     }
@@ -244,11 +373,8 @@ test('C-14 RV-6: C = cap reaches the typed-array sentinel; C = cap + 1 throws Ra
     globalThis.Int32Array = RealI;
   }
   assert.equal(cells, 16);
-  assert.equal(reached, 16);
   assert.equal(globalThis.Float64Array, RealF);
-  // The FIRST requested length per cell is the leaf ent column: Lmax(cap) * B = 2^30 (C-14).
-  assert.equal(firstLen.length, 16);
-  for (const len of firstLen) assert.equal(len, TWO30);
+  assert.equal(globalThis.Int32Array, RealI);
 });
 
 // ---- ASSERTION 2: pools ---------------------------------------------------------
@@ -317,6 +443,8 @@ test('control (arithmetic): Lmax + 1 and ceil(C/m) both fail the (4096, 16, 6) p
 
 const A_CAP = 'if (C > YG_SLOT_CAP - m * k)';
 const A_ALLOC = 'const ent = new Int32Array(LB);';
+const A_BYTE = "if (ygBytes(C, B, k, dims) > YG_BYTE_CAP) " +
+  "ygFail('capacity', 'arena typed arrays must total <= 2^32 bytes');";
 const A_CAPLINE = A_CAP + " ygFail('capacity', 'C must be <= 2^28 - (leafSize/4) * count');";
 
 // Same row through the same path: real build (no patches beyond a no-op identical replacement) vs mutant.
@@ -347,7 +475,8 @@ test('mutant control: real build passes the count-4097 row (delta < 1 MiB) throu
 test('mutant control MUST fail: validate-after-allocate on count 4097 shows delta >= 1 MiB', async () => {
   const patches = [
     [A_COUNT, 'if (false) {', 1],
-    [A_ALLOC, A_ALLOC + " if (typeof k !== 'number' || !Number.isInteger(k) || k < 1 || k > YG_MAX_VIEWS || k > C) ygFail('count', 'late');", 1],
+    [A_ALLOC, A_ALLOC + " if (typeof k !== 'number' || !Number.isInteger(k) || k < 1 || k > YG_MAX_VIEWS || k > C) " +
+      "ygFail('count', 'late');", 1],
   ];
   await withBuild(patches, (ns) => {
     const r = row4097(ns);
@@ -359,6 +488,7 @@ test('mutant control MUST fail: validate-after-allocate on count 4097 shows delt
 test('mutant control MUST fail: validate-after-allocate on a cap+1 row reaches the allocator (sentinel)', async () => {
   const patches = [
     [A_CAPLINE, 'if (false) {}', 1],
+    [A_BYTE, '', 1], // else the byte cap masks the moved C cap
     [A_ALLOC, A_ALLOC + " if (C > YG_SLOT_CAP - m * k) ygFail('capacity', 'late');", 1],
   ];
   await withBuild(patches, (ns) => {
@@ -374,24 +504,78 @@ test('mutant control MUST fail: validate-after-allocate on a cap+1 row reaches t
   });
 });
 
-test('mutant control MUST fail: a cap without the k term (- m * k -> - m) accepts the k=3 cap+1 rows', async () => {
+test('mutant control MUST fail: a cap without the k term (- m * k -> - m): k=3 cap+1 hits the byte cap', async () => {
   await withBuild([[A_CAP, 'if (C > YG_SLOT_CAP - m)', 1]], (ns) => {
     // k = 1: indistinguishable (cap - m*1 == cap - m): still rejected.
     for (const B of BS) {
       assert.throws(() => ns.SumSequence.arena(capOf(B, 1) + 1, { leafSize: B }, 1), RangeError);
     }
-    // k = 3: the real cap rejects cap+1; the mutant passes the cap check, so the real row would FAIL on it.
-    const RealF = globalThis.Float64Array;
-    const RealI = globalThis.Int32Array;
-    class Hit extends Error {}
-    let reached = 0;
-    try {
-      globalThis.Float64Array = function () { throw new Hit('s'); };
-      globalThis.Int32Array = function () { throw new Hit('s'); };
-      for (const B of BS) {
-        try { ns.SumSequence.arena(capOf(B, 3) + 1, { leafSize: B }, 3); } catch (x) { if (x instanceof Hit) reached++; }
-      }
-    } finally { globalThis.Float64Array = RealF; globalThis.Int32Array = RealI; }
-    assert.equal(reached, 4, 'the k-less cap lets cap+1 reach the allocator for every B at k=3');
+    // k = 3: the real build rejects cap+1 with the C-cap message ('2^28'); the k-less mutant passes the
+    // C cap and the byte cap (which is below it everywhere) rejects with '2^32 bytes' instead.
+    // Recording sentinel installed for safety: nothing is allocated.
+    for (const B of BS) {
+      withRecorder((rec) => {
+        const r = tryCall(() => ns.SumSequence.arena(capOf(B, 3) + 1, { leafSize: B }, 3));
+        assert.ok(r.err instanceof RangeError, 'B=' + B);
+        assert.ok(String(r.err.message).includes('2^32 bytes'), 'B=' + B + ' message: ' + r.err.message);
+        assert.ok(!String(r.err.message).includes('2^28'), 'B=' + B + ' message: ' + r.err.message);
+        assert.equal(rec.calls, 0);
+      });
+    }
+  });
+});
+
+const A_PERVIEW = 't += k * (8 * HL + 4 * YG_NC + 16 + 8 * dims);';
+
+test('mutant control: real build (no-op patch) passes the C*+1 byte-cap row through buildMutant', async () => {
+  await withBuild([[A_BYTE, A_BYTE, 1]], (ns) => {
+    const Cs = bigC(16, 1, 1);
+    withRecorder((rec) => {
+      const r = tryCall(() => ns.SumSequence.arena(Cs + 1, { leafSize: 16, dims: 1 }, 1));
+      assert.ok(r.err instanceof RangeError);
+      assert.ok(String(r.err.message).includes('2^32 bytes'));
+      assert.equal(rec.calls, 0);
+    });
+  });
+});
+
+test('mutant control MUST fail: M1 dropping the byte line lets C*+1 reach the allocator', async () => {
+  await withBuild([[A_BYTE, '', 1]], (ns) => {
+    const Cs = bigC(16, 1, 1);
+    withRecorder((rec) => {
+      const r = tryCall(() => ns.SumSequence.arena(Cs + 1, { leafSize: 16, dims: 1 }, 1));
+      assert.ok(r.err === null, 'M1 must not throw at C*+1 (the real build throws)');
+      assert.ok(rec.calls > 0, 'M1 reaches the allocator');
+    });
+  });
+});
+
+test('mutant control MUST fail: M2 byte line moved below the first allocation reaches the sentinel', async () => {
+  const patches = [
+    [A_BYTE, '', 1],
+    [A_ALLOC, A_ALLOC + ' ' + A_BYTE, 1],
+  ];
+  await withBuild(patches, (ns) => {
+    const Cs = bigC(16, 1, 1);
+    withRecorder((rec) => {
+      const r = tryCall(() => ns.SumSequence.arena(Cs + 1, { leafSize: 16, dims: 1 }, 1));
+      assert.ok(r.err instanceof RangeError, 'M2 still rejects, just late');
+      assert.ok(rec.calls >= 1, 'M2 allocates before rejecting (real build: 0 calls)');
+    });
+  });
+});
+
+test('mutant control MUST fail: M3 dropping the per-view term moves the count-4096 boundary up', async () => {
+  await withBuild([[A_PERVIEW, '', 1]], (ns) => {
+    let moved = 0;
+    for (const d of DIMS_ALL) {
+      const Cs = bigC(16, 4096, d);
+      withRecorder((rec) => {
+        const r = tryCall(() => ns.SumSequence.arena(Cs + 1, { leafSize: 16, dims: d }, 4096));
+        // the real build throws '2^32 bytes' at C*+1; the mutant under-counts and does not
+        if (r.err === null && rec.calls > 0) moved++;
+      });
+    }
+    assert.equal(moved, 4, 'M3 must accept C*+1 at count 4096 for every dims');
   });
 });

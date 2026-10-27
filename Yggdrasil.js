@@ -45,6 +45,7 @@ const YG_END = -1;                // free-list END (C-44)
 const YG_NC = 12;                 // counters per view (0003 G-4)
 const YG_MAX_VIEWS = 4096;        // count cap (C-14)
 const YG_SLOT_CAP = 268435456;    // 2^28: Lmax * B <= 2^30 slot ids (C-14)
+const YG_BYTE_CAP = 4294967296;   // 2^32 bytes: R-C1 total typed-array byte cap (C-14)
 const YG_LIVE = 0;                // hdr slots (C-44)
 const YG_LBUMP = 1;
 const YG_LFREE = 2;
@@ -118,8 +119,26 @@ function ygH(L) {
   return h;
 }
 
+// The exact byte total of every typed array one arena holds (R-C1, C-14): the
+// ygInit columns, plus per view (x k) the constructor's _fpath / _n and its
+// SumCursor's _st / _stk / _off. Same Lmax / LB / NI / HL as ygInit. Plain
+// arithmetic, no typed-array constructor is read (RV-6); every term is an exact
+// integer (< 2^53: C <= 2^28, k <= 4096). Cold.
+function ygBytes(C, B, k, dims) {
+  const Lmax = Math.ceil(C / (B >> 2)) + k;
+  const HL = ygH(Lmax);
+  const LB = Lmax * B;
+  const NI = Lmax - 1;
+  let t = LB * (4 + 8 * dims);              // ent, meas[dims]
+  t += Lmax * (8 + 8 * dims);               // llen, lnext, lsum[dims]
+  t += NI * (20 + 8 * dims);                // left, right, weight, count, inext, sums[dims]
+  t += 20 + 32 + 8 * HL;                    // hdr, sx, jstack, sstack
+  t += k * (8 * HL + 4 * YG_NC + 16 + 8 * dims); // per view: _fpath, _n; cursor _st, _stk, _off
+  return t;
+}
+
 // The ONE init of both constructor paths (M-2, 0004 A-8; C-11, C-14, C-15,
-// C-16). Check order (RV-1): C -> options -> leafSize -> dims -> count -> cap.
+// C-16). Check order (RV-1): C -> options -> leafSize -> dims -> count -> cap -> byte cap.
 // Every check runs before the first typed-array allocation; every column is
 // allocated into a local. Returns the pending record the constructor binds.
 function ygInit(C, o, k) {
@@ -160,6 +179,7 @@ function ygInit(C, o, k) {
   }
   const m = B >> 2;
   if (C > YG_SLOT_CAP - m * k) ygFail('capacity', 'C must be <= 2^28 - (leafSize/4) * count');
+  if (ygBytes(C, B, k, dims) > YG_BYTE_CAP) ygFail('capacity', 'arena typed arrays must total <= 2^32 bytes');
   // ---- allocation: no check below this line --------------------------------
   const shift = 31 - Math.clz32(B);
   const Lmax = Math.ceil(C / m) + k;

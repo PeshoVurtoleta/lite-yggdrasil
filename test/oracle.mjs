@@ -71,6 +71,8 @@ export class Oracle {
   #dims;
   #ent;
   #m;
+  #ci; // model cursor index: -1 = invalid (K-R1, 0005 C-6 / C-7 / R-E3)
+  #cur; // the ONE model cursor object (identity stable)
 
   constructor(dims = 1) {
     if (!oracleIsInt(dims) || dims < 1 || dims > 4) {
@@ -80,6 +82,40 @@ export class Oracle {
     this.#ent = [];
     this.#m = [];
     for (let d = 0; d < dims; d++) this.#m.push([]);
+    this.#ci = -1;
+    const self = this;
+    this.#cur = {
+      get valid() { return self.#ci >= 0; },
+      get index() { return self.#ci; },
+      get entity() { return self.#ci >= 0 ? self.#ent[self.#ci] : -1; },
+      // dim checked first (valid or not), then NaN when invalid
+      offset(d) {
+        const dd = self.#dim(d);
+        return self.#ci >= 0 ? oracleSum(self.#m[dd], 0, self.#ci) : NaN;
+      },
+      measure(d) {
+        const dd = self.#dim(d);
+        return self.#ci >= 0 ? self.#m[dd][self.#ci] : NaN;
+      },
+      // i in [0, length] (token 'index'); i = length leaves the cursor invalid (R-E3)
+      seekIndex(i) {
+        const at = self.#index(i, true);
+        self.#ci = at < self.#ent.length ? at : -1;
+        return self.#ci >= 0;
+      },
+      // dim then y (M-8), then the indexAtSum answer; y >= total leaves it invalid (R-E3)
+      seekSum(d, y) {
+        const k = self.indexAtSum(d, y);
+        self.#ci = k < self.#ent.length ? k : -1;
+        return self.#ci >= 0;
+      },
+    };
+  }
+
+  // K-R1: the one model cursor of this Oracle. Every successful mutator invalidates it AFTER its checks;
+  // a rejected mutation and every read leave it unchanged (C-6).
+  cursor() {
+    return this.#cur;
   }
 
   get dims() {
@@ -133,6 +169,7 @@ export class Oracle {
       if (slots[d] > MAX - this.total(d)) oracleFail('headroom', 'total would exceed 2^53-1');
     }
     // first write
+    this.#ci = -1;
     this.#ent.splice(at, 0, e + 0);
     for (let d = 0; d < dims; d++) this.#m[d].splice(at, 0, slots[d] + 0);
     return undefined;
@@ -141,6 +178,7 @@ export class Oracle {
   removeAt(i) {
     const at = this.#index(i, false);
     const e = this.#ent[at];
+    this.#ci = -1;
     this.#ent.splice(at, 1);
     for (let d = 0; d < this.#dims; d++) this.#m[d].splice(at, 1);
     return e;
@@ -152,6 +190,7 @@ export class Oracle {
     oracleCheckMeasure(m);
     const old = this.#m[dd][at];
     if (m > MAX - (this.total(dd) - old)) oracleFail('headroom', 'total would exceed 2^53-1');
+    this.#ci = -1;
     this.#m[dd][at] = m + 0;
   }
 
@@ -159,6 +198,8 @@ export class Oracle {
     const at = this.#index(i, true);
     this.#operand(out, true);
     // first write
+    this.#ci = -1;
+    out.#ci = -1;
     out.#ent = this.#ent.slice(at);
     this.#ent.length = at;
     for (let d = 0; d < this.#dims; d++) {
@@ -174,6 +215,8 @@ export class Oracle {
       if (other.total(d) > MAX - this.total(d)) oracleFail('headroom', 'total would exceed 2^53-1');
     }
     // first write
+    this.#ci = -1;
+    other.#ci = -1;
     for (const e of other.#ent) this.#ent.push(e);
     other.#ent = [];
     for (let d = 0; d < this.#dims; d++) {
@@ -184,6 +227,7 @@ export class Oracle {
   }
 
   clear() {
+    this.#ci = -1;
     this.#ent = [];
     for (let d = 0; d < this.#dims; d++) this.#m[d] = [];
   }

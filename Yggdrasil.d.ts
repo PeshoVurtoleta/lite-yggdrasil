@@ -1,4 +1,4 @@
-// Type declarations for @zakkster/lite-yggdrasil (rung F-R: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain, the k >= 2 clear() free-walk, join and append with the seam repair, splitAt with its seam repairs, and the finger hit test in the positional ops).
+// Type declarations for @zakkster/lite-yggdrasil (rung K-R1: the cursor surface (cursor(), seekIndex / seekSum, valid / index / entity, offset / measure) on top of rung F-R: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain, the k >= 2 clear() free-walk, join and append with the seam repair, splitAt with its seam repairs, and the finger hit test in the positional ops).
 export declare const VERSION: string;
 
 export interface SumSequenceOptions {
@@ -6,6 +6,35 @@ export interface SumSequenceOptions {
   dims?: 1 | 2 | 3 | 4;
   /** Leaf size B. 4 and 8 are test-only. Default 16. */
   leafSize?: 4 | 8 | 16 | 32;
+}
+
+/**
+ * A reusable cursor over one SumSequence view (type-only; the class is not exported).
+ * valid is false until a seek lands on an element, and after a seek to the end or on an empty view.
+ */
+export interface SumCursor {
+  /** true while the cursor sits on an element; false for a fresh cursor, a seek to the end, an empty view. */
+  readonly valid: boolean;
+  /** Index of the current element; -1 when not valid. */
+  readonly index: number;
+  /** Entity of the current element; -1 when not valid. */
+  readonly entity: number;
+  /** Sum of dimension d over the elements before the current one. O(1); NaN when not valid. RangeError 'dim' (d integer in [0, dims)) is checked first, valid or not. Returns a boxed double. */
+  offset(d: number): number;
+  /** Measure d of the current element; NaN when not valid. RangeError 'dim' is checked first, valid or not. Returns a boxed double. */
+  measure(d: number): number;
+  /**
+   * Move to index i in [0, length]; returns true when it lands on an element.
+   * i = length (or an empty view) returns false and leaves valid false (index -1); the seek still counts touches d(t) (0 on an empty view).
+   * RangeError 'index' (i not an integer in [0, length], e.g. -1 or NaN) leaves the cursor unchanged.
+   */
+  seekIndex(i: number): boolean;
+  /**
+   * Move to the smallest index with prefix(i) + measure(i) > y in dimension d; returns true when it lands on an element.
+   * y >= total(d) (or an empty view) returns false and leaves valid false (index -1); the seek still counts touches d(t) (0 on an empty view).
+   * RangeError 'dim' (d), then 'seek' (y not finite or < 0, e.g. -1 or NaN) leaves the cursor unchanged.
+   */
+  seekSum(d: number, y: number): boolean;
 }
 
 export declare class SumSequence {
@@ -46,6 +75,8 @@ export declare class SumSequence {
   append(other: SumSequence): this;
   /** this := [0, i), out := [i, length) (an empty view of the same arena); returns this. RangeError index / operand / pool leaves both views unchanged. */
   splitAt(i: number, out: SumSequence): this;
+  /** The view's one cursor (the same object on every call; allocates nothing). Not valid until a seek lands on an element; every successful mutation of this view (and append() for the other view too) leaves it invalid. */
+  cursor(): SumCursor;
   /** Copy the 12 counters into out (length >= 12). */
   readCounters(out: Int32Array): void;
   resetCounters(): void;

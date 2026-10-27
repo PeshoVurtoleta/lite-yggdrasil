@@ -18,16 +18,19 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
   (Yggdrasil.js 287d10c1, test/exhaustive.mjs 6734c7aa)
 - ADDENDUM 15 (0005's own, the AF unit and rulings R-A1..R-A3): written against 390ed2e + the AF tree (Yggdrasil.js
   92e67fa0)
+- ADDENDUM 16 (0005's own, the AF2 unit and rulings R-A4..R-A6): written against 188c4f8 + the AF2 tree (Yggdrasil.js
+  8052b70f). Re-consolidation is the docs batch's job: A13..A16 are past the ADDENDUM 12 consolidation.
 - Re-consolidated at ADDENDUM 9 (A4..A9 were past the B1 consolidation): the D8 nits are folded (the A8-1 quote form,
   the C-8 guard tag, the Status and legend wrapping, long headings split into a heading + a Sources line).
 - Re-consolidated at ADDENDUM 12 (A10..A12 were past the ADDENDUM 9 consolidation): every rule changed by A10-1..A10-11,
   A11-1..A11-8 and A12-1..A12-15 states its final text once; landing-history clauses became pointers.
 
 - Status: CURRENT, consolidated through ADDENDUM 12 (not RULED). The maintainer rulings are R-D1..R-D4, R-E1..R-E5,
-  R-Q1, R-P1, R-P2, R-S1..R-S3, R-J1, R-C1, R-B1, R-A1, R-A2 and R-A3 (quoted in "Maintainer rulings"; R-C1 and R-B1 are
-  A12-14 and A12-15; R-A1..R-A3 are A15-1..A15-3). Every other rule is a planner rule or a reading (NOT ruled): DB-1
+  R-Q1, R-P1, R-P2, R-S1..R-S3, R-J1, R-C1, R-B1, R-A1..R-A6 (quoted in "Maintainer rulings"; R-C1 and R-B1 are
+  A12-14 and A12-15; R-A1..R-A3 are A15-1..A15-3; R-A4..R-A6 are A16-1..A16-3). Every other rule is a planner rule or
+  a reading (NOT ruled): DB-1
   r1..r3, A4-1..A4-14, A5-1..A5-34 (incl. the merge rulings M-1..M-8), A6-3 (Q4), A7-1..A7-5, A8-4, A9-2..A9-8,
-  A10-1..A10-11, A11-1..A11-8, A12-1..A12-13, A13-1..A13-5, A14-1..A14-13 and A15-4..A15-9.
+  A10-1..A10-11, A11-1..A11-8, A12-1..A12-13, A13-1..A13-5, A14-1..A14-13, A15-4..A15-9 and A16-4..A16-8.
 - Date: 2026-10-26
 - Session: SumSequence CURRENT consolidation (docs unit B1)
 - Provenance of this text: consolidated from .handoff/PLAN-G-A.md (body, rulings, ADDENDA 1-3), .handoff/PLAN-G-B.md
@@ -35,7 +38,8 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
   pass) from .handoff/PLAN-E0.md (the merge: M-1..M-8, R-E1..R-E4; its reconciliations win over the six plans) and its
   six plans PLAN-E0-A / -F / -K / -S / -V / -G. Rule ids cite those files by name (Sources legend);
   the plan files are gitignored and archived at release. The rung ladder lives in PLAN-E0.md, never here.
-- Precedence: ADDENDUM 15 > ADDENDUM 14 > ADDENDUM 13 > ADDENDUM 12 > ADDENDUM 11 > ADDENDUM 10 > ADDENDUM 9 >
+- Precedence: ADDENDUM 16 > ADDENDUM 15 > ADDENDUM 14 > ADDENDUM 13 > ADDENDUM 12 > ADDENDUM 11 > ADDENDUM 10 >
+  ADDENDUM 9 >
   ADDENDUM 8 > ADDENDUM 7 > ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 >
   ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 > body. Every rule below is the FINAL rule, stated in full.
   A superseded rule is not repeated here (it lives in the plan files and the Source map says where it went).
@@ -136,8 +140,22 @@ AskUserQuestion, 2026-10-27 (maintainer audit triage; relayed by the orchestrato
   promise that V8 won't inline it. The finding is recorded as a REPORTED observation; nothing is gated and nothing
   changes."
 
+AskUserQuestion, 2026-10-27 (maintainer audit #2 triage; relayed by the orchestrator session, ADDENDUM 16):
+
+- R-A4: (pass 2 F4, 0005 C-3) = "Amend C-3 (Recommended)". Option text: "C-3's R-E4 'pool' exemption also covers the
+  cursor: the throw may leave cursor() invalid (_cv = false), the fail-safe outcome, like the finger. No engine change."
+- R-A5: (CL-2, 0005 C-24) = "Lock the binding (Recommended)". Option text: "After the class body, define
+  SumSequence.COUNTERS as writable: false, configurable: false (cold, module load only). A row asserts the descriptor.
+  C-24 gains 'read-only binding'."
+- R-A6: (pass 2 F1a, 0005 C-8) = "Document as not detected (Recommended)". Option text: "C-8's not-detected list
+  gains: a forged _len inside [0, live] on a valid root is beyond the guard (R-S3 class). clear() stays O(1) when the
+  view holds every live element."
+
 ## Sources legend
 
+- 0005 A16-1..A16-8 = this file's own ADDENDUM 16 (below; the audit #2 fix unit AF2: A16-1..A16-3 are the rulings
+  R-A4..R-A6, quoted above; A16-4..A16-8 are readings of the AF2 unit, NOT ruled). Every A16 item names the CURRENT
+  rules it changed and every changed rule cites its A16 ids.
 - 0005 A15-1..A15-9 = this file's own ADDENDUM 15 (below; the maintainer-audit fix unit AF: A15-1..A15-3 are the rulings
   R-A1..R-A3, quoted above; A15-4..A15-9 are readings of the AF unit, NOT ruled). Every A15 item names the CURRENT rules
   it changed and every changed rule cites its A15 ids.
@@ -203,7 +221,7 @@ AskUserQuestion, 2026-10-27 (maintainer audit triage; relayed by the orchestrato
 
 ### C-3 Re-home after every positional op
 Sources: G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-4 -> 0005 A9-3 ->
-  0005 A10-2 -> 0005 A11-1
+  0005 A10-2 -> 0005 A11-1 -> 0005 A16-1
 
 - Every positional op re-homes the finger after its last write, reads included (their descent writes the path).
   Non-structural op: fl / fb := the leaf the op touched. Structural op (split, merge, equalize, first-leaf
@@ -213,7 +231,10 @@ Sources: G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-
 - A throwing op re-homes nothing: a RangeError (for setMeasure the headroom one, RF-1, C-10) leaves _fl, _fb, _fdepth
   and _fpath unchanged. One exemption (R-P1, R-P2, A6-2, A6-4): the R-E4 'pool' throw (the cold allocator / ygSplit;
   unreachable under C-15) leaves the finger invalidated (_fl = NIL, _fb = 0, _fdepth = 0, set before the throw, so the
-  next positional op is a miss and I-9 holds) and may leave _fpath[0..d) rewritten by the descent. Every other throw
+  next positional op is a miss and I-9 holds) and may leave _fpath[0..d) rewritten by the descent. The exemption also
+  covers the cursor (R-A4, A16-1, RULED): the
+  same 'pool' throw may leave cursor() invalid (_cv = false: valid false, index -1, entity -1, offset / measure NaN),
+  the fail-safe outcome, like the finger; no engine change. Every other throw
   changes nothing. The splitAt / append 'pool' pre-checks fire before any write and change nothing (A7-4). "Nothing"
   covers the C-27 snapshot and the counters: splitAt's pre-check is decided after a descent that writes nothing but the
   arena scratch sstack (A10-2; not in the snapshot, never read before written).
@@ -263,14 +284,15 @@ Sources: G-A F-3 -> G-A-D11 -> 0005 A5-5, A5-16 -> 0005 A6-2 -> A6-4 -> 0005 A7-
 
 ### C-6 No epoch counter; the cursor bit _cv
 Sources: G-A B-18 -> G-A-D3 -> G-A A2-4 -> G-A A3-4 -> 0005 A5-3, A5-22 -> 0005 A12-7, A12-8, A12-10 ->
-  0005 A14-1, A14-4, A14-5, A14-13
+  0005 A14-1, A14-4, A14-5, A14-13 -> 0005 A16-1
 
 - No epoch counter exists. The finger is never stale (C-3), so the only invalidation state is the view's one cursor
   (Y-11). Its `valid`, `index` and `entity` are prototype getters over view state; `valid` returns the boolean _cv.
 - Every successful mutator stores `_cv = false` once per view it invalidates, AFTER validation: `this._cv` for
   insertAt, removeAt, setMeasure, splitAt, append, clear; append also `other._cv = false` (A3-4).
   splitAt's `out` must be empty (0004 A-3) so its cursor is never valid. A RangeError
-  mutation and every read op leave _cv and the cursor fields unchanged.
+  mutation and every read op leave _cv and the cursor fields unchanged, except the R-E4 'pool' throw, which may leave
+  _cv false (C-3, R-A4, A16-1).
 - A seek (seekIndex / seekSum) sets _cv = true, except a seek to the end (i = length, or y >= total) and a seek on an
   empty view, which leave _cv false (R-E3, RK-1); next() off the last element sets _cv = false (R-E3). While _cv is
   false: index and entity read -1, offset(d) and measure(d) are NaN. After `a.append(b)`, b's cursor valid === false
@@ -330,7 +352,7 @@ Sources: G-A B-18 -> G-A-D3 -> G-A A2-4 -> G-A A3-4 -> 0005 A5-3, A5-22 -> 0005 
 - Closes RESEARCH Q-3. A cursor walk gives O(log n + k) reads at 0 B (this is why readRange is not in v0.1, C-12).
 
 ### C-8 clear() restores the constructed state, `_n` excepted
-Sources: G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-4 -> 0005 A15-4
+Sources: G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-4 -> 0005 A15-4 -> 0005 A16-3
 
 - clear() restores the view to its constructed state exactly: _len 0, _root === EMPTY_ROOT, _fl NIL, _cv false,
   header bump 0 and live 0 once every view has cleared. The diagnostic counters `_n` are EXCLUDED (0003 G-8, X-8:
@@ -356,12 +378,16 @@ Sources: G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-
   range`. Cold path only; hot bodies unchanged.
 - Mid-walk failure (R-S2): only the root / _len checks run before any write; a mid-walk failure throws AFTER live -=
   _len and the frees already made (the view keeps _root / _len); the arena is not trusted after it.
-- Not detected (R-S3, A15-4): a ref inside the bumps that names another view's node, a free node or a node shared inside
+- Not detected (R-S3, A15-4, A16-3): a ref inside the bumps that names another view's node, a free node or a node
+  shared inside
   the view (the walk frees it); the test-side walker catches these. The two audit shapes (F-1e) stay out of scope:
   duplicate leaf children of one internal (left === right, a leaf freed twice, which makes a free-list self-loop) is
   in this class, not detected (R-S3); an internal child equal to its parent (u's own ref as a child) is caught
   mid-walk by the walk bound ('more than N internals') after live -= _len and the frees already made, leaving u on the
-  internal free list (R-S2).
+  internal free list (R-S2). A forged _len inside [0, live] on a valid root is also beyond the guard (R-A6, A16-3,
+  RULED; R-S3 class): the pre-check cannot tell it from a true count. clear() stays O(1) when the view holds every
+  live element (_len === live, the ygReset fast path); that fast path is correct when the view truly holds every live
+  element (pass 2 F1c is not a defect, A16-3).
 
 ### Entity, signatures, options
 
@@ -377,7 +403,7 @@ Sources: G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-
 
 ### C-10 Check order
 Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16, A5-20, A5-26, A5-30 -> 0005 A6-1 ->
-  0005 A7-3 -> 0005 A8-1 -> 0005 A9-3 -> 0005 A10-2, A10-5 -> 0005 A12-11 -> 0005 A15-2, A15-7
+  0005 A7-3 -> 0005 A8-1 -> 0005 A9-3 -> 0005 A10-2, A10-5 -> 0005 A12-11 -> 0005 A15-2, A15-7 -> 0005 A16-6
 
 - Check order, all before the first write: i, e, measures (M-3 each, slots < dims), extra slots, capacity, headroom.
   The capacity RangeError message carries the token 'capacity' and is checked between extra slots and headroom.
@@ -406,7 +432,9 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   (F-3) is a recorded reading, no engine change.
 - Guard form (A15-7, lite-law: NaN fails closed by construction): the headroom guards (insertAt, ygHeadroomIns,
   setMeasure, ygSetHeadroom, append), the C cap, clear()'s _len check, and the dims and count guards are written
-  `!(x <= bound)`, never `x > bound` (same throw text). The hot index / dim guards `((x >>> 0) !== x) | (x > n)`
+  `!(x <= bound)`, never `x > bound` (same throw text). readCounters' `!(out.length >= YG_NC)` (A16-6, AF2-3) is the
+  same form for a lower bound: a forged NaN or undefined length throws RangeError 'counters' (same token and text).
+  The hot index / dim guards `((x >>> 0) !== x) | (x > n)`
   stay: they are NaN-safe by the uint32 term.
 - Operand check (RS-6, A5-26): a private `#` brand, then `_hdr` identity (0004 A-3's _hdr check alone passes a forged
   object). Order: not a view, self, another arena, non-empty out; then (append only) headroom. Index before operand
@@ -452,7 +480,8 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   v0.1 (the cursor gives O(log n + k) at 0 B); owner Tier 2. 0004 O-3 (parent column, entity -> index): not carried
   into v0.1 (it needs an entity-slot write on every leaf move, which is hot); owner = the v0.4 pool planner.
 
-### C-13 Zero-box lanes (G-A-D8 -> G-A A2-3 -> 0005 A5-19, A5-27 -> 0005 A12-13 -> 0005 A15-1, A15-9)
+### C-13 Zero-box lanes (G-A-D8 -> G-A A2-3 -> 0005 A5-19, A5-27 -> 0005 A12-13 -> 0005 A15-1, A15-9 ->
+  0005 A16-4, A16-5, A16-8)
 
 - 0002 O-1 outcome = a documented limit; no io-slot API. Smi lane: 0 B/op. Big lane (measures and y beyond 2^30):
   measures drawn in [2^30, 2^40] with live <= 4096 (4096 * 2^40 = 2^52, never a headroom RangeError), y drawn in
@@ -466,7 +495,19 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
 - Must-fail: a descent that returns acc across a %NeverOptimizeFunction helper shows > 16*b + 1. Doc sites: README
   Zero-GC notes and llms.txt state the limit, insertAt's as b = dims (R-A1).
 - Bytecode (A15-9, REPORTED, node v26.8.2): getMeasure 443 (287d10c1) -> 464 (92e67fa0) bytes, over V8's default
-  460-byte inline limit. Not a spec violation (b = 1 above, the Smi lane returns a Smi, 0003 G-7 holds); a G2 input.
+  460-byte inline limit. Not a spec violation (b = 1 above, the Smi lane returns a Smi, 0003 G-7 holds); a G2 input
+  (superseded by A16-4: 455 B at 8052b70f).
+- Bytecode after AF2 (A16-4, REPORTED, node v26.8.2): getMeasure hoists the misses slot (`const j = YG_MISSES - h;
+  cn[j] = (cn[j] + 1) | 0;`, still the 0003 G-5 form) and is 455 bytes (464 -> 455; 5 B under the 460 limit); entityAt
+  400, indexAtSum 420, sumBefore 422 unchanged. Pinned < 460 in npm test (fails on 92e67fa0, A16-8;
+  test/AuditFixes2.test.mjs: child process with
+  a timeout, fail closed). The cursor offset(d) / measure(d) invalid branch returns `0 / 0` instead of the global NaN
+  (A16-5; results unchanged, NaN while invalid). Re-measure (REPORTED, audit/2026-10-27/claude/alloc-tight.mjs, 16 MB
+  semi-space (the probe's usage line), steady-state min B/op, 3 interleaved runs per op, 92e67fa0 -> 8052b70f,
+  2026-10-27T07:01:20Z-07:01:23Z, node
+  v26.8.2, QUIET load1 2.17 vs baseline 2.21, 12 cores, no other node >= 10% CPU, 24 runs): getMeasure 16 -> 0, cursor
+  measure 16 -> 0, cursor offset 0 -> 0, total 0 -> 0. The 0 B/op claim is G2 B4's torture lane (big.getMeasure,
+  big.offset, big.measure at 0 B/op; the bound stays 16*b + 1, b = 1), not gated at 0 yet.
 - Cursor probe (A12-13, reviewer scratch; PRELIMINARY: host load 3.2-4.6, --trace-gc scavenge counts, 2^21 ops, 1 MB
   semi-space, node v26.8.2, 2026-10-27): seekIndex with measures in [2^30, 2^40] gave 0 scavenges; the getters 0;
   seekSum with a big fractional y 32 (about 16 B/op = the one boxed y, b = 1); with a small y 0. Not a gate (the gate is
@@ -623,10 +664,13 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   the child timeout: it spins in ygJoin on undefined weights (3 * w is NaN) after the dropped ss[HL-1] write.
 - Amends 0001 T-10 and 0003 G-13.
 
-### C-24 COUNTERS (R-D2 -> 0005 A5-15 -> 0005 A9-1, A9-5 -> 0005 A11-4 -> 0005 A15-5)
+### C-24 COUNTERS (R-D2 -> 0005 A5-15 -> 0005 A9-1, A9-5 -> 0005 A11-4 -> 0005 A15-5 -> 0005 A16-2, A16-4)
 
 - The counter indexes are a static frozen class field SumSequence.COUNTERS; the export list is unchanged. Closes
-  0003 O-3. Counters stay per view (R-X2) and clear() keeps them (C-8).
+  0003 O-3. Read-only binding (R-A5, A16-2, RULED): after the class body, Object.defineProperty(SumSequence,
+  'COUNTERS', { writable: false, configurable: false }) (cold, module load only); the object stays frozen and
+  enumerable is unchanged; a strict-mode assignment throws TypeError. A row asserts the descriptor. Counters stay per
+  view (R-X2) and clear() keeps them (C-8).
 - Readings (A5-15): readCounters() and resetCounters() ship as the 0003 G-8 rules (resetCounters = fill(0), cold;
   C-12 never listed them) (RA-6). splitAt and append count into this._n, as the stubs and StubCounts do; splitAt's
   out._n delta is 0 (RS-1). joinSteps = internal nodes pushed on the join stack, at most HB(Lmax) per join (RS-5;
@@ -638,7 +682,8 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   `n[K] = (n[K] + x) | 0` (51 sites, aliases included; the wrap goes to -2^31, gates read window deltas `(after -
   before) | 0`). The 0003 G-6 census is GATED in npm test (test/CounterCensus.test.mjs): 0 violations, >= 51 G-5
   writes, must-fail fixtures including `if (this._n[7] > 0)` and a `+=` site. The three allowed non-write sites are the
-  constructor, readCounters and resetCounters.
+  constructor, readCounters and resetCounters. AF2 leaves the census at 51 G-5 writes, 0 violations (A16-4, reviewer,
+  base and head).
 - Slot dependence (A11-4, R8-2): the positional tail indexes `YG_MISSES - h`, so it depends on fingerHits = slot 8 =
   fingerMisses - 1 (this layout); test/Counters.test.mjs gates it (deep-equals COUNTERS).
 
@@ -1023,11 +1068,13 @@ Sources: G-A A1 -> G-A-D1 -> G-A A2-7 -> G-A A3-1..A3-3 -> 0005 A5-1 -> 0005 A11
   clear() on every view. lite-leak tracker.size() == 0 after the 1000 cycles; every view equals the constructed state
   (fl NIL, valid false, length 0); header bump 0, live 0. Must fail: MF-5.
 
-### C-40 A6 cursor bit (G-A-D4 -> G-A A2-4 -> G-A A3-4 -> DB1 P-05, P-21 -> 0005 A5-3 -> 0005 A12-12)
+### C-40 A6 cursor bit (G-A-D4 -> G-A A2-4 -> G-A A3-4 -> DB1 P-05, P-21 -> 0005 A5-3 -> 0005 A12-12 -> 0005 A16-1)
 
 - test/Cursor.test.mjs. Mutator classes: insertAt, removeAt, setMeasure, splitAt (this), append (this), append
   (other), clear. Per class: a cursor seeked to row 0, the mutation, then valid === false, index -1, entity -1,
-  Number.isNaN(offset(0)). A RangeError mutation and every read op leave valid === true and the fields unchanged.
+  Number.isNaN(offset(0)). A RangeError mutation and every read op leave valid === true and the fields unchanged,
+  except the R-E4 'pool' throw,
+  which may leave valid false (C-3, R-A4, A16-1; unreachable under C-15, no row).
   The splitAt-out row is not a mutant row: out must be empty, so the test asserts out's cursor valid === false both
   before and after the splitAt.
 - Must fail: 7 class mutants, each dropping one class's store (the append-other mutant drops `other._cv = false`),
@@ -1107,7 +1154,7 @@ Sources: PLAN-E0 M-1 -> M-2 -> M-3 -> M-4 -> M-5 -> 0005 A5-5..A5-8 -> 0005 A7-2
 
 ### C-44 Engine internal layout, the adapter contract
 Sources: PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6-1 -> 0005 A12-8 -> 0005 A15-2, A15-6,
-  A15-8
+  A15-8 -> 0005 A16-7
 
 - Each view has own fields in this order: _root, _len, _fl, _fb, _fdepth, _fpath, _cv, _cur, _n, then hoisted column
   refs, and _ar (the shared arena record). _ar keys (A15-8): C, B, shift, m, dims, Lmax, HL, sx, jstack, sstack
@@ -1124,6 +1171,8 @@ Sources: PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6
   `!((m >= 0) & (m <= YG_MAX))` ('measure must be in [0, 2^53-1]'), then `m % 1 !== 0` ('measure must be an
   integer'); no call carries the double (Zero-Box law) and the helper ygMeasure is removed. Messages and tokens are
   unchanged. R-A2 (A15-2): the dims-change re-tiering deopt (F-3) is a reading; the fused branch stands.
+  Gate (A16-7, CL-5): the AF-3 test is call-shape keyed: inside ygSlots every `yg\w+(` call is `ygFail(`, plus the kept
+  `(sx[` and ygMeasure checks, with in-test must-fail controls (test/AuditFixes.test.mjs).
 - The engine adapter engineFactory(C, {leafSize, dims}, count, cfg) -> {views, snapshot()} reads the RA-1 fields (each
   view's hoisted column refs; the constants in views[0]._ar); snapshot() follows the walker header (C-27) exactly,
   every array a deep copy; any cfg key is a RangeError 'cfg' (the engine takes none). NIL = 0 and
@@ -1559,6 +1608,17 @@ Each source item maps to a C-id or reads "history-only". Rule text is not repeat
 | 0005 A15-7 | C-10 |
 | 0005 A15-8 | C-44 |
 | 0005 A15-9 | C-13 |
+| R-A4 | C-3 |
+| R-A5 | C-24 |
+| R-A6 | C-8 |
+| 0005 A16-1 | C-3, C-6, C-40 |
+| 0005 A16-2 | C-24 |
+| 0005 A16-3 | C-8 |
+| 0005 A16-4 | C-13, C-24 |
+| 0005 A16-5 | C-13 |
+| 0005 A16-6 | C-10 |
+| 0005 A16-7 | C-44 |
+| 0005 A16-8 | C-13 |
 
 Count note: this map has 128 rows: G-A 61 (body 13, D-1..D-3 3, R-D1..R-D3 3, TASKS 0-8 9, A1..A5 5, RISK 3, G-A-D1..D11
 11, A2-1..A2-8 8, A3-1..A3-5 5, plus the shared R-D4 row), G-B 39 (O-4, B-19, B-25, B-26, B-27, B-29, B-32, XG-1;
@@ -1578,7 +1638,9 @@ source row); the 5 rows 0005 A13-1..A13-5 follow those (295 rows; the bc reading
 the 13 rows 0005 A14-1..A14-13 follow those (308 rows; the K-R2 readings carry their K2-id tag in the ADDENDUM 14
 item, no separate source row); the 3 ruling source rows R-A1..R-A3 and the 9 rows 0005 A15-1..A15-9 follow those (320
 rows; A15-1..A15-3 are the three rulings, the AF readings carry their AF-n tag in the ADDENDUM 15 item, no separate
-source row).
+source row); the 3 ruling source rows R-A4..R-A6 and the 8 rows 0005 A16-1..A16-8 follow those (331 rows;
+A16-1..A16-3 are the three rulings, the AF2 readings carry their AF2-n tag in the ADDENDUM 16 item, no separate source
+row).
 No E0 or rung-3/4/5/6 source item is history-only: each one changed a CURRENT rule.
 
 ## Addenda
@@ -2123,5 +2185,57 @@ re-consolidation (the "consolidated through" line stays at ADDENDUM 12); A13, A1
   1007 -> 1042, setMeasure 849 -> 877, getMeasure 443 -> 464 (over V8's default 460-byte inline limit; the reviewer:
   not a spec violation, C-13 counts getMeasure b = 1, the Smi lane returns a Smi, 0003 G-7 holds; a G2 input), entityAt
   379 -> 400.
+
+OPEN (not folded, maintainer decision pending): none.
+
+
+### ADDENDUM 16 (2026-10-27) -- the audit #2 fix unit AF2 and rulings R-A4..R-A6, 0005's own
+
+Tier: DETERMINISTIC (source anchors, exact counts, mutant and revert-check results; no timing), except the bytecode
+lengths and the B/op re-measure in A16-4, which are REPORTED (node v26.8.2). A16-1..A16-3 are the maintainer rulings
+R-A4..R-A6 (quoted in "Maintainer rulings" above, AskUserQuestion 2026-10-27); A16-4..A16-8 are readings of the AF2
+unit, NOT rulings and NOT ruled. Written against 188c4f8 + the AF2 tree (Yggdrasil.js sha256 8052b70f, before 92e67fa0;
+engine reviewed clean, a test-only fix round followed; npm test 831 -> 838). Each item names the CURRENT rules it
+changed; the rule text above is already amended (same edit). The map rows are in the Source map. No item amends an ADR
+rule (0003 G-5 / G-6 are applied as written), so the Amends table gains no row. This is not a re-consolidation (the
+"consolidated through" line stays at ADDENDUM 12); A13..A16 are past it.
+
+- A16-1 (R-A4, RULED; pass 2 F4) -> C-3, C-6, C-40. C-3's R-E4 'pool' exemption also covers the cursor: the throw may
+  leave cursor() invalid (_cv = false), the fail-safe outcome, like the finger. No engine change. Audit reproduction
+  (audit/2026-10-27/reproduction.js "[Finding 4]"): after insertAt threw RangeError 'pool', cursor().valid was false
+  (index -1, entity -1, offset / measure NaN). C-6 and C-40 each carried a sentence that a RangeError mutation leaves
+  _cv unchanged; both now point at the exemption.
+- A16-2 (R-A5, RULED; CL-2, AF2-4) -> C-24. COUNTERS is a read-only binding: after the class body,
+  Object.defineProperty(SumSequence, 'COUNTERS', { writable: false, configurable: false }); the object stays frozen,
+  enumerable unchanged, a strict-mode assignment throws TypeError. Gated by a descriptor row in
+  test/AuditFixes2.test.mjs (fails on 92e67fa0).
+- A16-3 (R-A6, RULED; pass 2 F1a, F1c) -> C-8. Not detected: a forged _len inside [0, live] on a valid root is beyond
+  the guard (R-S3 class). clear() stays O(1) when the view holds every live element. Pass 2 F1c is NOT a defect: the
+  fast path is correct when the view truly holds every live element.
+- A16-4 (AF2-1; CL-1 = pass 2 F2; reading, NOT ruled) -> C-13, C-24. getMeasure hoists the misses slot (`const j =
+  YG_MISSES - h; cn[j] = (cn[j] + 1) | 0;`), still the 0003 G-5 form; bytecode 464 -> 455 B (under V8's 460-byte inline
+  limit, 5 B headroom); entityAt 400, indexAtSum 420, sumBefore 422 unchanged. Gated: bytecode-length pins (< 460, child
+  with timeout, fail closed). The G-6 census still reads 51 G-5 writes, 0 violations (reviewer, base and head).
+  Re-measure (REPORTED, 92e67fa0 -> 8052b70f, details in C-13): getMeasure 16 -> 0, cursor measure 16 -> 0, cursor
+  offset 0 -> 0 (it did NOT box on the before build in this probe; the audit's 16.21 came from another harness), total
+  0 -> 0. Torture big lanes after: big.getMeasure / big.offset / big.measure 0 B/op (bound stays 16*b + 1, b = 1).
+- A16-5 (AF2-2; pass 2 F3; reading, NOT ruled) -> C-13. SumCursor offset(d) / measure(d) return `0 / 0` instead of the
+  global NaN on the invalid branch; results unchanged (NaN while invalid). Bytecode: `LdaGlobal [NaN]` ->
+  `LdaConstant <HeapNumber nan>`; why that removes the box was not isolated (a reading of the bytecode and the
+  re-measure, not a proven cause). The 0 B/op claim is G2 B4's torture lane, not gated at 0 yet: the global-NaN mutants
+  survive every npm-test row (expected).
+- A16-6 (AF2-3; CL-4; reading, NOT ruled) -> C-10. readCounters guard `!(out.length >= YG_NC)` (NaN-closed; same
+  'counters' token and text). A forged NaN or undefined length now throws RangeError 'counters' (the old build threw a
+  TypeError from set (the test's Object.create forgery; a real Int32Array with an own length forged to NaN copied
+  without throwing)). Yggdrasil.d.ts readCounters documents the throw (CL-3).
+- A16-7 (CL-5; reading, NOT ruled) -> C-44. The AF-3 gate (A15-6) is keyed on call shape: inside ygSlots every `yg\w+(`
+  call is `ygFail(`, plus the kept `(sx[` and ygMeasure checks, with in-test must-fail controls. The review r1 test-only
+  REJECTED was a survivor `chk(sx[d])`, fixed in the helper round.
+- A16-8 (AF2 review and revert-check; reading, NOT ruled) -> C-13. Revert-check on 92e67fa0: the getMeasure pin, the
+  COUNTERS descriptor and the readCounters NaN row FAIL; PIN rows pass. Review r1 (review/mutants.log): 10 mutants
+  (hoist undone,
+  descriptor variants, `<` restored, ygChk added, bytecode child silent / hung / no-print, measure returns 0) killed;
+  the `chk(sx[d])` mutant (m4b) survived r1 and is killed in r2 (r2/m4b.tap, 1 fail); the global-NaN mutants survive
+  every row (A16-5). npm test 831 -> 838.
 
 OPEN (not folded, maintainer decision pending): none.

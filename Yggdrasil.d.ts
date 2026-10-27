@@ -87,7 +87,7 @@ export declare class SumSequence {
   splitAt(i: number, out: SumSequence): this;
   /** The view's one cursor (the same object on every call; allocates nothing). Not valid until a seek lands on an element; every successful mutation of this view (and append() for the other view too) leaves it invalid. */
   cursor(): SumCursor;
-  /** Copy the 12 counters into out (length >= 12). */
+  /** Copy the 12 counters into out. RangeError 'counters' when out is not an Int32Array or out.length is not >= 12 (NaN included). */
   readCounters(out: Int32Array): void;
   resetCounters(): void;
 }

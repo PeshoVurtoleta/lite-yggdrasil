@@ -27,7 +27,8 @@
     "test": "node --test test/*.test.mjs",
     "test:types": "tsc -p test/types/tsconfig.json",
     "test:lanes": "node test/engine-lanes.mjs",
-    "verify": "npm test && npm run test:types && npm run test:lanes"
+    "torture": "node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 --no-concurrent-recompilation test/torture.mjs",
+    "verify": "npm test && npm run test:types && npm run test:lanes && npm run torture"
   },
   "keywords": [
     "sum-tree",

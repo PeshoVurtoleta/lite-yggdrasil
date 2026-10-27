@@ -11,8 +11,9 @@
 //     bop = the gated B/op (test/torture-meter.mjs: MIN over windows 1..n-1 minus the empty-loop baseline), NaN when
 //     every gated window saw a GC (then ok is false for a lane AND a control: fail closed). Never calls gc(), never
 //     starts a GcProfiler: test/torture.mjs wraps this call in one and gates maxMajor 0 over it.
-//   Standalone: node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 test/torture-alloc.mjs
-//     prints one line per row and a GATE line; exit 1 on any FAIL, and before running anything when a flag is
+//   Standalone: node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 --no-concurrent-recompilation
+//     test/torture-alloc.mjs (R-G5: optimised code installs synchronously, so every lane reads the same tier);
+//     it prints one line per row and a GATE line; exit 1 on any FAIL, and before running anything when a flag is
 //     missing (the line names it). `--child <name>` is the internal mode of the mutant controls (one row as
 //     `ROW <json>`); `--child rest` is the R-G3 rest-parameter probe, REPORTED, never part of runAlloc.
 //
@@ -20,15 +21,23 @@
 // (1) Smi lanes (C-38): seekIndex / seekSum + 50x next(), getMeasure, entityAt, the dims = 4 positional insertAt +
 //     removeAt pair (it also gates ygSlots, called by-args at dims > 1); 6 windows x 1e5 ops; ok iff bop < 1 (R-G2).
 // (2) Big lanes (C-13): measures in [2^30, 2^40], live 4096, y in [2^30, live * 2^30) with a .5 fraction; 8 windows
-//     x 2^14 ops; ok iff bop <= 16 b + 1. b = 1: setMeasure, getMeasure, sumBefore, total, indexAtSum, seekSum,
-//     cursor offset(d) / measure(d). b = 0: removeAt, entityAt, next, seekIndex, splitAt + append as a pair.
-//     insertAt + removeAt at dims 1..4: b = dims (R-A1, A15-1).
+//     x 2^14 ops; ok iff bop <= 16 b + 1. b = 1: setMeasure, sumBefore, total, indexAtSum, seekSum. b = 0: removeAt,
+//     entityAt, next, seekIndex, splitAt + append as a pair. insertAt + removeAt at dims 1..4: b = dims (R-A1, A15-1).
+//     R-G4 regression rows: getMeasure and cursor offset(d) / measure(d) are gated at the b = 0 bound (<= 1) on this
+//     node; C-13's spec bound for them stays b = 1 (17, the contract), printed as the row's note.
 // (3) Controls, ok iff the control behaves as stated (`expect`): oneBox.smi (a fractional double stored into an
 //     object-elements array, one HeapNumber per op) MUST fail the Smi gate; oneBox.big MUST pass the b = 1 bound
 //     (one box = 16 B <= 17, the bound is not looser than one box); twoBox.big MUST fail it. In children (spawnSync,
 //     timeout + SIGKILL): arrayInsert.d4 (buildMutant: insertAt(i, e, ms), the driver passes [m0..m3] per op, R-G3)
 //     MUST fail the Smi gate; descent.sumBefore (buildMutant: every descent level returns acc across a helper under
-//     %NeverOptimizeFunction, --allow-natives-syntax in that child only) MUST fail the b = 1 bound (C-13 must-fail).
+//     %NeverOptimizeFunction, --allow-natives-syntax in that child only) MUST fail the b = 1 bound (C-13 must-fail);
+//     nanMeasure.big (buildMutant: SumCursor measure's invalid branch returns the global NaN instead of 0 / 0) MUST
+//     fail the R-G4 bound (<= 1) on the big.measure lane as gated (cursor VALID, seekIndex(17) before each window).
+//     The invalid branch itself cannot carry the teeth: returning the global NaN hands back a pre-existing
+//     HeapNumber (0 B/op, measured); the box is the valid path's double once the untaken branch makes the return
+//     tagged. The child then runs the same lane on an INVALID cursor (seekIndex(length)) and prints that reading as
+//     a REPORTED note (expected 0); its B/op gates nothing, but the control row fails closed (ok false) unless
+//     that lane really ran on an invalid cursor (valid === false) and read NaN.
 //
 // Orchestrator / coder readings (NOT maintainer rulings):
 // - big removeAt runs on its own dims = 1 arena of 2^14 live with measures in [2^30, 2^38] (2^14 * 2^38 = 2^52),
@@ -48,7 +57,8 @@ import { lane, baseline, bop, winText, semiSpaceOk, setTrace } from './torture-m
 
 const ENGINE = fileURLToPath(new URL('../Yggdrasil.js', import.meta.url));
 const SELF = fileURLToPath(import.meta.url);
-const FLAGS = ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4'];
+// R-G5: --no-concurrent-recompilation (optimised code installs synchronously)
+const FLAGS = ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4', '--no-concurrent-recompilation'];
 const CHILD_MS = 180000;
 
 const SMI_OPS = 100000;
@@ -124,7 +134,7 @@ function mkRow(spec, res, base) {
   const w0 = (res.delta[0] - base.min) / res.ops;
   return {
     name: spec.name, kind: spec.kind, bop: b, bound: spec.bound, ok, windows: res.windows, gated: res.gated,
-    strict: spec.strict, expect: spec.expect, w0, wins: winText(res, base),
+    strict: spec.strict, expect: spec.expect, w0, wins: winText(res, base), note: spec.note,
   };
 }
 
@@ -134,6 +144,9 @@ function smiSpec(name) {
 function bigSpec(name, b) {
   return { name, kind: 'lane', bound: 16 * b + 1, strict: false, expect: true };
 }
+// R-G4: a DETERMINISTIC regression row at the b = 0 bound; C-13's spec bound (b = 1) stays the contract.
+const RG4_B = 0; // R-G4 / R-G5: the b of the 3 regression rows and of ctl.nanMeasure.big's bound
+const RG4_NOTE = 'R-G4 regression row (b = 0); C-13 spec bound b = 1 (<= 17)';
 function ctlSpec(name, bound, strict, expect) {
   return { name, kind: 'control', bound, strict, expect };
 }
@@ -167,21 +180,24 @@ function smiLanes(rows, gate) {
 // ---- (2) big lanes ------------------------------------------------------------------------------------------------
 function bigLanes(rows, gate) {
   const base = baseline(BIG_OPS, BIG_WIN);
-  const run = (name, b, step, prep) =>
-    rows.push(mkRow(bigSpec(name, b), lane(name, step, BIG_OPS, BIG_WIN, prep, gate), base));
+  const run = (name, b, step, prep, note) => {
+    const spec = bigSpec(name, b);
+    if (note !== undefined) spec.note = note;
+    rows.push(mkRow(spec, lane(name, step, BIG_OPS, BIG_WIN, prep, gate), base));
+  };
   const [v, w] = bigViews(SumSequence, 2);
   const c = v.cursor();
   const seek17 = () => { c.seekIndex(17); };
   const seek0 = () => { c.seekIndex(0); };
-  // b = 1
+  // b = 1, and the R-G4 rows at b = RG4_B (getMeasure, offset, measure)
   run('big.setMeasure', 1, (k) => { v.setMeasure(BIX[k & MASK], k & 1, BM[(k + 7) & MASK]); });
-  run('big.getMeasure', 1, (k) => { OUT[0] = v.getMeasure(BIX[k & MASK], k & 1); });
+  run('big.getMeasure', RG4_B, (k) => { OUT[0] = v.getMeasure(BIX[k & MASK], k & 1); }, undefined, RG4_NOTE);
   run('big.sumBefore', 1, (k) => { OUT[0] = v.sumBefore(k & 1, BIX[k & MASK]); });
   run('big.total', 1, (k) => { OUT[0] = v.total(k & 1); });
   run('big.indexAtSum', 1, (k) => { IOUT[0] = v.indexAtSum(k & 1, BY[k & MASK]); });
   run('big.seekSum', 1, (k) => { IOUT[0] = c.seekSum(k & 1, BY[k & MASK]) ? 1 : 0; });
-  run('big.offset', 1, (k) => { OUT[0] = c.offset(k & 1); }, seek17);
-  run('big.measure', 1, (k) => { OUT[0] = c.measure(k & 1); }, seek17);
+  run('big.offset', RG4_B, (k) => { OUT[0] = c.offset(k & 1); }, seek17, RG4_NOTE);
+  run('big.measure', RG4_B, (k) => { OUT[0] = c.measure(k & 1); }, seek17, RG4_NOTE);
   // b = 0
   run('big.entityAt', 0, (k) => { IOUT[0] = v.entityAt(BIX[k & MASK]); });
   run('big.seekIndex', 0, (k) => { IOUT[0] = c.seekIndex(BIX[k & MASK]) ? 1 : 0; });
@@ -255,6 +271,7 @@ const SIG = 'insertAt(i, e, m0, m1, m2, m3) {';
 const UNPACK = '\n    const m0 = ms[0], m1 = ms[1], m2 = ms[2], m3 = ms[3];';
 const DESCENT = 'acc += l < 0 ? lsum[~l] : sums[l];';
 const CLASS = 'export class SumSequence {';
+const NAN_ANCHOR = 'if (!v._cv) return 0 / 0;'; // SumCursor measure's invalid branch, exactly once in the engine
 const CHILDREN = {
   // R-G3 gated: the driver allocates [m0..m3] per op.
   'ctl.arrayInsert.d4': {
@@ -284,6 +301,27 @@ const CHILDREN = {
       const res = lane('ctl.descent.sumBefore', (k) => { OUT[0] = v.sumBefore(k & 1, BIX[k & MASK]); },
         BIG_OPS, BIG_WIN);
       return mkRow(ctlSpec('ctl.descent.sumBefore', 17, false, false), res, base);
+    },
+  },
+  // R-G4 must-fail: measure's invalid branch returns the global NaN; gated on the big.measure lane as run (VALID).
+  'ctl.nanMeasure.big': {
+    natives: false,
+    patches: [[NAN_ANCHOR, 'if (!v._cv) return NaN;', 1]],
+    run: (S) => {
+      const base = baseline(BIG_OPS, BIG_WIN);
+      const [v] = bigViews(S, 2);
+      const c = v.cursor();
+      const res = lane('ctl.nanMeasure.big', (k) => { OUT[0] = c.measure(k & 1); }, BIG_OPS, BIG_WIN,
+        () => { c.seekIndex(17); });
+      const r = mkRow(ctlSpec('ctl.nanMeasure.big', 16 * RG4_B + 1, false, false), res, base);
+      // REPORTED after the gated lane (taking the invalid branch first changes the valid path's code): INVALID cursor.
+      const inv = lane('nanMeasure.invalid', (k) => { OUT[0] = c.measure(k & 1); }, BIG_OPS, BIG_WIN,
+        () => { c.seekIndex(v.length); });
+      const ib = bop(inv, base);
+      r.note = 'invalid-cursor lane REPORTED bop=' + (Number.isNaN(ib) ? 'NaN' : ib.toFixed(3)) + ' valid=' + c.valid +
+        ' read=' + OUT[0] + ' w=' + winText(inv, base);
+      if (c.valid !== false || !Number.isNaN(OUT[0])) r.ok = false; // the REPORTED lane must really be invalid
+      return r;
     },
   },
   // R-G3 REPORTED only: insertAt(i, e, ...ms), the driver passes m0..m3 positionally (Smi windows, as C-38).
@@ -371,7 +409,7 @@ async function runRows(gate, teeth, trace) {
   }
   mark('boxControls');
   boxControls(rows);
-  for (const nm of ['ctl.arrayInsert.d4', 'ctl.descent.sumBefore']) {
+  for (const nm of ['ctl.arrayInsert.d4', 'ctl.descent.sumBefore', 'ctl.nanMeasure.big']) {
     const t0 = trace === null ? 0 : performance.now();
     rows.push(childRow(nm, 'control'));
     if (trace !== null) trace('child', nm, 0, t0, performance.now());
@@ -387,7 +425,8 @@ export function rowText(r) {
   const exp = r.kind === 'control' ? ' expect=' + (r.expect ? 'pass' : 'FAIL') : r.kind === 'reported' ? ' REPORTED' : '';
   return r.kind.padEnd(8) + ' ' + r.name.padEnd(26) + ' bop=' + (Number.isNaN(r.bop) ? 'NaN' : r.bop.toFixed(3)) +
     ' bound' + cmp + r.bound + exp + ' ok=' + r.ok + (r.wins ? ' w=' + r.wins : '') +
-    (r.sigLen !== undefined ? ' insertAt.length=' + r.sigLen : '') + (r.why ? ' why=' + r.why : '');
+    (r.sigLen !== undefined ? ' insertAt.length=' + r.sigLen : '') + (r.why ? ' why=' + r.why : '') +
+    (r.note ? ' note=' + r.note : '');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

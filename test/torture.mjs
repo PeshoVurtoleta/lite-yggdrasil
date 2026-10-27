@@ -1,5 +1,6 @@
 // test/torture.mjs -- the G2 torture entry (ADR 0005 C-38, C-39; PLAN-G2 TASKS 5, 6). Run:
-//   node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 test/torture.mjs [retention|alloc|jit]
+//   node --expose-gc --min-semi-space-size=4 --max-semi-space-size=4 --no-concurrent-recompilation test/torture.mjs
+//     [retention|alloc|jit]
 // No phase argument = retention, then alloc, then jit. DETERMINISTIC and untimed: wall time is never gated.
 // NOT a *.test file, so `node --test test/*.test.mjs` does not load it.
 //
@@ -28,8 +29,10 @@
 // torture-alloc.mjs / torture-jit.mjs are imported DYNAMICALLY inside their branches (OA-1), so `retention` runs on
 // its own. No @zakkster/lite-signal import and no createRoot / effect wrapper (R-G1); lite-leak loads it as a peer.
 //
-// Flags (fail closed): process.execArgv must hold --expose-gc, --min-semi-space-size=4 and --max-semi-space-size=4,
-// else exit 1 naming the missing flag. Exit code: 0 all green, 1 on any FAIL. One GATE line per phase.
+// Flags (fail closed): process.execArgv must hold --expose-gc, --min-semi-space-size=4, --max-semi-space-size=4 and
+// --no-concurrent-recompilation (R-G5: optimised code installs synchronously, so every alloc lane reads the same code
+// tier on every run), else exit 1 naming the missing flag. Exit code: 0 all green, 1 on any FAIL. One GATE line per
+// phase.
 // The F-6 row is exported (f6Row) so the revert run on the 287d10c1 build (.handoff/evidence/g2/b2/) reuses it;
 // importing this file runs nothing.
 //
@@ -46,7 +49,8 @@ import {
 } from '@zakkster/lite-leak';
 import { SumSequence } from '../Yggdrasil.js';
 
-const FLAGS = ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4'];
+// R-G5: --no-concurrent-recompilation (optimised code installs synchronously)
+const FLAGS = ['--expose-gc', '--min-semi-space-size=4', '--max-semi-space-size=4', '--no-concurrent-recompilation'];
 const PHASES = ['retention', 'alloc', 'jit'];
 const CYCLES = 1000;     // C-39
 const MF5_CYCLES = 10;   // the MF-5 control (C-35)

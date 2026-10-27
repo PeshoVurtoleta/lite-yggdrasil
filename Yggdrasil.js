@@ -1594,8 +1594,9 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
+    const j = YG_MISSES - h; // hoisted slot: keeps the body under 460 B of bytecode (CL-1)
     cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;
-    cn[YG_MISSES - h] = (cn[YG_MISSES - h] + 1) | 0;
+    cn[j] = (cn[j] + 1) | 0;
     return x;
   }
 
@@ -1872,7 +1873,7 @@ export class SumSequence {
 
   readCounters(out) {
     if (!(out instanceof Int32Array)) ygFail('counters', 'out must be an Int32Array');
-    if (out.length < YG_NC) ygFail('counters', 'out.length must be >= 12');
+    if (!(out.length >= YG_NC)) ygFail('counters', 'out.length must be >= 12'); // NaN-closed (CL-4)
     out.set(this._n);
   }
 
@@ -1880,6 +1881,11 @@ export class SumSequence {
     this._n.fill(0);
   }
 }
+
+// SumSequence.COUNTERS is a read-only binding (C-24, R-A5): the frozen object
+// stays, the static slot becomes writable: false, configurable: false
+// (enumerable unchanged). Cold, module load only.
+Object.defineProperty(SumSequence, 'COUNTERS', { writable: false, configurable: false });
 
 // ---- the cursor (C-6, C-7; rungs K-R1, K-R2) ------------------------------------------
 // A view's ONE cursor: view.cursor() returns the view's _cur (identity stable,
@@ -1935,7 +1941,7 @@ class SumCursor {
     if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= v._ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
-    return v._cv ? this._off[d >>> 0] : NaN;
+    return v._cv ? this._off[d >>> 0] : 0 / 0; // 0 / 0, not the global NaN: no box (pass 2 F3)
   }
 
   // The current element's measure of dim d; a boxed double (C-13, b = 1).
@@ -1945,7 +1951,7 @@ class SumCursor {
     if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
       ygFail('dim', 'must be an integer in [0, dims)');
     }
-    if (!v._cv) return NaN;
+    if (!v._cv) return 0 / 0; // not the global NaN: no box (pass 2 F3)
     const st = this._st;
     return v._meas[d >>> 0][(st[YG_CLEAF] << ar.shift) + st[YG_CPOS]];
   }

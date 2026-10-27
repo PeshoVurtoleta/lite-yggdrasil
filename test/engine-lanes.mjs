@@ -5,12 +5,12 @@
 //
 // Sections: (1) bfs / sweep / deep at ENGINE sizes for B = 4 and 8, each within 2^22 applies, each B with >= 1 clear
 // on a NON-EMPTY view (counted by the own-property clear wrapper, A4-14); (2) the B-1b row at bfsLane B = 4 nMax 9
-// plus its unpatched control. A later section (the C-34 A1 run, rung 10 / K-R2) is added after "SECTION 3" below.
+// plus its unpatched control; (3) the C-34 A1 run (test/a1-lane.mjs, K-R2).
 //
 // Orchestrator readings (PROPOSED addendum, NOT maintainer rulings):
-// - clear: the engine's clear() returns this, Oracle.clear returns undefined (exhaustive.mjs compares by kind), so the
-//   lane factory wraps clear as an OWN property that calls the real clear, throws if it did not return the view, and
-//   returns undefined. Fix owner: the K cursor batch's M-6 re-pin of exhaustive.mjs / oracle.mjs.
+// - clear: the engine's clear() returns this and Oracle.clear returns undefined; exhaustive.mjs (K-R2 M-6 re-pin, 0005
+//   C-29 A12-5) reads a clear() that returns the view as undefined, so the lanes need no return shim. The one wrapper
+//   left only COUNTS clears on a non-empty view (A4-14) and returns the real result untouched.
 // - sweep cap rule (C-31: lower that lane's nSweep by 1, never raise 2^22): B = 8 at ENGINE.nSweep 12 applies
 //   4194305 > 2^22 (measured 2026-10-27), so nSweep 11 is used for B = 8 (EXPECTED to be re-measured on a code change).
 // - B-1b moves to test:lanes at nMax 9: at nMax 6 the mutant finds nothing. Mutant = rotate only when the weight
@@ -36,9 +36,8 @@ function wrapClear(f, B) {
       v.clear = function () {
         const nonEmpty = this.length > 0;
         const q = Object.getPrototypeOf(this).clear.call(this);
-        if (q !== this) throw new Error('engine-lanes: clear() must return this');
         if (nonEmpty && B !== 0) clears[B]++;
-        return undefined;
+        return q;
       };
     }
     return r;
@@ -94,7 +93,11 @@ try {
   for (const b of built) b.cleanup();
 }
 
-// ---- SECTION 3: reserved for the C-34 A1 run (rung 10, K-R2).
+// ---- SECTION 3: the C-34 A1 run (K-R2). a1-lane.mjs is helper C's module; a missing module fails this script (no try).
+const { runA1 } = await import('./a1-lane.mjs');
+const a1 = await runA1();
+failures += a1.failures;
+lines.push(...a1.lines);
 
 for (const l of lines) console.log(l);
 console.log(`wall ${Date.now() - t0} ms (REPORTED only)`);

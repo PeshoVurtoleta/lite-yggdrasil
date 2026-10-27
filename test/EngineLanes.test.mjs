@@ -1,17 +1,16 @@
-// test/EngineLanes.test.mjs -- the exhaustive lanes on the real engine at CAPS sizes, the C-32 coverage
-// cells and drop control, the B-1a source mutant and its unpatched buildMutant control (B-1b runs in test/engine-lanes.mjs at nMax 9), and the interleaved finger-off mix (ADR 0005 C-31,
-// C-32, C-26, C-27, C-46; PLAN G-B2 tasks 4 and FO, A11-6). ENGINE-size lanes live in test/engine-lanes.mjs
-// (npm run test:lanes, R-E1).
+// test/EngineLanes.test.mjs -- the exhaustive lanes on the real engine at CAPS sizes, the C-32 coverage cells and
+// drop control, the B-1a source mutant and its unpatched buildMutant control (B-1b runs in test/engine-lanes.mjs at
+// nMax 9), and the interleaved finger-off mix (ADR 0005 C-31, C-32, C-26, C-27, C-46; PLAN G-B2 tasks 4 and FO,
+// A11-6). ENGINE-size lanes live in test/engine-lanes.mjs (npm run test:lanes, R-E1).
 //
-// Every expected value is derived from the spec (C-31 caps, C-32 cell list, C-26 hit / miss partition) or
-// from test/oracle.mjs (an independent plain-array model), never from engine output, except two values MEASURED and labelled at their site (the B = 8 sweep's nSweep - 1
-// and the drop control's rotDouble@insertAt).
+// Every expected value is derived from the spec (C-31 caps, C-32 cell list, C-26 hit / miss partition) or from
+// test/oracle.mjs (an independent plain-array model), never from engine output, except two values MEASURED and
+// labelled at their site (the B = 8 sweep's nSweep - 1 and the drop control's rotDouble@insertAt).
 //
-// HARNESS READING (orchestrator reading, PROPOSED addendum, not a maintainer ruling): the engine's clear()
-// returns this (0004:120), Oracle.clear returns undefined, and exhaustive.mjs compares returns by kind, so
-// sweepLane's clear suffix reports ORACLE on the real engine. The lane factory here wraps clear as an OWN
-// property on each view (never the prototype): it calls the real clear, throws if the result is not the
-// view, and returns undefined. Fix owner: the K cursor batch's M-6 re-pin of exhaustive.mjs / oracle.mjs.
+// clear() (0005 C-29 A12-5, C-46 M-6): the engine's clear() returns this (0004:120) while Oracle.clear and the stubs
+// return undefined. The K-R2 re-pin of exhaustive.mjs owns the fix (exInvoke reads a clear() that returns the view as
+// undefined), so every lane here runs on the UNWRAPPED engineFactory. The gate that fails on the HEAD driver is the
+// unwrapped CAPS sweep (its clear suffix reported ORACLE at the first clear before the re-pin).
 // The sweep at B = 8 lowers nSweep by 1 (C-31 binding rule, PROPOSED addendum): CAPS.nSweep[8] = 9 applies
 // 262145 > 2^18, so nSweep 8 is used; CAPS itself is not edited and the cap is never raised.
 //
@@ -33,21 +32,7 @@ const HERE = (p) => fileURLToPath(new URL(p, import.meta.url));
 const YPATH = HERE('../Yggdrasil.js');
 const APATH = HERE('./adapter.mjs');
 
-// Own-property clear wrapper (see the header). Generic over the view's prototype so mutant engines work too.
-function wrapClear(f) {
-  return (C, o, n, cfg) => {
-    const r = f(C, o, n, cfg);
-    for (const v of r.views) {
-      v.clear = function () {
-        const q = Object.getPrototypeOf(this).clear.call(this);
-        if (q !== this) throw new Error('engine-lanes: clear() must return this');
-        return undefined;
-      };
-    }
-    return r;
-  };
-}
-const factory = wrapClear(engineFactory);
+const factory = engineFactory;
 
 const memo = new Map();
 const once = (k, fn) => { if (!memo.has(k)) memo.set(k, fn()); return memo.get(k); };
@@ -113,7 +98,7 @@ async function buildEngineFactory(patches) {
   const Y = await buildMutant(YPATH, patches);
   const A = await buildMutant(APATH, [["'../Yggdrasil.js'", "'" + pathToFileURL(Y.file).href + "'", 1]]);
   built.push(Y, A);
-  return wrapClear(A.engineFactory);
+  return A.engineFactory;
 }
 
 // B-1a: stored internal weight = ELEMENT count instead of leaf count (leaf children add llen, not 1).
@@ -133,13 +118,33 @@ describe('EngineLanes controls', () => {
     assert.equal(r.ok, false);
     assert.equal(r.first.code, 'I-1', JSON.stringify(r.first));
   });
-  test('clear wrapper fails closed: an underlying clear() that returns undefined throws', () => {
-    const fake = () => ({ views: [Object.create({ clear() { return undefined; } })], snapshot() {} });
-    const w = wrapClear(fake)(1, {}, 1);
-    assert.throws(() => w.views[0].clear(), /clear\(\) must return this/);
-    const fake2 = () => ({ views: [Object.create({ clear() { return {}; } })], snapshot() {} });
-    assert.throws(() => wrapClear(fake2)(1, {}, 1).views[0].clear(), /clear\(\) must return this/);
-    assert.ok(Object.hasOwn(w.views[0], 'clear'));
+  // Spec 0004:120 / C-29: clear() returns the view on the engine and undefined on the oracle and the stubs. The driver
+  // reads the view as undefined (so the UNWRAPPED engine sweep passes, see the CAPS sweep tests above) and still
+  // rejects any other object. Oracle for both rows: Oracle.clear returns undefined.
+  const clearWrap = (ret) => (C, o, n, cfg) => {
+    const r = engineFactory(C, o, n, cfg);
+    for (const v of r.views) v.clear = function () { Object.getPrototypeOf(this).clear.call(this); return ret(this); };
+    return r;
+  };
+  const smallSweep = (f) => {
+    const b = bfsLane(f, { B: 4, nMax: 2, cap: CAPS.cap });
+    assert.equal(b.ok, true, JSON.stringify(b.first));
+    return sweepLane(f, { B: 4, states: b.states, nSweep: 2, cap: CAPS.cap });
+  };
+  test('clear: the engine returns the view (0004:120) and the unwrapped CAPS sweep, which runs clear(b), is ok', () => {
+    const v = engineFactory(8, { leafSize: 4, dims: 1 }, 2).views[0];
+    assert.equal(v.clear(), v);
+    assert.equal(new Oracle(1).clear(), undefined);
+    assert.equal(smallSweep(engineFactory).ok, true);
+  });
+  test('clear control: a clear() that returns undefined (stub / oracle style) passes; a foreign object fails ORACLE', () => {
+    assert.equal(smallSweep(clearWrap(() => undefined)).ok, true);
+    const r = smallSweep(clearWrap(() => ({})));
+    assert.equal(r.ok, false);
+    assert.equal(r.first.code, 'ORACLE', JSON.stringify(r.first));
+    assert.equal(r.first.op, 'clear');
+    const r2 = smallSweep(clearWrap(() => 7));
+    assert.equal(r2.first.code, 'ORACLE', JSON.stringify(r2.first));
   });
 });
 

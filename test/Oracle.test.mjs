@@ -1111,3 +1111,67 @@ test('model cursor: every mutator invalidates after its checks; reads and reject
   assert.equal(o.cursor().valid, true);
   assert.equal(o.cursor().index, 1);
 });
+
+// ---------------------------------------------------------------- K-R2: model cursor next() (C-7 RK-2, R-E3, C-40)
+// Hand values (cursorModel above): entities [10, 11, 12], measures [2, 0, 3]; offsets S = [0, 2, 2].
+
+test('model cursor next(): walks from every i to the end, then is invalid (R-E3)', () => {
+  const hand = [[10, 0, 2], [11, 2, 0], [12, 2, 3]]; // [entity, offset(0), measure(0)] per index
+  for (let i = 0; i < 3; i++) {
+    const o = cursorModel();
+    const c = o.cursor();
+    assert.equal(c.seekIndex(i), true);
+    for (let k = i + 1; k < 3; k++) {
+      assert.equal(c.next(), true);
+      assert.deepEqual([c.valid, c.index, c.entity, c.offset(0), c.measure(0)], [true, k, ...hand[k]]);
+    }
+    assert.equal(c.next(), false); // off the last element
+    assert.deepEqual([c.valid, c.index, c.entity], [false, -1, -1]);
+    assert.ok(Number.isNaN(c.offset(0)) && Number.isNaN(c.measure(0)));
+  }
+});
+
+test('model cursor next(): invalid is a no-op (false, still invalid); an empty view stays invalid', () => {
+  const o = cursorModel();
+  const c = o.cursor();
+  assert.equal(c.next(), false); // fresh cursor
+  assert.deepEqual([c.valid, c.index, c.entity], [false, -1, -1]);
+  assert.equal(c.seekIndex(3), false); // end seek
+  assert.equal(c.next(), false);
+  assert.equal(c.index, -1);
+  const e = new Oracle(1);
+  assert.equal(e.cursor().next(), false);
+  assert.equal(e.cursor().valid, false);
+  assert.equal(c.seekIndex(2), true);
+  assert.equal(c.next(), false);
+  assert.equal(c.next(), false); // twice past the end
+  assert.equal(c.index, -1);
+});
+
+test('model cursor next(): false after each of the 7 C-40 mutator classes', () => {
+  const other = () => { const q = new Oracle(1); q.insertAt(0, 7, 1); return q; };
+  const classes = [
+    (o) => o.insertAt(0, 1, 1), (o) => o.removeAt(0), (o) => o.setMeasure(0, 0, 4),
+    (o) => o.splitAt(1, new Oracle(1)), (o) => o.append(new Oracle(1)), (o) => o.clear(),
+  ];
+  for (const m of classes) {
+    const o = cursorModel();
+    o.cursor().seekIndex(0);
+    m(o);
+    assert.equal(o.cursor().next(), false);
+    assert.equal(o.cursor().valid, false);
+  }
+  // append(other): the OTHER view's cursor is invalidated too (C-40 append-other)
+  const a = cursorModel();
+  const b = other();
+  b.cursor().seekIndex(0);
+  a.append(b);
+  assert.equal(b.cursor().next(), false);
+  assert.equal(b.cursor().valid, false);
+  // a rejected mutation leaves a valid cursor walking
+  const o = cursorModel();
+  o.cursor().seekIndex(0);
+  assert.throws(() => o.insertAt(9, 1, 1), RangeError);
+  assert.equal(o.cursor().next(), true);
+  assert.equal(o.cursor().index, 1);
+});

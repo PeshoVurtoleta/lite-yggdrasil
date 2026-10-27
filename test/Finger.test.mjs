@@ -19,6 +19,7 @@ import { SumSequence } from '../Yggdrasil.js';
 import { engineFactory } from './adapter.mjs';
 import { walk } from './walker.mjs';
 import { buildMutant } from './mutant-build.mjs';
+import { a1Stream } from './a1-lane.mjs';
 
 const CN = SumSequence.COUNTERS;
 
@@ -1066,6 +1067,9 @@ const MUTS = [
   { name: 'hiStrict', anchor: 'at <= fb + (len = llen[~ref]) && len < ar.B', repl: 'at < fb + (len = llen[~ref]) && len < ar.B', count: 1, rows: ['append', 'multi-8-middle-B-1'] },
   { name: 'removeGeM', anchor: 'len > (this._fdepth === 0 ? 1 : ar.m)', repl: 'len >= (this._fdepth === 0 ? 1 : ar.m)', count: 1, rows: ['t6-8', 'multi-8-middle-m'] },
   { name: 'nilDropped', anchor: 'ref !== YG_NIL && ', repl: '', count: 5, rows: ['nil'], equivalent: true },
+  // R6 (reviewer): `_fdepth === 0 ? 1` -> `? 0` is EQUIVALENT: a single-leaf view with len 1 is the n === 1 drain, which
+  // returns before this test, so the changed arm (len > 0 vs len > 1 on a single leaf) is never reached with len 1.
+  { name: 'singleLeafGt0', anchor: 'len > (this._fdepth === 0 ? 1 : ar.m)', repl: 'len > (this._fdepth === 0 ? 0 : ar.m)', count: 1, rows: ['single-8'], equivalent: true },
   { name: 'hitTouchesDepth', anchor: 'cn[YG_TOUCHES] += depth & (h - 1);', repl: 'cn[YG_TOUCHES] += depth;', count: 5, rows: ['multi-8-middle-B-1'] },
   { name: 'loWiden', anchor: 'fb - ((fb - 1) >>> 31) < at', repl: 'fb - 1 < at', count: 1, rows: ['multi-8-middle-B-1'] },
   { name: 'elemHiWiden', anchor: 'at < fb + llen[~ref]', repl: 'at <= fb + llen[~ref]', count: 3, rows: ['multi-8-first-B-1', 'multi-8-middle-B-1'] },
@@ -1096,6 +1100,61 @@ for (const mu of MUTS) {
     });
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Part 3 (K-R2 helper C). (a) fl === NIL is a miss for every positional op, after splitAt and append (the nil row
+// above only inserts). Expected from C-4 / C-5 / C-26: hits +0, misses +1; answers from the build order (element k
+// carries entity k + 1 and measure k + 2; the append source carries 1000 + k and measure 1). Regression pin: passes
+// on the pre-K-R2 build too.
+test('Finger row (C-4/C-5/C-26): getMeasure / entityAt / setMeasure / removeAt at index 0 are misses on a NIL finger after splitAt / append, B=8', () => {
+  const B = 8;
+  const n = 4 * B;
+  const shapes = ['splitAt left', 'splitAt out', 'append dest', 'append source'];
+  for (const sh of shapes) {
+    for (const op of ['getMeasure', 'entityAt', 'setMeasure', 'removeAt']) {
+      const M = mkView(B, n);
+      const b = M.f.views[1];
+      let v, wantE, wantM;
+      if (sh === 'splitAt left') { M.v.splitAt(n >> 1, b); v = M.v; wantE = 1; wantM = 2; }
+      else if (sh === 'splitAt out') { M.v.splitAt(n >> 1, b); v = b; wantE = (n >> 1) + 1; wantM = (n >> 1) + 2; }
+      else {
+        for (let k = 0; k < n; k++) b.insertAt(k, 1000 + k, 1);
+        M.v.append(b);
+        v = sh === 'append dest' ? M.v : b;
+        wantE = sh === 'append dest' ? 1 : -1; wantM = sh === 'append dest' ? 2 : -1;
+      }
+      if (sh === 'append source') { // the source is emptied by append (length 0): a NIL, empty view, nothing to read
+        assert.equal(b._len, 0); assert.equal(b._fl, M.NIL); continue;
+      }
+      assert.equal(v._fl, M.NIL, sh + ': finger is NIL');
+      const c0 = readC(v);
+      let got;
+      if (op === 'getMeasure') { got = v.getMeasure(0, 0); assert.equal(got, wantM, sh + ' ' + op); }
+      else if (op === 'entityAt') { got = v.entityAt(0); assert.equal(got, wantE, sh + ' ' + op); }
+      else if (op === 'setMeasure') { v.setMeasure(0, 0, 7); assert.equal(v.getMeasure(0, 0), 7, sh + ' ' + op); }
+      else { got = v.removeAt(0); assert.equal(got, wantE, sh + ' ' + op); }
+      const c1 = readC(v);
+      const extra = op === 'setMeasure' ? 1 : 0; // the verifying getMeasure after setMeasure is a hit on the re-homed finger
+      assert.equal(delta(c0, c1, 'fingerMisses'), 1, sh + ' ' + op + ' misses');
+      assert.equal(delta(c0, c1, 'fingerHits'), extra, sh + ' ' + op + ' hits');
+    }
+  }
+});
+
+// (b) the A1 driver on a short stream: B=8, seed 1, 1500 executed ops (the full 1e4-op x 6 A1 run is test:lanes, R-E1).
+// 0 divergences, hits + misses == positional ops, off-run fingerHits 0; the MF-2 wrapper (C-35) diverges. Floors are NOT
+// asserted at this length (they are a 1e4-op property); test:lanes asserts them.
+test('Finger part 3: A1 driver, B=8 s=1, 1500 ops: 0 divergences; the MF-2 wrapper diverges', () => {
+  const r = a1Stream({ B: 8, seed: 1, ops: 1500 });
+  assert.equal(r.divergences, 0, JSON.stringify(r.first));
+  assert.equal(r.ops, 1500);
+  assert.equal(r.fingerHits + r.fingerMisses, r.positional);
+  assert.equal(r.offHits, 0);
+  assert.ok(r.positional > 1000 && r.fingerHits > 0, 'the stream exercises hits: ' + r.fingerHits + ' of ' + r.positional);
+  assert.ok(r.splits > 0 && r.merges > 0, 'the short stream splits and merges');
+  const bad = a1Stream({ B: 8, seed: 1, ops: 1500, mode: 'mf2', stopAtFirst: true });
+  assert.ok(bad.divergences >= 1, 'MF-2 (a miss keeps the finger) must diverge from finger-off');
+});
 
 if (CHILD) {
   const spec = JSON.parse(CHILD);

@@ -66,7 +66,7 @@ void sp;
 // @ts-expect-error -- splitAt takes a view as out.
 views[0].splitAt(0, 5);
 
-// cursor (rung K-R1): seek, read the fields, offset / measure; valid is readonly.
+// cursor (rung K-R2): seek, next, read the fields, offset / measure; valid is readonly.
 const cur: SumCursor = views[0].cursor();
 const cs1: boolean = cur.seekIndex(0);
 const cs2: boolean = cur.seekSum(0, 1);
@@ -75,9 +75,12 @@ const ci: number = cur.index;
 const ce: number = cur.entity;
 const co: number = cur.offset(0);
 const cm: number = cur.measure(0);
-void (cs1 && cs2 && cf && ci + ce + co + cm);
+const cn: boolean = cur.next();
+void (cs1 && cs2 && cn && cf && ci + ce + co + cm);
 
 // @ts-expect-error -- valid is readonly.
 cur.valid = true;
+// @ts-expect-error -- next takes no argument.
+cur.next(1);
 // @ts-expect-error -- seekIndex takes a numeric index.
 cur.seekIndex('0');

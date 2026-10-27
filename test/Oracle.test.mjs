@@ -1048,3 +1048,66 @@ test('controls: every mutant leaves the rows it does not target mostly passing (
     assert.ok(failed.length < ALL_ROWS.length / 4, Cls.name + ' failed ' + failed.length + ' rows');
   }
 });
+
+// ---------------------------------------------------------------- K-R1: the model cursor (C-6, C-7, C-10, R-E3)
+// Hand values: measures [2, 0, 3] over entities 10, 11, 12: S = [0, 2, 2, 5]; indexAtSum(0, 2) = 2 (strict, M-7).
+
+function cursorModel() {
+  const o = new Oracle(1);
+  o.insertAt(0, 10, 2); o.insertAt(1, 11, 0); o.insertAt(2, 12, 3);
+  return o;
+}
+
+test('model cursor: identity, fields, seeks, end state', () => {
+  const o = cursorModel();
+  const c = o.cursor();
+  assert.equal(c, o.cursor());
+  assert.deepEqual([c.valid, c.index, c.entity], [false, -1, -1]);
+  assert.equal(c.seekIndex(2), true);
+  assert.deepEqual([c.valid, c.index, c.entity, c.offset(0), c.measure(0)], [true, 2, 12, 2, 3]);
+  assert.equal(c.seekSum(0, 2), true); // S_1 + m_1 = 2 is not > 2, so element 2
+  assert.equal(c.index, 2);
+  assert.equal(c.seekSum(0, 1.5), true);
+  assert.equal(c.index, 0);
+  assert.equal(c.seekSum(0, 5), false); // y >= total -> end, invalid (R-E3)
+  assert.ok(Number.isNaN(c.offset(0)) && Number.isNaN(c.measure(0)));
+  assert.equal(c.seekIndex(3), false); // i = length -> end
+  assert.deepEqual([c.valid, c.index, c.entity], [false, -1, -1]);
+  assert.equal(c.seekIndex(-0), true);
+  assert.ok(Object.is(c.index, 0));
+  assert.equal(new Oracle(2).cursor().seekIndex(0), false); // empty view
+});
+
+test('model cursor: validation tokens and unchanged-on-throw', () => {
+  const o = cursorModel();
+  const c = o.cursor();
+  c.seekIndex(1);
+  for (const bad of [-1, 1.5, 4, NaN, '1']) assert.throws(() => c.seekIndex(bad), /^RangeError: index /);
+  assert.throws(() => c.seekSum(1, NaN), /^RangeError: dim /); // dim before y
+  assert.throws(() => c.seekSum(0, -1), /^RangeError: seek /);
+  assert.throws(() => c.offset(2), /^RangeError: dim /);
+  assert.deepEqual([c.valid, c.index, c.entity], [true, 1, 11]);
+});
+
+test('model cursor: every mutator invalidates after its checks; reads and rejected calls do not', () => {
+  const muts = [(o) => o.insertAt(0, 1, 1), (o) => o.removeAt(0), (o) => o.setMeasure(0, 0, 4), (o) => o.clear(),
+    (o) => o.splitAt(1, new Oracle(1)), (o) => o.append(new Oracle(1))];
+  for (const m of muts) {
+    const o = cursorModel();
+    o.cursor().seekIndex(1);
+    m(o);
+    assert.equal(o.cursor().valid, false);
+  }
+  const x = cursorModel(); const y = cursorModel();
+  x.cursor().seekIndex(0); y.cursor().seekIndex(0);
+  x.append(y);
+  assert.equal(y.cursor().valid, false);
+  const o = cursorModel();
+  o.cursor().seekIndex(1);
+  o.getMeasure(0, 0); o.entityAt(0); o.indexAtSum(0, 1); o.sumBefore(0, 1); o.total(0); o.dump();
+  assert.throws(() => o.insertAt(9, 1, 1), RangeError);
+  assert.throws(() => o.splitAt(1, o), RangeError);
+  assert.throws(() => o.append(o), RangeError);
+  assert.equal(o.cursor().valid, true);
+  assert.equal(o.cursor().index, 1);
+});

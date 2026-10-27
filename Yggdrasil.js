@@ -3,7 +3,7 @@
  *
  * MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
- * Pre-release engine build (rung F-R of the E0 ladder): SumSequence init,
+ * Pre-release engine build (rung K-R1 of the E0 ladder): SumSequence init,
  * layout, pools, constructor validation, counters and getters (A-R1a), the
  * positional ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
  * seeks indexAtSum / sumBefore and clear(), with their C-10 checks (A-R1b),
@@ -15,17 +15,21 @@
  * C-21 seam repair (S-R2), splitAt (S-R3): the T-4 split whose joins
  * reuse the popped path nodes, and the C-21 rL + rR seam repairs, and the
  * C-4 finger hit test in the five positional ops (F-R): a hit skips the
- * descent and adds 0 touches; fingerHits / fingerMisses split (C-26). Nothing
- * is released between rungs.
+ * descent and adds 0 touches; fingerHits / fingerMisses split (C-26), and the
+ * cursor (K-R1): cursor(), valid / index / entity, offset / measure,
+ * seekIndex / seekSum, and the _cv = false store of every mutator (C-6, C-7).
+ * Nothing is released between rungs.
  *
  * Layout (0005 C-44). Every view owns, in this order: _root, _len, _fl, _fb,
- * _fdepth, _fpath, _cv, _n, then the hoisted refs _hdr, _left, _right, _weight,
- * _count, _inext, _sums, _llen, _lnext, _ent, _meas, _lsum, then _ar (the
- * shared arena record {C, B, shift, m, dims, Lmax, HL, views, sx, jstack,
- * sstack}, each Int32Array(H(Lmax)): jstack is the T-3 join stack, sstack the
- * split stack. append's seam path uses BOTH: sstack = this's last-leaf path,
- * jstack = other's first-leaf path (written only for a repair). splitAt's
- * descent path and its seam paths go in sstack; its joins use jstack).
+ * _fdepth, _fpath, _cv, _cur (the view's one SumCursor, a ref: the cursor's
+ * state lives in the cursor, C-6 / C-7), _n, then the hoisted refs _hdr, _left,
+ * _right, _weight, _count, _inext, _sums, _llen, _lnext, _ent, _meas, _lsum,
+ * then _ar (the shared arena record {C, B, shift, m, dims, Lmax, HL, views, sx,
+ * jstack, sstack}, each Int32Array(H(Lmax)): jstack is the T-3 join stack,
+ * sstack the split stack. append's seam path uses BOTH: sstack = this's
+ * last-leaf path, jstack = other's first-leaf path (written only for a
+ * repair). splitAt's descent path and its seam paths go in sstack; its joins
+ * use jstack).
  * hdr = Int32Array(5) [live, lbump, lfree, ibump, ifree], END = -1.
  * A child ref >= 0 is an internal id; a ref < 0 is ~leafId. NIL = 0 (finger,
  * C-1); EMPTY_ROOT = 0x3FFFFFFF (C-8).
@@ -57,6 +61,10 @@ const YG_ROTD = 7;
 const YG_MISSES = 9;
 const YG_JOINS = 10;
 const YG_SEAMS = 11;
+const YG_CLEAF = 0;               // cursor state slots (C-7): leaf id, pos in
+const YG_CPOS = 1;                // the leaf, leaf len, index
+const YG_CLEN = 2;
+const YG_CIDX = 3;
 // 2^53-1, the measure / total bound (0002 M-1, M-4). The one non-Smi constant.
 const YG_MAX = 9007199254740991;
 
@@ -1133,6 +1141,7 @@ export class SumSequence {
     const ar = p.ar;
     const fpath = new Int32Array(ar.HL);
     const n = new Int32Array(YG_NC);
+    const cur = new SumCursor(this, ar);
     this._root = YG_EMPTY_ROOT;
     this._len = 0;
     this._fl = YG_NIL;
@@ -1140,6 +1149,7 @@ export class SumSequence {
     this._fdepth = 0;
     this._fpath = fpath;
     this._cv = false;
+    this._cur = cur;
     this._n = n;
     this._hdr = p.hdr;
     this._left = p.left;
@@ -1195,6 +1205,11 @@ export class SumSequence {
     return r < 0 ? this._lsum[d >>> 0][~r] : this._sums[d >>> 0][r];
   }
 
+  // The view's ONE cursor (C-7): the same object on every call, 0 B.
+  cursor() {
+    return this._cur;
+  }
+
   // ---- positional ops (C-4, C-10, C-12; finger M-1, C-3, C-5, C-26) ---------------
   // After every C-10 check, the finger hit test (C-4) from _fl / _fb / _fdepth
   // and llen[~_fl], NIL tested first: insertAt hits iff lo < i <= fb+len and
@@ -1247,6 +1262,7 @@ export class SumSequence {
     const t0 = r === YG_EMPTY_ROOT ? 0 : r < 0 ? this._lsum[0][~r] : this._sums[0][r];
     sx[0] = m0 + 0; // staged (scratch, not state; -0 -> +0, 0002 M-2)
     if ((m0 > YG_MAX - t0) | (dims > 1)) ygHeadroomIns(this);
+    this._cv = false; // cv:insertAt
     const left = this._left;
     const right = this._right;
     const count = this._count;
@@ -1333,6 +1349,7 @@ export class SumSequence {
     const n = this._len;
     if (typeof i !== 'number') ygFail('index', 'must be a number');
     if (((i >>> 0) !== i) | (i >= n)) ygFail('index', 'must be an integer in [0, length)');
+    this._cv = false; // cv:removeAt
     const at = i >>> 0;
     const r = this._root;
     const ar = this._ar;
@@ -1440,6 +1457,7 @@ export class SumSequence {
       ygSetHeadroom(this, at, dd);
     }
     // ---- first write ----
+    this._cv = false; // cv:setMeasure
     const left = this._left;
     const right = this._right;
     const count = this._count;
@@ -1688,7 +1706,7 @@ export class SumSequence {
     this._fl = YG_NIL;
     this._fb = 0;
     this._fdepth = 0;
-    this._cv = false;
+    this._cv = false; // cv:clear
     return this;
   }
 
@@ -1734,8 +1752,8 @@ export class SumSequence {
     other._fl = YG_NIL;
     other._fb = 0;
     other._fdepth = 0;
-    this._cv = false;
-    other._cv = false;
+    this._cv = false; // cv:append
+    other._cv = false; // cv:appendOther
     return this;
   }
 
@@ -1803,8 +1821,8 @@ export class SumSequence {
     out._fl = YG_NIL;
     out._fb = 0;
     out._fdepth = 0;
-    this._cv = false;
-    out._cv = false;
+    this._cv = false; // cv:splitAt
+    out._cv = false; // cv:splitAtOut
     return this;
   }
 
@@ -1818,5 +1836,208 @@ export class SumSequence {
 
   resetCounters() {
     this._n.fill(0);
+  }
+}
+
+// ---- the cursor (C-6, C-7; rung K-R1) ------------------------------------------------
+// A view's ONE cursor: view.cursor() returns the view's _cur (identity stable,
+// 0 B). Module-private, not exported (C-6 RK-5). Every buffer is preallocated
+// here, once per view; no cursor call allocates (C-7):
+//   _st   Int32Array(4) [leaf id, pos in leaf, leaf len, index] (YG_C* slots)
+//   _stk  Int32Array(HL) the cursor's own path stack (next(), K-R2; not written
+//         in K-R1)
+//   _off  Float64Array(dims) running offsets: _off[d] = sum of dim d over
+//         [0, index) (RK-4: offset(d) is O(1))
+//   _v    the view
+// The only cursor state on the view is _cv (C-6). While _cv is false, index and
+// entity read -1 and offset(d) / measure(d) are NaN; _st and _off are not read.
+// A seek is finger-neutral (no _fl / _fb / _fdepth / _fpath read or write,
+// C-27), adds 0 to fingerHits / fingerMisses (C-26) and touches += d(t)
+// (C-25); an empty view runs no descent and adds 0 (RA-5). A seek to the end
+// (i = length, y >= total(d)) still descends to the last leaf, pays d(t) and
+// leaves _cv false (R-E3). Every check precedes the first write (RK-3, C-10):
+// a throwing seek leaves the cursor and _cv unchanged.
+
+class SumCursor {
+  constructor(v, ar) {
+    this._st = new Int32Array(4);
+    this._stk = new Int32Array(ar.HL);
+    this._off = new Float64Array(ar.dims);
+    this._v = v;
+  }
+
+  get valid() {
+    return this._v._cv;
+  }
+
+  get index() {
+    return this._v._cv ? this._st[YG_CIDX] : -1;
+  }
+
+  get entity() {
+    const v = this._v;
+    if (!v._cv) return -1;
+    const st = this._st;
+    return v._ent[(st[YG_CLEAF] << v._ar.shift) + st[YG_CPOS]];
+  }
+
+  // S_index of dim d, O(1) from _off (RK-4); a boxed double (C-13, b = 1).
+  offset(d) {
+    const v = this._v;
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= v._ar.dims))) {
+      ygFail('dim', 'must be an integer in [0, dims)');
+    }
+    return v._cv ? this._off[d >>> 0] : NaN;
+  }
+
+  // The current element's measure of dim d; a boxed double (C-13, b = 1).
+  measure(d) {
+    const v = this._v;
+    const ar = v._ar;
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+      ygFail('dim', 'must be an integer in [0, dims)');
+    }
+    if (!v._cv) return NaN;
+    const st = this._st;
+    return v._meas[d >>> 0][(st[YG_CLEAF] << ar.shift) + st[YG_CPOS]];
+  }
+
+  // i in [0, length] (RK-3, the insertAt index checks); returns the new valid.
+  // One root descent by counts (element rule: k < count[left] goes left)
+  // accumulating every dim's left-child sums into _off, then the in-leaf prefix.
+  seekIndex(i) {
+    const v = this._v;
+    const n = v._len;
+    if (typeof i !== 'number') ygFail('index', 'must be a number');
+    if (((i >>> 0) !== i) | (i > n)) ygFail('index', 'must be an integer in [0, length]');
+    let ref = v._root;
+    if (ref === YG_EMPTY_ROOT) {
+      v._cv = false;
+      return false;
+    }
+    const at = i >>> 0;
+    const ar = v._ar;
+    const dims = ar.dims;
+    const left = v._left;
+    const right = v._right;
+    const count = v._count;
+    const llen = v._llen;
+    const sums = v._sums;
+    const lsum = v._lsum;
+    const off = this._off;
+    for (let d = 0; d < dims; d++) off[d] = 0;
+    let k = at;
+    let depth = 0;
+    while (ref >= 0) {
+      const l = left[ref];
+      const cl = l < 0 ? llen[~l] : count[l];
+      if (k < cl) {
+        ref = l;
+      } else {
+        for (let d = 0; d < dims; d++) off[d] += l < 0 ? lsum[d][~l] : sums[d][l];
+        k -= cl;
+        ref = right[ref];
+      }
+      depth++;
+    }
+    v._n[YG_TOUCHES] += depth;
+    if (at === n) {
+      v._cv = false; // the end: t = the last leaf (R-E3)
+      return false;
+    }
+    const id = ~ref;
+    const b0 = id << ar.shift;
+    const meas = v._meas;
+    for (let d = 0; d < dims; d++) {
+      const col = meas[d];
+      let s = off[d];
+      for (let j = 0; j < k; j++) s += col[b0 + j];
+      off[d] = s;
+    }
+    const st = this._st;
+    st[YG_CLEAF] = id;
+    st[YG_CPOS] = k;
+    st[YG_CLEN] = llen[id];
+    st[YG_CIDX] = at;
+    v._cv = true;
+    return true;
+  }
+
+  // The dim, then y (RK-3, the indexAtSum checks); returns the new valid. The
+  // indexAtSum rule (acc + sl > y goes left; in-leaf y < acc + m stops), so the
+  // index equals indexAtSum(d, y); every dim's offsets ride along. y stays in
+  // this body (C-13, b = 1).
+  seekSum(d, y) {
+    const v = this._v;
+    const ar = v._ar;
+    if (typeof d !== 'number' || (((d >>> 0) !== d) | (d >= ar.dims))) {
+      ygFail('dim', 'must be an integer in [0, dims)');
+    }
+    if (typeof y !== 'number' || !((y >= 0) & (y < Infinity))) {
+      ygFail('seek', 'must be a number in [0, Infinity)');
+    }
+    let ref = v._root;
+    if (ref === YG_EMPTY_ROOT) {
+      v._cv = false;
+      return false;
+    }
+    const dd = d >>> 0;
+    const dims = ar.dims;
+    const left = v._left;
+    const right = v._right;
+    const count = v._count;
+    const llen = v._llen;
+    const sums = v._sums;
+    const lsum = v._lsum;
+    const S = sums[dd];
+    const LS = lsum[dd];
+    const off = this._off;
+    for (let q = 0; q < dims; q++) off[q] = 0;
+    let acc = 0;
+    let base = 0;
+    let depth = 0;
+    while (ref >= 0) {
+      const l = left[ref];
+      const sl = l < 0 ? LS[~l] : S[l];
+      if (acc + sl > y) {
+        ref = l;
+      } else {
+        acc += sl;
+        base += l < 0 ? llen[~l] : count[l];
+        for (let q = 0; q < dims; q++) off[q] += l < 0 ? lsum[q][~l] : sums[q][l];
+        ref = right[ref];
+      }
+      depth++;
+    }
+    v._n[YG_TOUCHES] += depth;
+    const id = ~ref;
+    const len = llen[id];
+    const meas = v._meas;
+    const col = meas[dd];
+    const b0 = id << ar.shift;
+    let j = 0;
+    while (j < len) {
+      const m = col[b0 + j];
+      if (y < acc + m) break;
+      acc += m;
+      j++;
+    }
+    if (j === len) {
+      v._cv = false; // y >= total(d): t = the last leaf (R-E3)
+      return false;
+    }
+    for (let q = 0; q < dims; q++) {
+      const c = meas[q];
+      let s = off[q];
+      for (let p = 0; p < j; p++) s += c[b0 + p];
+      off[q] = s;
+    }
+    const st = this._st;
+    st[YG_CLEAF] = id;
+    st[YG_CPOS] = j;
+    st[YG_CLEN] = len;
+    st[YG_CIDX] = base + j;
+    v._cv = true;
+    return true;
   }
 }

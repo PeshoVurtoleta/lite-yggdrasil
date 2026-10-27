@@ -51,8 +51,9 @@ test('resetCounters zeroes all 12 slots; clear() keeps the counters (C-8)', () =
 
 test('clear() on k=1 returns this and resets hdr / root / finger state (C-8, 0004 A-6)', () => {
   const v = new SumSequence(8);
-  v._hdr.set([0, 3, -1, 2, -1]);
-  v._root = 17; v._fl = 9; v._fb = 4; v._fdepth = 3; v._cv = true;
+  // a VALID shape (AF-1 refuses a forged root): one leaf of 3 elements, the view holding every live element
+  v._hdr.set([3, 3, -1, 2, -1]);
+  v._root = -1; v._len = 3; v._fl = 9; v._fb = 4; v._fdepth = 3; v._cv = true;
   assert.equal(v.clear(), v);
   assert.deepEqual(Array.from(v._hdr), [0, 0, -1, 0, -1]);
   assert.equal(v._root, EMPTY_ROOT);

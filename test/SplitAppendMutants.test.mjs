@@ -40,9 +40,9 @@ const ANCHORS = {
   ms4: [['    if (lb < m) rep = ygRepair(v, o, ~rb, ~ra, 0, js, db, ss, da, 0);', '    if (!(la < m)) rep = ygRepair(v, o, ~rb, ~ra, 0, js, db, ss, da, 0);', 1]],
   ms5: [['    other._fl = YG_NIL;\n', '', 1]],
   ms6: [['    if (other._hdr !== this._hdr) {', '    if (false) {', 1]],
-  ms7: [["      if (tR > YG_MAX - tL) ygFail('headroom', 'total would exceed 2^53-1');\n", '', 1]],
+  ms7: [["      if (!(tR <= YG_MAX - tL)) ygFail('headroom', 'total would exceed 2^53-1');\n", '', 1]],
   // ms8: ygJoin recurses into itself (a recursive join) instead of walking the spine on the join stack
-  ms8: [['  let top = 0;\n  while (!((3 * wc >= wo) & (3 * wo >= wc))) {', '  let top = 0;\n  if (!((3 * wc >= wo) & (3 * wo >= wc))) {\n    const p = c;\n    if (heavyA !== 0) right[p] = ygJoin(v, right[p], b, ygAllocInt(v));\n    else left[p] = ygJoin(v, a, left[p], ygAllocInt(v));\n    ygPullW(v, p);\n    const l = left[p];\n    const r = right[p];\n    const wl = l < 0 ? 1 : weight[l];\n    const wr = r < 0 ? 1 : weight[r];\n    if (!((3 * wl >= wr) & (3 * wr >= wl))) {\n      if (heavyA !== 0) ygJoinRotL(v, p, wl);\n      else ygJoinRotR(v, p, wr);\n    }\n    v._n[YG_JOINS] += 1;\n    return p;\n  }\n  while (false) {', 1]],
+  ms8: [['  let top = 0;\n  while (!((3 * wc >= wo) & (3 * wo >= wc))) {', '  let top = 0;\n  if (!((3 * wc >= wo) & (3 * wo >= wc))) {\n    const p = c;\n    if (heavyA !== 0) right[p] = ygJoin(v, right[p], b, ygAllocInt(v));\n    else left[p] = ygJoin(v, a, left[p], ygAllocInt(v));\n    ygPullW(v, p);\n    const l = left[p];\n    const r = right[p];\n    const wl = l < 0 ? 1 : weight[l];\n    const wr = r < 0 ? 1 : weight[r];\n    if (!((3 * wl >= wr) & (3 * wr >= wl))) {\n      if (heavyA !== 0) ygJoinRotL(v, p, wl);\n      else ygJoinRotR(v, p, wr);\n    }\n    v._n[YG_JOINS] = (v._n[YG_JOINS] + 1) | 0;\n    return p;\n  }\n  while (false) {', 1]],
   joinAlloc: [['  const jstack = new Int32Array(HL);', '  const jstack = new Int32Array(HL - 1);', 1]],
   joinStack: 'jstack',
   // the split/append seam stack sstack is allocated with HL - 1 entries (C-23: H(Lmax) - 1 must FAIL)
@@ -55,7 +55,7 @@ const ANCHORS = {
   //   ms13 : a boundary cut does not free its path node (T-4)         -> walker I-7 'leak'
   ms9: [['    if ((lt >= 0) & (p < m)) ygSplitSeam(v, v, 0);\n    if ((rt >= 0) & (s - p < m)) ygSplitSeam(v, o, 1);\n', '', 1]],
   ms10: [['    if (typeof i !== \'number\') ygFail(\'index\', \'must be a number\');\n    if (((i >>> 0) !== i) | (i > n)) ygFail(\'index\', \'must be an integer in [0, length]\');\n    if (out === null || typeof out !== \'object\' || !(#yg in out)) {\n', '    if (out === null || typeof out !== \'object\' || !(#yg in out)) {\n', 1], ['    if (out._len !== 0) ygFail(\'operand\', \'out must be empty\');\n', '    if (out._len !== 0) ygFail(\'operand\', \'out must be empty\');\n    if (typeof i !== \'number\') ygFail(\'index\', \'must be a number\');\n    if (((i >>> 0) !== i) | (i > n)) ygFail(\'index\', \'must be an integer in [0, length]\');\n', 1]],
-  ms11: [['    v._n[YG_MOVES] += s - p;\n', '', 1], ['      ygSplitCut(this, out, ~ref, k, depth);\n', '      ygSplitCut(this, out, ~ref, k, depth);\n      this._n[YG_MOVES] += n - at;\n', 1]],
+  ms11: [['    v._n[YG_MOVES] = (v._n[YG_MOVES] + (s - p)) | 0;\n', '', 1], ['      ygSplitCut(this, out, ~ref, k, depth);\n', '      ygSplitCut(this, out, ~ref, k, depth);\n      this._n[YG_MOVES] = (this._n[YG_MOVES] + (n - at)) | 0;\n', 1]],
   ms12: [['    this._fl = YG_NIL;\n    this._fb = 0;\n    this._fdepth = 0;\n    out._fl = YG_NIL;\n', '    out._fl = YG_NIL;\n', 1]],
   ms13: [['      lt = xl;\n      ygFreeInt(v, x);\n', '      lt = xl;\n', 1]],
 };

@@ -950,7 +950,7 @@ MUTANTS.push(
   ['MK-5 next() ignores _cv (cr:guard dropped)',
     [['if (!v._cv) return false; // cr:guard', '', 1]], 'row 11 invalid next()'],
   ['cr:cross next() never crosses a leaf', [['return this._cross(); // cr:cross', 'return true;', 1]], R10],
-  ['cr:pop touches off by one', [['depth - top; // cr:pop', 'depth - top + 1;', 1]], R10 + ' (small'],
+  ['cr:pop touches off by one', [['depth - top)) | 0; // cr:pop', 'depth - top + 1)) | 0;', 1]], R10 + ' (small'],
   ['cr:push seekIndex does not write the stack', noPush('cl'), R10],
   ['cr:push seekSum does not write the stack', noPush('sl'), R10],
 );

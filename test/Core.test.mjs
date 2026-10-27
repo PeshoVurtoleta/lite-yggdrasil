@@ -989,24 +989,24 @@ test('mutant: 8|8 append split is killed by the appendStream counts', async () =
 function laneOk(Seq) {
   return touchLane(Seq, 4, 1500).bad === null && touchLane(Seq, 16, 1500).bad === null;
 }
-const HOT_INS = 'cn[YG_TOUCHES] += depth & (h - 1);\n    cn[YG_PULLS] += depth;\n    cn[YG_MISSES - h] += 1;\n    cn[YG_MOVES] += len - k;';
+const HOT_INS = 'cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;\n    cn[YG_PULLS] = (cn[YG_PULLS] + depth) | 0;\n    cn[YG_MISSES - h] = (cn[YG_MISSES - h] + 1) | 0;\n    cn[YG_MOVES] = (cn[YG_MOVES] + (len - k)) | 0;';
 test('mutant: hot pull +1 (insertAt pulls = depth + 1) is killed by the B1 lane', async () => {
   assert.equal(await mutantRow(laneOk, [[HOT_INS,
-    'cn[YG_TOUCHES] += depth & (h - 1);\n    cn[YG_PULLS] += depth + 1;\n    cn[YG_MISSES - h] += 1;\n    cn[YG_MOVES] += len - k;', 1]]), false);
+    'cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;\n    cn[YG_PULLS] = (cn[YG_PULLS] + (depth + 1)) | 0;\n    cn[YG_MISSES - h] = (cn[YG_MISSES - h] + 1) | 0;\n    cn[YG_MOVES] = (cn[YG_MOVES] + (len - k)) | 0;', 1]]), false);
 });
 test('mutant: split touches without d2 is killed by the B1 lane', async () => {
-  assert.equal(await mutantRow(laneOk, [['cn[YG_TOUCHES] += depth + d2;', 'cn[YG_TOUCHES] += depth;', 1]]), false);
+  assert.equal(await mutantRow(laneOk, [['cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth + d2)) | 0;', 'cn[YG_TOUCHES] = (cn[YG_TOUCHES] + depth) | 0;', 1]]), false);
 });
 test('mutant: hot insert touches 0 is killed by the B1 lane', async () => {
   assert.equal(await mutantRow(laneOk, [[HOT_INS,
-    'cn[YG_TOUCHES] += 0;\n    cn[YG_PULLS] += depth;\n    cn[YG_MISSES - h] += 1;\n    cn[YG_MOVES] += len - k;', 1]]), false);
+    'cn[YG_TOUCHES] = (cn[YG_TOUCHES] + 0) | 0;\n    cn[YG_PULLS] = (cn[YG_PULLS] + depth) | 0;\n    cn[YG_MISSES - h] = (cn[YG_MISSES - h] + 1) | 0;\n    cn[YG_MOVES] = (cn[YG_MOVES] + (len - k)) | 0;', 1]]), false);
 });
 
 // ---- A-R3 remove-side mutants (HA4). Every anchor lives here, one place, each must match exactly once. ----
 // Each entry is the [anchor, replacement, 1] patch list for buildMutant.
 const ANCHORS = {
   mergeNoFree: [['ygFreeInt(v, par); // merge frees parent(u)', '', 1]],
-  repMovesPlus1: [['cn[YG_MOVES] += len - 1 - p + rep;', 'cn[YG_MOVES] += len - 1 - p + rep + 1;', 1]],
+  repMovesPlus1: [['cn[YG_MOVES] = (cn[YG_MOVES] + (len - 1 - p + rep)) | 0;', 'cn[YG_MOVES] = (cn[YG_MOVES] + (len - 1 - p + rep + 1)) | 0;', 1]],
   rhomeFlStore: [['  v._fl = YG_NIL; // R-P2 (C-3)', '', 1]],
   gammaLeftLe: [['if ((yl < 0 ? 1 : weight[yl]) < 2 * (yr < 0 ? 1 : weight[yr])) {',
     'if ((yl < 0 ? 1 : weight[yl]) <= 2 * (yr < 0 ? 1 : weight[yr])) {', 1]],

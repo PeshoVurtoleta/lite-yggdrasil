@@ -1070,7 +1070,7 @@ const MUTS = [
   // R6 (reviewer): `_fdepth === 0 ? 1` -> `? 0` is EQUIVALENT: a single-leaf view with len 1 is the n === 1 drain, which
   // returns before this test, so the changed arm (len > 0 vs len > 1 on a single leaf) is never reached with len 1.
   { name: 'singleLeafGt0', anchor: 'len > (this._fdepth === 0 ? 1 : ar.m)', repl: 'len > (this._fdepth === 0 ? 0 : ar.m)', count: 1, rows: ['single-8'], equivalent: true },
-  { name: 'hitTouchesDepth', anchor: 'cn[YG_TOUCHES] += depth & (h - 1);', repl: 'cn[YG_TOUCHES] += depth;', count: 5, rows: ['multi-8-middle-B-1'] },
+  { name: 'hitTouchesDepth', anchor: 'cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;', repl: 'cn[YG_TOUCHES] = (cn[YG_TOUCHES] + depth) | 0;', count: 5, rows: ['multi-8-middle-B-1'] },
   { name: 'loWiden', anchor: 'fb - ((fb - 1) >>> 31) < at', repl: 'fb - 1 < at', count: 1, rows: ['multi-8-middle-B-1'] },
   { name: 'elemHiWiden', anchor: 'at < fb + llen[~ref]', repl: 'at <= fb + llen[~ref]', count: 3, rows: ['multi-8-first-B-1', 'multi-8-middle-B-1'] },
 ];

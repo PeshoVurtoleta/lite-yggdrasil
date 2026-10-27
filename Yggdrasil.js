@@ -26,7 +26,7 @@
  * _fdepth, _fpath, _cv, _cur (the view's one SumCursor, a ref: the cursor's
  * state lives in the cursor, C-6 / C-7), _n, then the hoisted refs _hdr, _left,
  * _right, _weight, _count, _inext, _sums, _llen, _lnext, _ent, _meas, _lsum,
- * then _ar (the shared arena record {C, B, shift, m, dims, Lmax, HL, views, sx,
+ * then _ar (the shared arena record {C, B, shift, m, dims, Lmax, HL, sx,
  * jstack, sstack}, each Int32Array(H(Lmax)): jstack is the T-3 join stack,
  * sstack the split stack. append's seam path uses BOTH: sstack = this's
  * last-leaf path, jstack = other's first-leaf path (written only for a
@@ -173,14 +173,14 @@ function ygInit(C, o, k) {
   }
   if (typeof B !== 'number') ygFail('options', 'leafSize must be a number');
   if (B !== 4 && B !== 8 && B !== 16 && B !== 32) ygFail('options', 'leafSize must be 4, 8, 16 or 32');
-  if (typeof dims !== 'number' || !Number.isInteger(dims) || dims < 1 || dims > 4) {
+  if (typeof dims !== 'number' || !Number.isInteger(dims) || dims < 1 || !(dims <= 4)) {
     ygFail('dims', 'must be an integer in 1..4');
   }
-  if (typeof k !== 'number' || !Number.isInteger(k) || k < 1 || k > YG_MAX_VIEWS || k > C) {
+  if (typeof k !== 'number' || !Number.isInteger(k) || k < 1 || !(k <= YG_MAX_VIEWS) || !(k <= C)) {
     ygFail('count', 'must be an integer in 1..min(C, 4096)');
   }
   const m = B >> 2;
-  if (C > YG_SLOT_CAP - m * k) ygFail('capacity', 'C must be <= 2^28 - (leafSize/4) * count');
+  if (!(C <= YG_SLOT_CAP - m * k)) ygFail('capacity', 'C must be <= 2^28 - (leafSize/4) * count');
   if (!(ygBytes(C, B, k, dims) <= YG_BYTE_CAP)) ygFail('capacity', 'arena typed arrays must total <= 2^32 bytes');
   // ---- allocation: no check below this line --------------------------------
   const shift = 31 - Math.clz32(B);
@@ -211,7 +211,7 @@ function ygInit(C, o, k) {
   hdr[YG_LFREE] = YG_END;
   hdr[YG_IFREE] = YG_END;
   const ar = {
-    C: C, B: B, shift: shift, m: m, dims: dims, Lmax: Lmax, HL: HL, views: [], sx: sx,
+    C: C, B: B, shift: shift, m: m, dims: dims, Lmax: Lmax, HL: HL, sx: sx,
     jstack: jstack, sstack: sstack,
   };
   return {
@@ -302,16 +302,40 @@ function ygClearRef(ref, lb, ib, what) {
   if (ref < 0 ? !(~ref < lb) : !(ref < ib)) ygCorrupt(what + ' ref ' + ref + ' out of range');
 }
 
+// clear()'s one pre-check (R-S1, R-S2), run before EITHER branch (the ygReset
+// fast path and the walk), so before any write: _len a number, an integer,
+// 0 <= _len <= live; _root an int32 number; _len === 0 iff _root is
+// EMPTY_ROOT; a non-empty root inside the bumps (ygClearRef, C-8). Every test
+// is fail-closed: NaN, negatives, fractions, -2^32, null, false, '', '-1' and
+// [-1] all throw here. No coercion: a non-number is named by its typeof.
+function ygClearCheck(v) {
+  const hdr = v._hdr;
+  const len = v._len;
+  const root = v._root;
+  const live = hdr[YG_LIVE];
+  if (!((typeof len === 'number') && ((len >>> 0) === len))) {
+    ygCorrupt('_len ' + (typeof len === 'number' ? len : 'of type ' + typeof len) + ' is not an integer >= 0');
+  }
+  if (!(len <= live)) ygCorrupt('_len ' + len + ' > live ' + live);
+  if (!((typeof root === 'number') && ((root | 0) === root))) {
+    ygCorrupt('root ref ' + (typeof root === 'number' ? root : 'of type ' + typeof root) + ' is not an int32');
+  }
+  if ((len === 0) !== (root === YG_EMPTY_ROOT)) {
+    ygCorrupt('root ref ' + root + (len === 0 ? ' with _len 0' : ' out of range'));
+  }
+  if (len !== 0) ygClearRef(root, hdr[YG_LBUMP], hdr[YG_IBUMP], 'root');
+}
+
 // clear() of a non-empty view while another view holds elements: the k >= 2
 // free-walk (0004 A-6; C-8). Cold, iterative, allocation-free, O(L_view): the
 // internal free-list link _inext is the work stack (a live node's _inext is
 // unused). Pop u, check both child refs, free each leaf child, push each
 // internal child, then free u. Every node of THIS view's tree goes back to
 // its pool; live -= _len. No counter write (C-25), _n untouched (C-8).
-// Fail closed (R-S1, R-S2): _len > live or a bad root throws before any
-// write; a child ref outside the bumps, or a walk past ibump internals /
-// lbump leaves (a cycle), throws mid-walk after live -= _len and partial
-// frees, with no further write. Not detected (R-S3): a ref inside the bumps
+// Fail closed (R-S1, R-S2): a bad _len or root throws in ygClearCheck,
+// before any write; a child ref outside the bumps, or a walk past ibump
+// internals / lbump leaves (a cycle), throws mid-walk after live -= _len and
+// partial frees, with no further write. Not detected (R-S3): a ref inside the bumps
 // naming another view's node, a free node or a node shared within the view.
 function ygClearWalk(v) {
   const hdr = v._hdr;
@@ -322,8 +346,6 @@ function ygClearWalk(v) {
   const len = v._len;
   const lb = hdr[YG_LBUMP];
   const ib = hdr[YG_IBUMP];
-  if (len > hdr[YG_LIVE]) ygCorrupt('_len ' + len + ' > live ' + hdr[YG_LIVE]);
-  ygClearRef(root, lb, ib, 'root');
   hdr[YG_LIVE] -= len;
   if (root < 0) {
     ygFreeLeaf(v, ~root);
@@ -364,24 +386,21 @@ function ygClearWalk(v) {
 
 // ---- op helpers (cold; C-10, RV-2, RF-1) ------------------------------------------
 
-// M-3 for one measure slot (m1..m3 at dims > 1): typeof, range (NaN fails),
-// integer test. No coercion, no valueOf call.
-function ygMeasure(m) {
-  if (typeof m !== 'number') ygFail('measure', 'must be a number');
-  if (!((m >= 0) & (m <= YG_MAX))) ygFail('measure', 'must be in [0, 2^53-1]');
-  if (!Number.isInteger(m)) ygFail('measure', 'must be an integer');
-}
-
 // insertAt's one cold re-check for the slots 1..dims-1 (RV-2, R-Q1 / A6-1):
 // reached on a present extra slot, or on every insert at dims > 1. It takes
 // no measure argument: insertAt typeof-checked slots 1..dims-1 inline and
 // staged them in sx (scratch, not state, C-44); this reads sx. C-10 order:
-// the measures of slots < dims (range, integer), then the extra slots (xs = 1
-// iff a slot >= dims is not undefined, computed in insertAt).
+// the measures of slots < dims (M-3 range, NaN fails; then integer), then
+// the extra slots (xs = 1 iff a slot >= dims is not undefined, computed in
+// insertAt). Checked inline: no call carries an sx double (Zero-Box law).
 function ygSlots(ar, xs) {
   const dims = ar.dims;
   const sx = ar.sx;
-  for (let d = 1; d < dims; d++) ygMeasure(sx[d]);
+  for (let d = 1; d < dims; d++) {
+    const m = sx[d];
+    if (!((m >= 0) & (m <= YG_MAX))) ygFail('measure', 'must be in [0, 2^53-1]');
+    if (m % 1 !== 0) ygFail('measure', 'must be an integer');
+  }
   if (xs !== 0) ygFail('extra', 'slot beyond dims must be undefined');
 }
 
@@ -392,7 +411,7 @@ function ygHeadroomIns(v) {
   const r = v._root;
   for (let d = 0; d < ar.dims; d++) {
     const t = r === YG_EMPTY_ROOT ? 0 : r < 0 ? v._lsum[d][~r] : v._sums[d][r];
-    if (sx[d] > YG_MAX - t) ygFail('headroom', 'total would exceed 2^53-1');
+    if (!(sx[d] <= YG_MAX - t)) ygFail('headroom', 'total would exceed 2^53-1');
   }
 }
 
@@ -419,7 +438,7 @@ function ygSetHeadroom(v, at, dd) {
   const r = v._root;
   const t = r < 0 ? v._lsum[dd][~r] : v._sums[dd][r];
   const old = v._meas[dd][(~ref << v._ar.shift) + k];
-  if (v._ar.sx[0] > YG_MAX - (t - old)) ygFail('headroom', 'total would exceed 2^53-1');
+  if (!(v._ar.sx[0] <= YG_MAX - (t - old))) ygFail('headroom', 'total would exceed 2^53-1');
 }
 
 // First insert on an empty view: allocate the root leaf (C-8 cold). The new
@@ -441,7 +460,7 @@ function ygFirstLeaf(v, e) {
   v._fl = ~id;
   v._fb = 0;
   v._fdepth = 0;
-  v._n[YG_MISSES] += 1;
+  v._n[YG_MISSES] = (v._n[YG_MISSES] + 1) | 0;
 }
 
 // removeAt of a view's last element: free the leaf, finger NIL / 0 / 0 (C-5);
@@ -456,7 +475,7 @@ function ygDrain(v, id) {
   v._fl = YG_NIL;
   v._fb = 0;
   v._fdepth = 0;
-  v._n[YG_MISSES] += 1;
+  v._n[YG_MISSES] = (v._n[YG_MISSES] + 1) | 0;
 }
 
 // ---- trunk: structural path (cold; C-18..C-20, C-23, C-25, T-2) ----------------
@@ -499,7 +518,7 @@ function ygRotate(v, x, wl, wr) {
       right[x] = yr;
       ygPullW(v, y);
       ygPullW(v, x);
-      cn[YG_ROTS] += 1;
+      cn[YG_ROTS] = (cn[YG_ROTS] + 1) | 0;
       return 2;
     }
     // double left: (A, ((zl, zr), yr)) -> ((A, zl), (zr, yr))
@@ -514,7 +533,7 @@ function ygRotate(v, x, wl, wr) {
     ygPullW(v, z);
     ygPullW(v, y);
     ygPullW(v, x);
-    cn[YG_ROTD] += 1;
+    cn[YG_ROTD] = (cn[YG_ROTD] + 1) | 0;
     return 3;
   }
   const y = left[x];
@@ -528,7 +547,7 @@ function ygRotate(v, x, wl, wr) {
     right[x] = y;
     ygPullW(v, y);
     ygPullW(v, x);
-    cn[YG_ROTS] += 1;
+    cn[YG_ROTS] = (cn[YG_ROTS] + 1) | 0;
     return 2;
   }
   // double right: ((yl, (zl, zr)), C) -> ((yl, zl), (zr, C))
@@ -543,7 +562,7 @@ function ygRotate(v, x, wl, wr) {
   ygPullW(v, y);
   ygPullW(v, z);
   ygPullW(v, x);
-  cn[YG_ROTD] += 1;
+  cn[YG_ROTD] = (cn[YG_ROTD] + 1) | 0;
   return 3;
 }
 
@@ -668,11 +687,11 @@ function ygSplit(v, at, e, id, p, depth) {
   }
   const d2 = ygHome(v, at);
   const cn = v._n;
-  cn[YG_TOUCHES] += depth + d2;
-  cn[YG_PULLS] += pulls;
-  cn[YG_MOVES] += p < a ? B - p : B - a;
-  cn[YG_SPLITS] += 1;
-  cn[YG_MISSES] += 1;
+  cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth + d2)) | 0;
+  cn[YG_PULLS] = (cn[YG_PULLS] + pulls) | 0;
+  cn[YG_MOVES] = (cn[YG_MOVES] + (p < a ? B - p : B - a)) | 0;
+  cn[YG_SPLITS] = (cn[YG_SPLITS] + 1) | 0;
+  cn[YG_MISSES] = (cn[YG_MISSES] + 1) | 0;
 }
 
 // ---- remove side: T-6 underflow, repair, delete rebalance (cold; C-18, C-20, C-21, C-25, M-5) ----
@@ -808,15 +827,15 @@ function ygRepair(v, vu, u, w, uLeft, su, du, sv, dv, sh) {
         if ((3 * lw < rw) | (3 * rw < lw)) pulls += ygRotate(v, x, lw, rw); // T-2, delete side
       }
     }
-    cn[YG_MERGES] += 1;
+    cn[YG_MERGES] = (cn[YG_MERGES] + 1) | 0;
   } else {
     for (let q = du - 1; q >= 0; q--) {
       ygPullC(v, su[q]); // equalize: no weight change
       pulls++;
     }
-    cn[YG_EQUALIZES] += 1;
+    cn[YG_EQUALIZES] = (cn[YG_EQUALIZES] + 1) | 0;
   }
-  cn[YG_PULLS] += pulls;
+  cn[YG_PULLS] = (cn[YG_PULLS] + pulls) | 0;
   return rep;
 }
 
@@ -853,9 +872,9 @@ function ygUnder(v, at, id, p, D) {
   v._len = n - 1;
   const d2 = ygHome(v, Math.min(at, n - 2));
   const cn = v._n;
-  cn[YG_TOUCHES] += dv + d2;
-  cn[YG_MISSES] += 1;
-  cn[YG_MOVES] += len - 1 - p + rep;
+  cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (dv + d2)) | 0;
+  cn[YG_MISSES] = (cn[YG_MISSES] + 1) | 0;
+  cn[YG_MOVES] = (cn[YG_MOVES] + (len - 1 - p + rep)) | 0;
   return e;
 }
 
@@ -884,7 +903,7 @@ function ygJoinRotL(v, x, wl) {
     right[x] = yr;
     ygPullW(v, y);
     ygPullW(v, x);
-    cn[YG_ROTS] += 1;
+    cn[YG_ROTS] = (cn[YG_ROTS] + 1) | 0;
     return 2;
   }
   // double left: (A, ((zl, zr), yr)) -> ((A, zl), (zr, yr))
@@ -899,7 +918,7 @@ function ygJoinRotL(v, x, wl) {
   ygPullW(v, z);
   ygPullW(v, y);
   ygPullW(v, x);
-  cn[YG_ROTD] += 1;
+  cn[YG_ROTD] = (cn[YG_ROTD] + 1) | 0;
   return 3;
 }
 
@@ -925,7 +944,7 @@ function ygJoinRotR(v, x, wr) {
     right[x] = y;
     ygPullW(v, y);
     ygPullW(v, x);
-    cn[YG_ROTS] += 1;
+    cn[YG_ROTS] = (cn[YG_ROTS] + 1) | 0;
     return 2;
   }
   // double right: ((yl, (zl, zr)), C) -> ((yl, zl), (zr, C))
@@ -940,7 +959,7 @@ function ygJoinRotR(v, x, wr) {
   ygPullW(v, y);
   ygPullW(v, z);
   ygPullW(v, x);
-  cn[YG_ROTD] += 1;
+  cn[YG_ROTD] = (cn[YG_ROTD] + 1) | 0;
   return 3;
 }
 
@@ -995,8 +1014,8 @@ function ygJoin(v, a, b, u) {
     cur = p;
   }
   const cn = v._n;
-  cn[YG_JOINS] += top;
-  cn[YG_PULLS] += pulls;
+  cn[YG_JOINS] = (cn[YG_JOINS] + top) | 0;
+  cn[YG_PULLS] = (cn[YG_PULLS] + pulls) | 0;
   return cur;
 }
 
@@ -1028,7 +1047,7 @@ function ygSeamJoin(v, o) {
     rb = left[rb];
   }
   const cn = v._n;
-  cn[YG_TOUCHES] += da + db;
+  cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (da + db)) | 0;
   const m = ar.m;
   const la = llen[~ra];
   const lb = llen[~rb];
@@ -1041,8 +1060,8 @@ function ygSeamJoin(v, o) {
     let rep;
     if (lb < m) rep = ygRepair(v, o, ~rb, ~ra, 0, js, db, ss, da, 0);
     else rep = ygRepair(v, v, ~ra, ~rb, 1, ss, da, js, db, 0);
-    cn[YG_MOVES] += rep;
-    cn[YG_SEAMS] += 1;
+    cn[YG_MOVES] = (cn[YG_MOVES] + rep) | 0;
+    cn[YG_SEAMS] = (cn[YG_SEAMS] + 1) | 0;
   }
   const a = v._root;
   const b = o._root;
@@ -1082,7 +1101,7 @@ function ygSplitCut(v, o, c, p, d) {
     llen[f] = s - p;
     ygRecount(v, c);
     ygRecount(v, f);
-    v._n[YG_MOVES] += s - p;
+    v._n[YG_MOVES] = (v._n[YG_MOVES] + (s - p)) | 0;
     lt = ~c;
     rt = ~f;
   }
@@ -1136,9 +1155,9 @@ function ygSplitSeam(v, vu, uLeft) {
   }
   const rep = ygRepair(v, vu, u, ~ref, uLeft, ss, du, ss, dv, du);
   const cn = v._n;
-  cn[YG_TOUCHES] += dv;
-  cn[YG_MOVES] += rep;
-  cn[YG_SEAMS] += 1;
+  cn[YG_TOUCHES] = (cn[YG_TOUCHES] + dv) | 0;
+  cn[YG_MOVES] = (cn[YG_MOVES] + rep) | 0;
+  cn[YG_SEAMS] = (cn[YG_SEAMS] + 1) | 0;
 }
 
 // ---- the view ---------------------------------------------------------------------
@@ -1186,19 +1205,19 @@ export class SumSequence {
     this._meas = p.meas;
     this._lsum = p.lsum;
     this._ar = ar;
-    ar.views.push(this);
   }
 
   // count views over one shared arena (0004 A-2; C-15 pools sized for count).
   static arena(C, o, count) {
     const p = ygInit(C, o, count);
+    const out = [];
     ygPend = p;
     try {
-      for (let v = 0; v < count; v++) new SumSequence();
+      for (let v = 0; v < count; v++) out.push(new SumSequence());
     } finally {
       ygPend = null;
     }
-    return p.ar.views.slice();
+    return out;
   }
 
   // ---- getters ----------------------------------------------------------------
@@ -1283,7 +1302,7 @@ export class SumSequence {
     const r = this._root;
     const t0 = r === YG_EMPTY_ROOT ? 0 : r < 0 ? this._lsum[0][~r] : this._sums[0][r];
     sx[0] = m0 + 0; // staged (scratch, not state; -0 -> +0, 0002 M-2)
-    if ((m0 > YG_MAX - t0) | (dims > 1)) ygHeadroomIns(this);
+    if (!(m0 <= YG_MAX - t0) | (dims > 1)) ygHeadroomIns(this);
     this._cv = false; // cv:insertAt
     const left = this._left;
     const right = this._right;
@@ -1361,10 +1380,10 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth & (h - 1);
-    cn[YG_PULLS] += depth;
-    cn[YG_MISSES - h] += 1;
-    cn[YG_MOVES] += len - k;
+    cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;
+    cn[YG_PULLS] = (cn[YG_PULLS] + depth) | 0;
+    cn[YG_MISSES - h] = (cn[YG_MISSES - h] + 1) | 0;
+    cn[YG_MOVES] = (cn[YG_MOVES] + (len - k)) | 0;
   }
 
   removeAt(i) {
@@ -1450,10 +1469,10 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth & (h - 1);
-    cn[YG_PULLS] += depth;
-    cn[YG_MISSES - h] += 1;
-    cn[YG_MOVES] += len - 1 - k;
+    cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;
+    cn[YG_PULLS] = (cn[YG_PULLS] + depth) | 0;
+    cn[YG_MISSES - h] = (cn[YG_MISSES - h] + 1) | 0;
+    cn[YG_MOVES] = (cn[YG_MOVES] + (len - 1 - k)) | 0;
     return e;
   }
 
@@ -1474,7 +1493,7 @@ export class SumSequence {
     const sc = this._sums[dd];
     const ls = this._lsum[dd];
     const t = r < 0 ? ls[~r] : sc[r];
-    if (m > YG_MAX - t) {
+    if (!(m <= YG_MAX - t)) {
       ar.sx[0] = m;
       ygSetHeadroom(this, at, dd);
     }
@@ -1527,9 +1546,9 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth & (h - 1);
-    cn[YG_PULLS] += depth;
-    cn[YG_MISSES - h] += 1;
+    cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;
+    cn[YG_PULLS] = (cn[YG_PULLS] + depth) | 0;
+    cn[YG_MISSES - h] = (cn[YG_MISSES - h] + 1) | 0;
   }
 
   getMeasure(i, d) {
@@ -1575,8 +1594,8 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth & (h - 1);
-    cn[YG_MISSES - h] += 1;
+    cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;
+    cn[YG_MISSES - h] = (cn[YG_MISSES - h] + 1) | 0;
     return x;
   }
 
@@ -1619,8 +1638,8 @@ export class SumSequence {
     this._fb = at - k;
     this._fdepth = depth;
     const cn = this._n;
-    cn[YG_TOUCHES] += depth & (h - 1);
-    cn[YG_MISSES - h] += 1;
+    cn[YG_TOUCHES] = (cn[YG_TOUCHES] + (depth & (h - 1))) | 0;
+    cn[YG_MISSES - h] = (cn[YG_MISSES - h] + 1) | 0;
     return e;
   }
 
@@ -1673,7 +1692,7 @@ export class SumSequence {
       acc += m;
       j++;
     }
-    this._n[YG_TOUCHES] += depth;
+    this._n[YG_TOUCHES] = (this._n[YG_TOUCHES] + depth) | 0;
     return base + j;
   }
 
@@ -1713,7 +1732,7 @@ export class SumSequence {
     const col = this._meas[dd];
     const b0 = ~ref << ar.shift;
     for (let j = 0; j < k; j++) acc += col[b0 + j];
-    this._n[YG_TOUCHES] += depth;
+    this._n[YG_TOUCHES] = (this._n[YG_TOUCHES] + depth) | 0;
     return acc;
   }
 
@@ -1721,6 +1740,7 @@ export class SumSequence {
 
   clear() {
     const hdr = this._hdr;
+    ygClearCheck(this);
     if (this._len === hdr[YG_LIVE]) ygReset(hdr);
     else if (this._len !== 0) ygClearWalk(this);
     this._root = YG_EMPTY_ROOT;
@@ -1754,7 +1774,7 @@ export class SumSequence {
     for (let d = 0; d < ar.dims; d++) {
       const tL = ra === YG_EMPTY_ROOT ? 0 : ra < 0 ? this._lsum[d][~ra] : this._sums[d][ra];
       const tR = rb === YG_EMPTY_ROOT ? 0 : rb < 0 ? this._lsum[d][~rb] : this._sums[d][rb];
-      if (tR > YG_MAX - tL) ygFail('headroom', 'total would exceed 2^53-1');
+      if (!(tR <= YG_MAX - tL)) ygFail('headroom', 'total would exceed 2^53-1');
     }
     const hdr = this._hdr;
     if ((ra !== YG_EMPTY_ROOT) & (rb !== YG_EMPTY_ROOT) & (hdr[YG_IFREE] === YG_END) &
@@ -1829,7 +1849,7 @@ export class SumSequence {
         ygFail('pool', 'leaf pool exhausted');
       }
       // ---- first write ----
-      this._n[YG_TOUCHES] += depth;
+      this._n[YG_TOUCHES] = (this._n[YG_TOUCHES] + depth) | 0;
       ygSplitCut(this, out, ~ref, k, depth);
     } else if ((at === 0) & (n !== 0)) {
       out._root = this._root;
@@ -1970,7 +1990,7 @@ class SumCursor {
       }
       depth++;
     }
-    v._n[YG_TOUCHES] += depth;
+    v._n[YG_TOUCHES] = (v._n[YG_TOUCHES] + depth) | 0;
     if (at === n) {
       v._cv = false; // the end: t = the last leaf (R-E3)
       return false;
@@ -2041,7 +2061,7 @@ class SumCursor {
       }
       depth++;
     }
-    v._n[YG_TOUCHES] += depth;
+    v._n[YG_TOUCHES] = (v._n[YG_TOUCHES] + depth) | 0;
     const id = ~ref;
     const len = llen[id];
     const meas = v._meas;
@@ -2120,7 +2140,7 @@ class SumCursor {
           stk[depth++] = ref;
           ref = left[ref];
         }
-        v._n[YG_TOUCHES] += depth - top; // cr:pop
+        v._n[YG_TOUCHES] = (v._n[YG_TOUCHES] + (depth - top)) | 0; // cr:pop
         st[YG_CLEAF] = ~ref;
         st[YG_CPOS] = 0;
         st[YG_CDEP] = depth;

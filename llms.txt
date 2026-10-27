@@ -4,7 +4,7 @@
 
 Version: 0.1.0
 Main file: Yggdrasil.js (ESM, single file, zero runtime dependencies). Types: Yggdrasil.d.ts.
-Exports: SumSequence (class), VERSION (string). Nothing else. The cursor class is not exported (type SumCursor only).
+Exports: SumSequence (class), VERSION (string). Nothing else. The cursor class is not exported (type SumCursor only) and not constructible.
 
 ## What it is
 

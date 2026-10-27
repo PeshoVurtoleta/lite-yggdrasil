@@ -70,12 +70,20 @@ test('AF2-4 [FAIL-ON-OLD]: SumSequence.COUNTERS is non-writable, non-configurabl
 });
 
 // FAIL-ON-OLD: `out.length < 12` is false for NaN, so the old build fell through to out.set (generic TypeError).
-// ygFail(token, detail) throws RangeError(token + ' ' + detail) (Yggdrasil.js:82-84); the 'counters' text is
-// 'counters out.length must be >= 12' (same as today's length error).
+// ygFail(token, detail) throws RangeError(token + ' ' + detail) (Yggdrasil.js:82-84). Since R-A8 (0.1.1) the cached
+// %TypedArray%.prototype toStringTag brand runs first, so this forged object gets the brand text; a genuine short
+// Int32Array with an own NaN `length` reaches the true-length check.
 test('AF2-3 [FAIL-ON-OLD]: readCounters(forged NaN length) throws the engine counters error', () => {
   const v = new SumSequence(16, { leafSize: 4, dims: 1 });
   const forged = Object.create(Int32Array.prototype, { length: { value: NaN } });
   assert.throws(() => v.readCounters(forged), (e) => {
+    assert.ok(e instanceof RangeError, 'RangeError, got ' + e);
+    assert.equal(e.message, 'counters out must be an Int32Array');
+    return true;
+  });
+  const short = new Int32Array(4);
+  Object.defineProperty(short, 'length', { value: NaN });
+  assert.throws(() => v.readCounters(short), (e) => {
     assert.ok(e instanceof RangeError, 'RangeError, got ' + e);
     assert.equal(e.message, 'counters out.length must be >= 12');
     return true;

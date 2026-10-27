@@ -5,6 +5,10 @@
 [![npm version](https://img.shields.io/npm/v/@zakkster/lite-yggdrasil.svg?style=for-the-badge&color=latest)](https://www.npmjs.com/package/@zakkster/lite-yggdrasil)
 [![sponsor](https://img.shields.io/badge/sponsor-PeshoVurtoleta-ea4aaa.svg?logo=github)](https://github.com/sponsors/PeshoVurtoleta)
 ![Zero-GC](https://img.shields.io/badge/Zero--GC-Engine-00C853?style=for-the-badge&logo=leaf&logoColor=white)
+[![npm bundle size](https://img.shields.io/bundlephobia/minzip/@zakkster/lite-yggdrasil?style=for-the-badge)](https://bundlephobia.com/result?p=@zakkster/lite-yggdrasil)
+[![npm downloads](https://img.shields.io/npm/dm/@zakkster/lite-yggdrasil?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-yggdrasil)
+[![npm total downloads](https://img.shields.io/npm/dt/@zakkster/lite-yggdrasil?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@zakkster/lite-yggdrasil)
+![Tree-Shakeable](https://img.shields.io/badge/tree--shakeable-yes-brightgreen)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Types-informational)
 ![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
 [![license](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
@@ -185,7 +189,7 @@ seq.resetCounters();
 | `joinSteps` | 10 | internal nodes pushed on a join stack |
 | `seamRepairs` | 11 | seam repairs in `append` / `splitAt` |
 
-Counters are per view and wrap as 32-bit integers; read a window as `(after - before) | 0`. `readCounters` requires an `Int32Array` of length `>= 12` (extra slots are left alone) and throws `RangeError 'counters'` otherwise, NaN length included.
+Counters are per view and wrap as 32-bit integers; read a window as `(after - before) | 0`. `readCounters` requires a genuine `Int32Array` (brand checked through the internal slot, so another realm's `Int32Array` counts) whose true length is `>= 12` (extra slots are left alone); an own `length` property is ignored. Anything else throws `RangeError 'counters'`.
 
 ### Contract constants
 
@@ -221,7 +225,7 @@ Every argument error is a `RangeError` whose message is a token, a space and a d
 | `dims` | `dims` is not an integer in 1..4 |
 | `count` | `arena()` `count` is outside `1..min(capacity, 4096)` |
 | `operand` | `splitAt` / `append` got a non-view, `this`, a view of another arena, or a non-empty `out` |
-| `counters` | `readCounters` got something other than an `Int32Array` of length `>= 12` |
+| `counters` | `readCounters` got a non-`Int32Array` (a fake, Proxy or plain array) or an `Int32Array` whose true length is `< 12` |
 | `pool` | internal node pool exhausted; unreachable by the pool-sizing argument, kept as a fail-closed backstop |
 
 Check order inside `insertAt`: index, entity, measures, extra slots, capacity, headroom.

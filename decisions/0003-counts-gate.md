@@ -12,6 +12,7 @@
 - R-X2: "Per view" -- counters are per view; ADR 0003 O-2 closed, ADR 0004 O-4 closed.
 - R-Y09: Y-09 + Y-13 "Rule ADR 0003 as written" (maintainer, 2026-10-25). O-3 (counter names) and O-4 (stale bench table on a PENDING release) stay OPEN.
 - X-1 below: CLOSED by R-X1. O-2 and X-2 below: CLOSED by R-X2.
+- O-4 below: CLOSED by 0005 R-B1 (2026-10-27, maintainer; ADDENDUM 12).
 
 ## Superseded / amended by 0005 (CURRENT)
 
@@ -31,6 +32,7 @@ These items are amended by decisions/0005-sumsequence-current.md (CURRENT, conso
 | Counters / gates, idx 11 (seamRepairs) | C-21 |
 | O-1 | C-25 |
 | O-3 | C-24 |
+| O-4 | C-42 |
 | X-8 | C-8 |
 | DB-1 B-17 | C-4, C-27 |
 | DB-1 B-19 | C-19 |
@@ -163,7 +165,7 @@ hand-computed, and equals ADR 0001's H(1024) = 21 (X-4).
 
 - No timing gates anything in `npm test` / verify / release; the bench scripts
   print REPORTED tables with provenance (ROADMAP 3.8), and a PENDING bench is a
-  maintainer decision (O-4).
+  maintainer decision (O-4) -- ruled 0005 R-B1.
 - The coder adds `_n`, `readCounters`, `resetCounters` per G-4..G-8, the
   `test/spec-counts.mjs` oracle (no engine import) per G-9, and the MC-1..MC-7
   mutants; G-11 / G-12 / joinSteps bounds become concrete once ADR 0001 fixes
@@ -185,8 +187,8 @@ hand-computed, and equals ADR 0001's H(1024) = 21 (X-4).
   0004 O-4 leans per arena.)
 - O-3 maintainer: index names as static class fields vs a new `COUNTERS` export
   (changes the ROADMAP section 0 export list).
-- O-4 maintainer: a release whose bench is PENDING either keeps the prior table
-  with its own commit + sha, or drops it.
+- O-4 CLOSED by 0005 R-B1 (drop it, point back). maintainer: a release whose bench is PENDING either keeps the prior
+  table with its own commit + sha, or drops it.
 - X-1 (cross-ADR) -- CLOSED by R-X1: s0 := m, "14 of 15" superseded by 12/13 (0001 T-5 / Table 3 vs 0003 G-12 vs ROADMAP 3.4 "14 of 15"):
   0001 picks the append split (B+1-m | m) [13|4]; 0003 G-12's formula is written
   with a free s0. Setting s0 := m makes them identical (orchestrator check: both

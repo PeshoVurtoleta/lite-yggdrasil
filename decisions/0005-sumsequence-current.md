@@ -16,16 +16,18 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
 - ADDENDUM 13 (0005's own, the bc unit's readings): written against cdfe5d4 + the bc tree (Yggdrasil.js 5eb49244)
 - ADDENDUM 14 (0005's own, the K-R2 rung (rung 10, cursor next()) readings): written against 17ffcab + the K-R2 tree
   (Yggdrasil.js 287d10c1, test/exhaustive.mjs 6734c7aa)
+- ADDENDUM 15 (0005's own, the AF unit and rulings R-A1..R-A3): written against 390ed2e + the AF tree (Yggdrasil.js
+  92e67fa0)
 - Re-consolidated at ADDENDUM 9 (A4..A9 were past the B1 consolidation): the D8 nits are folded (the A8-1 quote form,
   the C-8 guard tag, the Status and legend wrapping, long headings split into a heading + a Sources line).
 - Re-consolidated at ADDENDUM 12 (A10..A12 were past the ADDENDUM 9 consolidation): every rule changed by A10-1..A10-11,
   A11-1..A11-8 and A12-1..A12-15 states its final text once; landing-history clauses became pointers.
 
 - Status: CURRENT, consolidated through ADDENDUM 12 (not RULED). The maintainer rulings are R-D1..R-D4, R-E1..R-E5,
-  R-Q1, R-P1, R-P2, R-S1..R-S3, R-J1, R-C1 and R-B1 (quoted in "Maintainer rulings"; R-C1 and R-B1 are A12-14 and
-  A12-15). Every other rule is a planner rule or a reading (NOT ruled): DB-1 r1..r3, A4-1..A4-14, A5-1..A5-34 (incl. the
-  merge rulings M-1..M-8), A6-3 (Q4), A7-1..A7-5, A8-4, A9-2..A9-8, A10-1..A10-11, A11-1..A11-8, A12-1..A12-13,
-  A13-1..A13-5 and A14-1..A14-13.
+  R-Q1, R-P1, R-P2, R-S1..R-S3, R-J1, R-C1, R-B1, R-A1, R-A2 and R-A3 (quoted in "Maintainer rulings"; R-C1 and R-B1 are
+  A12-14 and A12-15; R-A1..R-A3 are A15-1..A15-3). Every other rule is a planner rule or a reading (NOT ruled): DB-1
+  r1..r3, A4-1..A4-14, A5-1..A5-34 (incl. the merge rulings M-1..M-8), A6-3 (Q4), A7-1..A7-5, A8-4, A9-2..A9-8,
+  A10-1..A10-11, A11-1..A11-8, A12-1..A12-13, A13-1..A13-5, A14-1..A14-13 and A15-4..A15-9.
 - Date: 2026-10-26
 - Session: SumSequence CURRENT consolidation (docs unit B1)
 - Provenance of this text: consolidated from .handoff/PLAN-G-A.md (body, rulings, ADDENDA 1-3), .handoff/PLAN-G-B.md
@@ -33,8 +35,8 @@ Earlier fold notes (each names the HEAD the fold was written against; it landed 
   pass) from .handoff/PLAN-E0.md (the merge: M-1..M-8, R-E1..R-E4; its reconciliations win over the six plans) and its
   six plans PLAN-E0-A / -F / -K / -S / -V / -G. Rule ids cite those files by name (Sources legend);
   the plan files are gitignored and archived at release. The rung ladder lives in PLAN-E0.md, never here.
-- Precedence: ADDENDUM 14 > ADDENDUM 13 > ADDENDUM 12 > ADDENDUM 11 > ADDENDUM 10 > ADDENDUM 9 > ADDENDUM 8 >
-  ADDENDUM 7 > ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 >
+- Precedence: ADDENDUM 15 > ADDENDUM 14 > ADDENDUM 13 > ADDENDUM 12 > ADDENDUM 11 > ADDENDUM 10 > ADDENDUM 9 >
+  ADDENDUM 8 > ADDENDUM 7 > ADDENDUM 6 > ADDENDUM 5 > ADDENDUM 4 >
   ADDENDUM 3 > ADDENDUM 2 > ADDENDUM 1 > body. Every rule below is the FINAL rule, stated in full.
   A superseded rule is not repeated here (it lives in the plan files and the Source map says where it went).
 - Binding: this file is binding for every agent. ADRs 0001..0004 keep their ruled text; where this file amends an
@@ -122,8 +124,23 @@ AskUserQuestion, 2026-10-27 (D12 burst; relayed by the orchestrator session, ADD
   <version>' and names the last release that has a measured table, without copying its numbers. This matches the suite
   law that numbers enter docs only from a run log of THIS cycle."
 
+AskUserQuestion, 2026-10-27 (maintainer audit triage; relayed by the orchestrator session, ADDENDUM 15):
+
+- R-A1: (F-4b, 0005 C-13) = "Amend C-13: b = dims (Recommended)". Option text: "C-13's big-lane bound for insertAt
+  becomes b = dims (<= 16*dims + 1 B/op), stated as a documented limit in README / llms.txt. No engine change. G2's big
+  lane gates the amended bound."
+- R-A2: (F-3) = "Record, no change (Recommended)". Option text: "A one-time re-tiering deopt on a dims change, recorded
+  as a reading in 0005. R-Q1's single fused branch and the dims = 1 hot-branch census (15) stay as ruled. No engine
+  change."
+- R-A3: (F-7) = "No action (Recommended)". Option text: "'Cold' in C-25 means a separate source function, not a
+  promise that V8 won't inline it. The finding is recorded as a REPORTED observation; nothing is gated and nothing
+  changes."
+
 ## Sources legend
 
+- 0005 A15-1..A15-9 = this file's own ADDENDUM 15 (below; the maintainer-audit fix unit AF: A15-1..A15-3 are the rulings
+  R-A1..R-A3, quoted above; A15-4..A15-9 are readings of the AF unit, NOT ruled). Every A15 item names the CURRENT rules
+  it changed and every changed rule cites its A15 ids.
 - 0005 A14-1..A14-13 = this file's own ADDENDUM 14 (below; the K-R2 rung (rung 10, cursor next()) readings, NOT ruled;
   no maintainer ruling was given in K-R2). Every A14 item names the CURRENT rules it changed and every changed rule
   cites its A14 ids.
@@ -313,7 +330,7 @@ Sources: G-A B-18 -> G-A-D3 -> G-A A2-4 -> G-A A3-4 -> 0005 A5-3, A5-22 -> 0005 
 - Closes RESEARCH Q-3. A cursor walk gives O(log n + k) reads at 0 B (this is why readRange is not in v0.1, C-12).
 
 ### C-8 clear() restores the constructed state, `_n` excepted
-Sources: G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-4
+Sources: G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-4 -> 0005 A15-4
 
 - clear() restores the view to its constructed state exactly: _len 0, _root === EMPTY_ROOT, _fl NIL, _cv false,
   header bump 0 and live 0 once every view has cleared. The diagnostic counters `_n` are EXCLUDED (0003 G-8, X-8:
@@ -327,14 +344,24 @@ Sources: G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-
 - Drain (RA-4, A5-13): a removeAt that takes the arena to live 0 resets both pools to construction order exactly as
   clear() does (0004 A-6 states the reset only for clear(); the stubs reset on every transition to live 0). With
   k >= 2 views, live 0 means every view is empty.
-- Corrupt-view guard (R-S1, R-S2, R-S3, A8-1..A8-4): the k >= 2 clear() free-walk (0004 A-6) range-checks the root ref
-  (leaf ref ~root < leaf bump; internal 0 <= root < internal bump; EMPTY_ROOT fails) and _len <= live before any write,
-  range-checks every child ref and bounds the walk by the bumps; a failure throws a plain Error whose message starts
-  'lite-yggdrasil: clear() corrupt view: ' (not a RangeError, no C-10 token). Cold path only; hot bodies unchanged.
+- Corrupt-view guard (R-S1, R-S2, R-S3, A8-1..A8-4, A15-4): clear() runs one cold pre-check, ygClearCheck, BEFORE BOTH
+  branches (the _len === live ygReset fast path and the k >= 2 free-walk, 0004 A-6), so before any write: _len is a
+  number, an integer, 0 <= _len <= live (NaN, negatives, fractions, non-numbers fail); _root is a number and an int32
+  (`(root | 0) === root`, no coercion: null, false, '', '0.5', '-1', -Infinity, -2^32 fail); (_len === 0) === (_root ===
+  EMPTY_ROOT); a non-empty root is range-checked against the bumps (leaf ref ~root < leaf bump; internal 0 <= root <
+  internal bump; EMPTY_ROOT with _len > 0 fails). The k >= 2 walk then range-checks every child ref and bounds the walk
+  by the bumps. A failure throws a plain Error whose message starts 'lite-yggdrasil: clear() corrupt view: ' (not a
+  RangeError, no C-10 token), with hdr and every column unchanged for a pre-check failure. Detail texts: `_len X is not
+  an integer >= 0`, `_len N > live L`, `root ref X is not an int32`, `root ref R with _len 0`, `root ref R out of
+  range`. Cold path only; hot bodies unchanged.
 - Mid-walk failure (R-S2): only the root / _len checks run before any write; a mid-walk failure throws AFTER live -=
   _len and the frees already made (the view keeps _root / _len); the arena is not trusted after it.
-- Not detected (R-S3): a ref inside the bumps that names another view's node, a free node or a node shared inside the
-  view (the walk frees it); the test-side walker catches these.
+- Not detected (R-S3, A15-4): a ref inside the bumps that names another view's node, a free node or a node shared inside
+  the view (the walk frees it); the test-side walker catches these. The two audit shapes (F-1e) stay out of scope:
+  duplicate leaf children of one internal (left === right, a leaf freed twice, which makes a free-list self-loop) is
+  in this class, not detected (R-S3); an internal child equal to its parent (u's own ref as a child) is caught
+  mid-walk by the walk bound ('more than N internals') after live -= _len and the frees already made, leaving u on the
+  internal free list (R-S2).
 
 ### Entity, signatures, options
 
@@ -350,7 +377,7 @@ Sources: G-A B-18 -> DB1 P-09 -> G-B B3-1 -> 0005 A5-11, A5-13 -> 0005 A8-1..A8-
 
 ### C-10 Check order
 Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16, A5-20, A5-26, A5-30 -> 0005 A6-1 ->
-  0005 A7-3 -> 0005 A8-1 -> 0005 A9-3 -> 0005 A10-2, A10-5 -> 0005 A12-11
+  0005 A7-3 -> 0005 A8-1 -> 0005 A9-3 -> 0005 A10-2, A10-5 -> 0005 A12-11 -> 0005 A15-2, A15-7
 
 - Check order, all before the first write: i, e, measures (M-3 each, slots < dims), extra slots, capacity, headroom.
   The capacity RangeError message carries the token 'capacity' and is checked between extra slots and headroom.
@@ -372,10 +399,15 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   append check is evaluated whenever both operands are non-empty, whatever the seam repair then does (A9-3; C-3).
   splitAt's pre-check: see C-3 (A10-2).
 - Dims 1..3 (RV-2, A5-30, R-Q1, A6-1): the extra-slot and headroom branches carry `| (dims > 1)` and send dims > 1 to
-  one cold re-check. R-Q1 adds one hot branch, the dims > 1 test guarding the fused inline typeof of slots
-  1..dims-1 (C-44), so the dims=1 census below is 15 (RV-2's 14 is superseded). No census gate exists: the reviewer
-  counts, backed by a
-  bytecode golden of the hot functions.
+  one cold re-check. R-Q1 adds one hot branch, the dims > 1 test guarding the fused inline typeof of slots 1..dims-1
+  (C-44), so the dims=1 census below is 15 (RV-2's 14 is superseded). No hot-branch census gate exists (the 0003 G-6
+  counter census is gated, C-24): the reviewer counts, backed by a bytecode golden of the hot functions. R-A2 (A15-2,
+  RULED) keeps R-Q1's single fused branch and the census of 15 as ruled; the one-time re-tiering deopt on a dims change
+  (F-3) is a recorded reading, no engine change.
+- Guard form (A15-7, lite-law: NaN fails closed by construction): the headroom guards (insertAt, ygHeadroomIns,
+  setMeasure, ygSetHeadroom, append), the C cap, clear()'s _len check, and the dims and count guards are written
+  `!(x <= bound)`, never `x > bound` (same throw text). The hot index / dim guards `((x >>> 0) !== x) | (x > n)`
+  stay: they are NaN-safe by the uint32 term.
 - Operand check (RS-6, A5-26): a private `#` brand, then `_hdr` identity (0004 A-3's _hdr check alone passes a forged
   object). Order: not a view, self, another arena, non-empty out; then (append only) headroom. Index before operand
   stays as below. A non-empty out throws the message 'operand out must be empty' (token 'operand', detail 'out must be
@@ -420,16 +452,21 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   v0.1 (the cursor gives O(log n + k) at 0 B); owner Tier 2. 0004 O-3 (parent column, entity -> index): not carried
   into v0.1 (it needs an entity-slot write on every leaf move, which is hot); owner = the v0.4 pool planner.
 
-### C-13 Zero-box lanes (G-A-D8 -> G-A A2-3 -> 0005 A5-19, A5-27 -> 0005 A12-13)
+### C-13 Zero-box lanes (G-A-D8 -> G-A A2-3 -> 0005 A5-19, A5-27 -> 0005 A12-13 -> 0005 A15-1, A15-9)
 
 - 0002 O-1 outcome = a documented limit; no io-slot API. Smi lane: 0 B/op. Big lane (measures and y beyond 2^30):
   measures drawn in [2^30, 2^40] with live <= 4096 (4096 * 2^40 = 2^52, never a headroom RangeError), y drawn in
   [2^30, total); the steady-state MINIMUM bytes/op over windows 1..n-1 (window 0 is printed, never gated) must be
   <= 16*b + 1 with maxMajor 0.
-- b = boxed boundary values per call: 1 for insertAt, setMeasure, getMeasure, sumBefore, total, indexAtSum, seekSum,
-  cursor offset(d) and measure(d); 0 for removeAt, entityAt, next, seekIndex (RK-2), splitAt and append (RS-7).
+- b = boxed boundary values per call: 1 for setMeasure, getMeasure, sumBefore, total, indexAtSum, seekSum, cursor
+  offset(d) and measure(d); 0 for removeAt, entityAt, next, seekIndex (RK-2), splitAt and append (RS-7).
+- insertAt (R-A1, A15-1, RULED): b = dims, so the big-lane bound for insertAt is <= 16*dims + 1 B/op (dims 1..4), a
+  documented limit in README / llms.txt (docs batch). No engine change. G2's big lane gates the amended bound; at
+  dims = 1 it equals the old bound.
 - Must-fail: a descent that returns acc across a %NeverOptimizeFunction helper shows > 16*b + 1. Doc sites: README
-  Zero-GC notes and llms.txt state the limit.
+  Zero-GC notes and llms.txt state the limit, insertAt's as b = dims (R-A1).
+- Bytecode (A15-9, REPORTED, node v26.8.2): getMeasure 443 (287d10c1) -> 464 (92e67fa0) bytes, over V8's default
+  460-byte inline limit. Not a spec violation (b = 1 above, the Smi lane returns a Smi, 0003 G-7 holds); a G2 input.
 - Cursor probe (A12-13, reviewer scratch; PRELIMINARY: host load 3.2-4.6, --trace-gc scavenge counts, 2^21 ops, 1 MB
   semi-space, node v26.8.2, 2026-10-27): seekIndex with measures in [2^30, 2^40] gave 0 scavenges; the getters 0;
   seekSum with a big fractional y 32 (about 16 B/op = the one boxed y, b = 1); with a small y 0. Not a gate (the gate is
@@ -586,7 +623,7 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
   the child timeout: it spins in ygJoin on undefined weights (3 * w is NaN) after the dropped ss[HL-1] write.
 - Amends 0001 T-10 and 0003 G-13.
 
-### C-24 COUNTERS (R-D2 -> 0005 A5-15 -> 0005 A9-1, A9-5 -> 0005 A11-4)
+### C-24 COUNTERS (R-D2 -> 0005 A5-15 -> 0005 A9-1, A9-5 -> 0005 A11-4 -> 0005 A15-5)
 
 - The counter indexes are a static frozen class field SumSequence.COUNTERS; the export list is unchanged. Closes
   0003 O-3. Counters stay per view (R-X2) and clear() keeps them (C-8).
@@ -597,12 +634,17 @@ Sources: G-A B-22 -> B-24 -> G-A-D7 -> G-A A2-2 -> 0005 A4-9, A5-4, A5-7, A5-16,
 - Join counters (A9-1, A9-5): a join's pulls are counted per C-20 (R-J1). joinSteps (A9-5) is 0 when the two trees are
   already balanced (the first c, b's root unless 3 w(b) < w(a), already passes I-1 against the other root, so the push
   loop does not run).
+- Write form and census (A15-5; 0003 G-5 / G-6, binding as written): every `_n` write is in the 0003 G-5 form
+  `n[K] = (n[K] + x) | 0` (51 sites, aliases included; the wrap goes to -2^31, gates read window deltas `(after -
+  before) | 0`). The 0003 G-6 census is GATED in npm test (test/CounterCensus.test.mjs): 0 violations, >= 51 G-5
+  writes, must-fail fixtures including `if (this._n[7] > 0)` and a `+=` site. The three allowed non-write sites are the
+  constructor, readCounters and resetCounters.
 - Slot dependence (A11-4, R8-2): the positional tail indexes `YG_MISSES - h`, so it depends on fingerHits = slot 8 =
   fingerMisses - 1 (this layout); test/Counters.test.mjs gates it (deep-equals COUNTERS).
 
 ### C-25 Touches
 Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 0005 A5-3, A5-14, A5-24, A5-25 ->
-  0005 A7-1 -> 0005 A9-6 -> 0005 A10-1, A10-7, A10-8, A10-11 -> 0005 A14-2, A14-3
+  0005 A7-1 -> 0005 A9-6 -> 0005 A10-1, A10-7, A10-8, A10-11 -> 0005 A14-2, A14-3 -> 0005 A15-3
 
 - touches = internal nodes PUSHED onto a descent's path stack: the main descent, the neighbour walk from sibling(u),
   the F-3 re-home, the seam search, and a cursor leaf crossing. Never the leaf itself, never pulls, rotations or join
@@ -613,6 +655,9 @@ Sources: DB1 P-08 -> G-B-D7 -> G-A A2-6 = G-B B2-4 -> G-B B3-2 -> DB1 N-4 -> 000
   still pays d(t) although the cursor ends invalid (R-E3); splitAt at i in {0, length}, or on an empty view, has no
   leaf c: touches 0, no descent (RS-3; the stub short-circuits); append's seam repair is counted before the join
   (R-E5, C-21).
+- "Cold" (R-A3, A15-3, RULED): in C-25 and the engine comments, 'cold' means a separate source function, not a promise
+  that V8 will not inline it. F-7 (the 195-byte (audit 2026-10-27 F-7, node v26.8.2, untimed) SumCursor _cross inlined
+  into next() by TurboFan) is a REPORTED observation: nothing is gated and nothing changes.
 - Cursor crossings (A14-2, A14-3; C-7): C-25 counts pushes only. The end crossing (off the last element) pushes nothing
   and adds 0 touches; a leaf crossing adds depth - top touches, top = depth(lca) + 1, = d(t') - depth(lca) - 1.
 - Append descents (A9-6): append counts touches += d_a + d_b once, when both operands are non-empty. The d_b descent
@@ -1061,10 +1106,13 @@ Sources: PLAN-E0 M-1 -> M-2 -> M-3 -> M-4 -> M-5 -> 0005 A5-5..A5-8 -> 0005 A7-2
   (C-21); repair takes two (stack, depth) pairs + sh + vu and leaves _len, hdr live and the finger to its caller.
 
 ### C-44 Engine internal layout, the adapter contract
-Sources: PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6-1 -> 0005 A12-8
+Sources: PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6-1 -> 0005 A12-8 -> 0005 A15-2, A15-6,
+  A15-8
 
 - Each view has own fields in this order: _root, _len, _fl, _fb, _fdepth, _fpath, _cv, _cur, _n, then hoisted column
-  refs, and _ar (the shared arena record). _ar keys: C, B, shift, m, dims, Lmax, HL, views, sx. _cur (A12-8, K1-R1) is
+  refs, and _ar (the shared arena record). _ar keys (A15-8): C, B, shift, m, dims, Lmax, HL, sx, jstack, sstack
+  (no `views`: it was never read after arena() returned and retained every sibling view and cursor; arena() builds and
+  returns its own array, and `new SumSequence` keeps none). _cur (A12-8, K1-R1) is
   the one cursor object reference, set once in the constructor and never reassigned. The header hdr is an
   Int32Array(5) [live, lbump, lfree, ibump, ifree] with END = -1; a fresh arena reads [0, 0, -1, 0, -1].
 - Internal columns: left, right, weight, count, inext, sums[d]. Leaf columns: llen, lnext, ent, meas[d] (each
@@ -1072,7 +1120,10 @@ Sources: PLAN-E0-A RA-1, RA-2 -> PLAN-E0-G G R-1 -> 0005 A5-10, A5-11 -> 0005 A6
   (Float64Array(4)), never passed as arguments (zero-box).
   At dims > 1 insertAt's public measure arguments of slots 1..dims-1 (slots < dims, C-10) are
   typeof-checked inline BEFORE any store into sx (one fused `(typeof m1 !== 'number') | ...` branch under dims > 1;
-  R-Q1, A6-1), then stored into sx[1..dims-1]; the cold re-check / slot helper reads sx and takes no measure arguments.
+  R-Q1, A6-1), then stored into sx[1..dims-1]. ygSlots (A15-6) then checks sx[1..dims-1] inline, each slot: range
+  `!((m >= 0) & (m <= YG_MAX))` ('measure must be in [0, 2^53-1]'), then `m % 1 !== 0` ('measure must be an
+  integer'); no call carries the double (Zero-Box law) and the helper ygMeasure is removed. Messages and tokens are
+  unchanged. R-A2 (A15-2): the dims-change re-tiering deopt (F-3) is a reading; the fused branch stands.
 - The engine adapter engineFactory(C, {leafSize, dims}, count, cfg) -> {views, snapshot()} reads the RA-1 fields (each
   view's hoisted column refs; the constants in views[0]._ar); snapshot() follows the walker header (C-27) exactly,
   every array a deep copy; any cfg key is a RangeError 'cfg' (the engine takes none). NIL = 0 and
@@ -1496,6 +1547,18 @@ Each source item maps to a C-id or reads "history-only". Rule text is not repeat
 | 0005 A14-11 | C-35 |
 | 0005 A14-12 | C-46 |
 | 0005 A14-13 | C-6, C-7, C-43 |
+| R-A1 | C-13 |
+| R-A2 | C-10, C-44 |
+| R-A3 | C-25 |
+| 0005 A15-1 | C-13 |
+| 0005 A15-2 | C-10, C-44 |
+| 0005 A15-3 | C-25 |
+| 0005 A15-4 | C-8 |
+| 0005 A15-5 | C-24 |
+| 0005 A15-6 | C-44 |
+| 0005 A15-7 | C-10 |
+| 0005 A15-8 | C-44 |
+| 0005 A15-9 | C-13 |
 
 Count note: this map has 128 rows: G-A 61 (body 13, D-1..D-3 3, R-D1..R-D3 3, TASKS 0-8 9, A1..A5 5, RISK 3, G-A-D1..D11
 11, A2-1..A2-8 8, A3-1..A3-5 5, plus the shared R-D4 row), G-B 39 (O-4, B-19, B-25, B-26, B-27, B-29, B-32, XG-1;
@@ -1513,7 +1576,9 @@ readings carry their R8 tag in the ADDENDUM 11 item, no separate source row); th
 rows 0005 A12-1..A12-15 follow those (290 rows; A12-14 and A12-15 are the two rulings, the readings carry no separate
 source row); the 5 rows 0005 A13-1..A13-5 follow those (295 rows; the bc readings carry no separate source row);
 the 13 rows 0005 A14-1..A14-13 follow those (308 rows; the K-R2 readings carry their K2-id tag in the ADDENDUM 14
-item, no separate source row).
+item, no separate source row); the 3 ruling source rows R-A1..R-A3 and the 9 rows 0005 A15-1..A15-9 follow those (320
+rows; A15-1..A15-3 are the three rulings, the AF readings carry their AF-n tag in the ADDENDUM 15 item, no separate
+source row).
 No E0 or rung-3/4/5/6 source item is history-only: each one changed a CURRENT rule.
 
 ## Addenda
@@ -2005,5 +2070,58 @@ through" line stays at ADDENDUM 12); A13 and A14 are past it.
 - A14-13 (landing; reading, NOT ruled) -> C-6, C-7, C-43. next() and the stack writes, stated as future ("land in
   K-R2" in 0005 C-6 / C-43, "_stk not written" in the 17ffcab Yggdrasil.js comment :1867), are implemented: C-6, C-7
   and C-43 now state them as landed in K-R2.
+
+OPEN (not folded, maintainer decision pending): none.
+
+### ADDENDUM 15 (2026-10-27) -- the maintainer-audit fix unit AF and rulings R-A1..R-A3, 0005's own
+
+Tier: DETERMINISTIC (source anchors, exact counts, sha pins, mutant and parity results; no timing), except the bytecode
+lengths in A15-9, which are REPORTED (node v26.8.2, untimed). A15-1..A15-3 are the maintainer rulings R-A1..R-A3 (quoted
+in "Maintainer rulings" above, AskUserQuestion 2026-10-27); A15-4..A15-9 are readings of the AF unit, NOT rulings and
+NOT ruled. Written against 390ed2e + the AF tree (Yggdrasil.js sha256 92e67fa0, before 287d10c1; AF review r1 REJECTED
+test-only (GATE TEETH: no AF-3 row), helper fix round, r2 APPROVED; npm test 806 -> 831). Each item names the CURRENT
+rules it changed; the rule text above is already amended (same edit). The map rows are in the Source map. No item
+amends an ADR rule (0003 G-5 / G-6 are applied as written), so the Amends table gains no row. This is not a
+re-consolidation (the "consolidated through" line stays at ADDENDUM 12); A13, A14 and A15 are past it.
+
+- A15-1 (R-A1, RULED; F-4b) -> C-13. insertAt's b becomes dims: the big-lane bound is <= 16*dims + 1 B/op, a documented
+  limit in README / llms.txt (docs batch, not part of this edit). insertAt leaves C-13's b = 1 list and has its own
+  clause. No engine change; G2's big lane gates the amended bound.
+- A15-2 (R-A2, RULED; F-3) -> C-10, C-44. A one-time re-tiering deopt on a dims change is recorded as a reading. R-Q1's
+  single fused branch and the dims = 1 hot-branch census (15) stand as ruled. No engine change.
+- A15-3 (R-A3, RULED; F-7) -> C-25. 'Cold' means a separate source function, not a promise that V8 will not inline it.
+  F-7 (SumCursor _cross, 195 B bytecode, inlined into next()) is a REPORTED observation; nothing is gated, nothing
+  changes.
+- A15-4 (AF-1; F-1a..F-1d; reading, NOT ruled) -> C-8. The clear() guard is one cold function, ygClearCheck, run BEFORE
+  BOTH branches (the _len === live ygReset fast path and the k >= 2 walk), before any write: _len a number, an integer,
+  0 <= _len <= live; _root an int32 number (no coercion); (_len === 0) === (_root === EMPTY_ROOT); a non-empty root
+  inside the bumps. C-8's guard bullet states the checks and the new detail texts (`_len X is not an integer >= 0`,
+  `root ref X is not an int32`, `root ref R with _len 0`; the old `_len N > live L` and `root ref R out of range`
+  kept). F-1e stays out of scope: duplicate leaf children (a leaf freed twice into a free-list
+  self-loop) is NOT detected (R-S3); an internal child equal to its parent throws mid-walk ('more than N internals',
+  R-S2) after partial frees. C-8 states both.
+- A15-5 (AF-2; F-2; reading, NOT ruled) -> C-24. Every `_n` write is in the 0003 G-5 form (51 sites, aliases
+  included). The 0003 G-6 census is gated in npm test (test/CounterCensus.test.mjs: 0 violations, >= 51 G-5 writes,
+  must-fail fixtures including `if (this._n[7] > 0)` and a `+=` site); the three allowed non-write sites are the
+  constructor, readCounters and resetCounters. Answers and counter values are identical below 2^31.
+- A15-6 (AF-3; F-4a; reading, NOT ruled) -> C-44. ygSlots checks sx[1..dims-1] inline (the range, then `m % 1 !== 0`);
+  no call carries the double; ygMeasure is removed; messages and tokens unchanged (3.5M seeded Float64 patterns plus
+  edges, 0 differences against the old ygMeasure, reviewer). The r1 REJECTED was this item's missing npm-test row; r2's
+  rows close the two surviving AF-3 mutants.
+- A15-7 (AF-4; F-5; reading, NOT ruled) -> C-10. The lite-law guard form `!(x <= bound)`: the headroom guards
+  (insertAt, ygHeadroomIns, setMeasure, ygSetHeadroom, append), the C cap, clear()'s _len and the dims and count guards.
+  The hot index / dim guards `((x >>> 0) !== x) | (x > n)` stay (NaN-safe by the uint32 term; reviewer: the remaining
+  `>` guards are NaN-safe).
+- A15-8 (AF-5; F-6; reading, NOT ruled) -> C-44. _ar no longer holds `views` (never read after arena() returned, and
+  it retained every sibling view and cursor). The live ygInit record is C, B, shift, m, dims, Lmax, HL, sx, jstack,
+  sstack; arena() builds and returns its own array. The F-6 retention row (lite-leak) is a G2 input.
+- A15-9 (AF review and parity; reading, NOT ruled) -> C-13. Review r1: 27 mutants, all AF-1 / AF-2 / AF-4 /
+  AF-5 mutants killed, the 2 survivors were the AF-3 rows closed by r2. Parity against 287d10c1: 16 configs x 20000 ops
+  (reviewer) and 8 configs x 6000 ops (coder): answers, errors and readCounters byte-identical; golden (a)
+  byte-identical. Audit reproduction after AF: F-1a..F-1d, F-2, F-4a, F-5, F-6 no longer reproduce; F-1e, F-3 and F-7
+  still do (ruled: R-S2 / R-S3, R-A2, R-A3). Bytecode lengths (REPORTED, node v26.8.2): insertAt 1509 -> 1560, removeAt
+  1007 -> 1042, setMeasure 849 -> 877, getMeasure 443 -> 464 (over V8's default 460-byte inline limit; the reviewer:
+  not a spec violation, C-13 counts getMeasure b = 1, the Smi lane returns a Smi, 0003 G-7 holds; a G2 input), entityAt
+  379 -> 400.
 
 OPEN (not folded, maintainer decision pending): none.

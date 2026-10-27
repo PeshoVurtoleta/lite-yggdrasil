@@ -1,4 +1,5 @@
-// Type declarations for @zakkster/lite-yggdrasil (rung K-R2: the cursor surface (cursor(), seekIndex / seekSum / next, valid / index / entity, offset / measure) on top of rung F-R: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain, the k >= 2 clear() free-walk, join and append with the seam repair, splitAt with its seam repairs, and the finger hit test in the positional ops).
+// Type declarations for @zakkster/lite-yggdrasil: SumSequence, a zero-GC summary tree (mutable ordered sequence seekable by any running total).
+/** Package version string. */
 export declare const VERSION: string;
 
 export interface SumSequenceOptions {
@@ -52,13 +53,16 @@ export declare class SumSequence {
   constructor(capacity: number, options?: SumSequenceOptions);
   /** count views sharing one arena of capacity C; count in 1..min(C, 4096); the constructor's caps apply. */
   static arena(capacity: number, options: SumSequenceOptions | undefined, count: number): SumSequence[];
-  /** Index of each counter in readCounters(out). */
+  /** Index of each counter in readCounters(out). Frozen, read-only binding: strict-mode assignment throws TypeError. */
   static readonly COUNTERS: Readonly<{
     touches: 0; pulls: 1; moves: 2; splits: 3; merges: 4; equalizes: 5;
     rotSingle: 6; rotDouble: 7; fingerHits: 8; fingerMisses: 9; joinSteps: 10; seamRepairs: 11;
   }>;
+  /** Number of elements in this view. */
   readonly length: number;
+  /** Arena-wide capacity C (shared by every view of the arena). */
   readonly capacity: number;
+  /** Free slots in the whole arena: capacity minus the live elements of every view. */
   readonly available: number;
   /** Total of dimension d (0 <= d < dims). O(1). */
   total(d: number): number;
@@ -80,6 +84,16 @@ export declare class SumSequence {
   indexAtSum(d: number, y: number): number;
   /** Sum of dimension d over elements [0, i), i in [0, length]. */
   sumBefore(d: number, i: number): number;
+  /**
+   * Return this view to its freshly constructed state (length 0, cursor invalid, finger dropped) and return this.
+   * The counters are kept. O(1) when this view holds every live element of its arena; otherwise it frees only this
+   * view's own nodes (other views of the arena are untouched).
+   * Before its first write it checks only the view's _len and root ref; a forged or corrupt one throws a
+   * plain Error whose message starts 'lite-yggdrasil: clear() corrupt view: ' (NOT a RangeError, no token).
+   * Not detected (beyond the guard): a forged _len inside [0, live] on a valid root, a ref that names another view's
+   * node, a free node or a node shared inside the view. A failure in the middle of the free-walk throws after some
+   * nodes were freed; the arena is not trusted after it.
+   */
   clear(): this;
   /** this := this ++ other (a view of the same arena), other := empty; returns this. RangeError operand / headroom / pool leaves both views unchanged. */
   append(other: SumSequence): this;
@@ -89,5 +103,6 @@ export declare class SumSequence {
   cursor(): SumCursor;
   /** Copy the 12 counters into out. RangeError 'counters' when out is not an Int32Array or out.length is not >= 12 (NaN included). */
   readCounters(out: Int32Array): void;
+  /** Zero the 12 counters of this view (clear() keeps them). */
   resetCounters(): void;
 }

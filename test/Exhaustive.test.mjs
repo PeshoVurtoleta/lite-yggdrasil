@@ -645,8 +645,9 @@ test('A5 ASCII-only (U+00D7 and U+00B5 excepted) in stubs.mjs, exhaustive.mjs an
   assert.ok(bad.test('caf\xE9'), 'control: a non-ASCII letter is caught');
 });
 
-test('M-6 test/exhaustive.mjs parity pin (sha256 fce39b1a)', () => {
-  // 0005 C-46 M-6: byte-identical to HEAD until the cursor-suffix batch (C-31).
+test('M-6 test/exhaustive.mjs parity pin (sha256 6734c7aa, re-pinned at K-R2)', () => {
+  // 0005 C-46 M-6: re-pinned at K-R2 (cursor sweep, clear() read as undefined). The stub lane reports at CAPS are
+  // byte-identical to the HEAD fce39b1a driver's (golden (b): .handoff/evidence/k2/helperA/golden-b-*.json).
   const h = createHash('sha256').update(readFileSync(HERE('./exhaustive.mjs'))).digest('hex');
-  assert.equal(h.slice(0, 8), 'fce39b1a');
+  assert.equal(h.slice(0, 8), '6734c7aa');
 });

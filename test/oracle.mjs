@@ -109,6 +109,13 @@ export class Oracle {
         self.#ci = k < self.#ent.length ? k : -1;
         return self.#ci >= 0;
       },
+      // K-R2 (C-7 RK-2, R-E3): invalid -> false, no change; else index + 1; index == length -> invalid, false
+      next() {
+        if (self.#ci < 0) return false;
+        const k = self.#ci + 1;
+        self.#ci = k < self.#ent.length ? k : -1;
+        return self.#ci >= 0;
+      },
     };
   }
 

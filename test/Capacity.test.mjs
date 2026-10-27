@@ -236,15 +236,29 @@ function bigC(B, k, dims) {
 }
 
 // Recording sentinel: replaces the global typed-array constructors, records (bytes) per call and
-// returns a zero-length REAL array, so construction completes with no allocation.
+// returns a zero-length REAL array, so construction completes with no allocation. Every OTHER typed-array
+// constructor is pointed at a throwing sentinel while installed (an allocation of a kind the engine must
+// not use here is loud), and restore() puts all of them back.
+const OTHER_TA = ['Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Uint32Array',
+  'Float32Array', 'BigInt64Array', 'BigUint64Array'];
 function installRecorder() {
   const RealI = globalThis.Int32Array;
   const RealF = globalThis.Float64Array;
   const rec = { calls: 0, bytes: 0, firstLen: -1, RealI, RealF };
+  const saved = [];
   function note(len, size) { if (rec.calls === 0) rec.firstLen = len; rec.calls++; rec.bytes += len * size; }
-  globalThis.Int32Array = function (len) { note(len, 4); return new RealI(0); };
-  globalThis.Float64Array = function (len) { note(len, 8); return new RealF(0); };
-  rec.restore = () => { globalThis.Int32Array = RealI; globalThis.Float64Array = RealF; };
+  rec.restore = () => {
+    globalThis.Int32Array = RealI; globalThis.Float64Array = RealF;
+    for (let k = 0; k < saved.length; k++) globalThis[saved[k][0]] = saved[k][1];
+  };
+  try {
+    globalThis.Int32Array = function (len) { note(len, 4); return new RealI(0); };
+    globalThis.Float64Array = function (len) { note(len, 8); return new RealF(0); };
+    for (const name of OTHER_TA) {
+      saved.push([name, globalThis[name]]);
+      globalThis[name] = function () { throw new Error('recorder sentinel: unexpected ' + name + ' allocation'); };
+    }
+  } catch (e) { rec.restore(); throw e; }
   return rec;
 }
 
@@ -443,7 +457,7 @@ test('control (arithmetic): Lmax + 1 and ceil(C/m) both fail the (4096, 16, 6) p
 
 const A_CAP = 'if (C > YG_SLOT_CAP - m * k)';
 const A_ALLOC = 'const ent = new Int32Array(LB);';
-const A_BYTE = "if (ygBytes(C, B, k, dims) > YG_BYTE_CAP) " +
+const A_BYTE = "if (!(ygBytes(C, B, k, dims) <= YG_BYTE_CAP)) " +
   "ygFail('capacity', 'arena typed arrays must total <= 2^32 bytes');";
 const A_CAPLINE = A_CAP + " ygFail('capacity', 'C must be <= 2^28 - (leafSize/4) * count');";
 
@@ -481,7 +495,8 @@ test('mutant control MUST fail: validate-after-allocate on count 4097 shows delt
   await withBuild(patches, (ns) => {
     const r = row4097(ns);
     assert.ok(r.err instanceof RangeError, 'mutant still rejects, just late');
-    assert.ok(r.delta >= MIB, 'mutant delta ' + r.delta + ' should be >= 1 MiB (an unchecked build allocates >= 32 MiB)');
+    assert.ok(r.delta >= MIB,
+      'mutant delta ' + r.delta + ' should be >= 1 MiB (an unchecked build allocates >= 32 MiB)');
   });
 });
 
@@ -577,5 +592,35 @@ test('mutant control MUST fail: M3 dropping the per-view term moves the count-40
       });
     }
     assert.equal(moved, 4, 'M3 must accept C*+1 at count 4096 for every dims');
+  });
+});
+
+// ---- NaN fails closed (K-R2 TASK 4): `!(bytes <= cap)`, never `bytes > cap` ---------------------------
+// Anchor: the end of ygBytes (`  return t;` + newline + `}`, exactly once). The mutant makes ygBytes return NaN, a
+// byte total that is no number. Spec (zero-box law): "NaN fails closed by construction: write !(x < bound), never
+// x >= bound", so the constructor must throw RangeError 'capacity' ('2^32 bytes') before any typed-array call.
+// Must FAIL on the pre-K-R2 build, where the check reads `ygBytes(...) > YG_BYTE_CAP` (NaN > cap is false).
+const A_YGBYTES_END = '  return t;\n}';
+
+test('R-C1 NaN row: a ygBytes that returns NaN makes the constructor throw RangeError capacity with 0 typed-array calls', async () => {
+  await withBuild([[A_YGBYTES_END, '  return NaN;\n}', 1]], (ns) => {
+    for (const B of BS) {
+      withRecorder((rec) => {
+        const r = tryCall(() => ns.SumSequence.arena(64, { leafSize: B, dims: 1 }, 1));
+        assert.ok(r.err instanceof RangeError, 'B=' + B + ' NaN bytes must throw, got ' + String(r.err));
+        assert.ok(String(r.err.message).includes('2^32 bytes'), 'B=' + B + ' message: ' + r.err.message);
+        assert.equal(rec.calls, 0, 'B=' + B + ' reached the allocator');
+      });
+    }
+  });
+});
+
+test('NaN row control: ygBytes unpatched (identity through buildMutant) builds a small arena', async () => {
+  await withBuild([[A_YGBYTES_END, A_YGBYTES_END, 1]], (ns) => {
+    withRecorder((rec) => {
+      const r = tryCall(() => ns.SumSequence.arena(64, { leafSize: 16, dims: 1 }, 1));
+      assert.equal(r.err, null);
+      assert.ok(rec.calls > 0);
+    });
   });
 });

@@ -3,7 +3,7 @@
  *
  * MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
- * Pre-release engine build (rung K-R1 of the E0 ladder): SumSequence init,
+ * Pre-release engine build (rung K-R2 of the E0 ladder): SumSequence init,
  * layout, pools, constructor validation, counters and getters (A-R1a), the
  * positional ops insertAt / removeAt / setMeasure / getMeasure / entityAt, the
  * seeks indexAtSum / sumBefore and clear(), with their C-10 checks (A-R1b),
@@ -17,7 +17,9 @@
  * C-4 finger hit test in the five positional ops (F-R): a hit skips the
  * descent and adds 0 touches; fingerHits / fingerMisses split (C-26), and the
  * cursor (K-R1): cursor(), valid / index / entity, offset / measure,
- * seekIndex / seekSum, and the _cv = false store of every mutator (C-6, C-7).
+ * seekIndex / seekSum, and the _cv = false store of every mutator (C-6, C-7),
+ * and (K-R2) the seeks' writes of the cursor stack, next() and its cold leaf
+ * crossing _cross() (C-7, C-25).
  * Nothing is released between rungs.
  *
  * Layout (0005 C-44). Every view owns, in this order: _root, _len, _fl, _fb,
@@ -63,8 +65,8 @@ const YG_MISSES = 9;
 const YG_JOINS = 10;
 const YG_SEAMS = 11;
 const YG_CLEAF = 0;               // cursor state slots (C-7): leaf id, pos in
-const YG_CPOS = 1;                // the leaf, leaf len, index
-const YG_CLEN = 2;
+const YG_CPOS = 1;                // the leaf, stack depth d(leaf), index
+const YG_CDEP = 2;
 const YG_CIDX = 3;
 // 2^53-1, the measure / total bound (0002 M-1, M-4). The one non-Smi constant.
 const YG_MAX = 9007199254740991;
@@ -179,7 +181,7 @@ function ygInit(C, o, k) {
   }
   const m = B >> 2;
   if (C > YG_SLOT_CAP - m * k) ygFail('capacity', 'C must be <= 2^28 - (leafSize/4) * count');
-  if (ygBytes(C, B, k, dims) > YG_BYTE_CAP) ygFail('capacity', 'arena typed arrays must total <= 2^32 bytes');
+  if (!(ygBytes(C, B, k, dims) <= YG_BYTE_CAP)) ygFail('capacity', 'arena typed arrays must total <= 2^32 bytes');
   // ---- allocation: no check below this line --------------------------------
   const shift = 31 - Math.clz32(B);
   const Lmax = Math.ceil(C / m) + k;
@@ -1859,13 +1861,15 @@ export class SumSequence {
   }
 }
 
-// ---- the cursor (C-6, C-7; rung K-R1) ------------------------------------------------
+// ---- the cursor (C-6, C-7; rungs K-R1, K-R2) ------------------------------------------
 // A view's ONE cursor: view.cursor() returns the view's _cur (identity stable,
 // 0 B). Module-private, not exported (C-6 RK-5). Every buffer is preallocated
 // here, once per view; no cursor call allocates (C-7):
-//   _st   Int32Array(4) [leaf id, pos in leaf, leaf len, index] (YG_C* slots)
-//   _stk  Int32Array(HL) the cursor's own path stack (next(), K-R2; not written
-//         in K-R1)
+//   _st   Int32Array(4) [leaf id, pos in leaf, depth, index] (YG_C* slots);
+//         depth = d(leaf), the live entries of _stk (K2-R1: the leaf length is
+//         read from the view's _llen, valid while _cv is true)
+//   _stk  Int32Array(HL) the cursor's own path stack: _stk[j] = the internal
+//         node at depth j on the root path of the leaf, j < depth (K-R2)
 //   _off  Float64Array(dims) running offsets: _off[d] = sum of dim d over
 //         [0, index) (RK-4: offset(d) is O(1))
 //   _v    the view
@@ -1876,7 +1880,11 @@ export class SumSequence {
 // (C-25); an empty view runs no descent and adds 0 (RA-5). A seek to the end
 // (i = length, y >= total(d)) still descends to the last leaf, pays d(t) and
 // leaves _cv false (R-E3). Every check precedes the first write (RK-3, C-10):
-// a throwing seek leaves the cursor and _cv unchanged.
+// a throwing seek leaves the cursor and _cv unchanged. A seek writes _stk with
+// the d(t) nodes it pushes (the touches it counts). next() is equally
+// finger-neutral and adds 0 hits / misses: 0 touches inside a leaf; a leaf
+// crossing (the cold _cross()) pushes and counts d(t') - depth(lca) - 1; next()
+// off the last element pushes nothing, adds 0 and leaves _cv false (R-E3, K2-R2).
 
 class SumCursor {
   constructor(v, ar) {
@@ -1945,10 +1953,12 @@ class SumCursor {
     const sums = v._sums;
     const lsum = v._lsum;
     const off = this._off;
+    const stk = this._stk;
     for (let d = 0; d < dims; d++) off[d] = 0;
     let k = at;
     let depth = 0;
     while (ref >= 0) {
+      stk[depth] = ref; // cr:push
       const l = left[ref];
       const cl = l < 0 ? llen[~l] : count[l];
       if (k < cl) {
@@ -1977,7 +1987,7 @@ class SumCursor {
     const st = this._st;
     st[YG_CLEAF] = id;
     st[YG_CPOS] = k;
-    st[YG_CLEN] = llen[id];
+    st[YG_CDEP] = depth;
     st[YG_CIDX] = at;
     v._cv = true;
     return true;
@@ -2012,11 +2022,13 @@ class SumCursor {
     const S = sums[dd];
     const LS = lsum[dd];
     const off = this._off;
+    const stk = this._stk;
     for (let q = 0; q < dims; q++) off[q] = 0;
     let acc = 0;
     let base = 0;
     let depth = 0;
     while (ref >= 0) {
+      stk[depth] = ref; // cr:push
       const l = left[ref];
       const sl = l < 0 ? LS[~l] : S[l];
       if (acc + sl > y) {
@@ -2055,9 +2067,68 @@ class SumCursor {
     const st = this._st;
     st[YG_CLEAF] = id;
     st[YG_CPOS] = j;
-    st[YG_CLEN] = len;
+    st[YG_CDEP] = depth;
     st[YG_CIDX] = base + j;
     v._cv = true;
     return true;
+  }
+
+  // Steps to the next element; returns the new valid (RK-2). Invalid: no write,
+  // false. Carries the current element's measures into _off (every dim), then
+  // pos + 1 / index + 1; inside the leaf that is all (0 touches, C-25; no finger
+  // or hit / miss write, C-26, C-27). Off the leaf's end: the cold _cross().
+  // No closure, no array, no boxed value (C-13, b = 0).
+  next() {
+    const v = this._v;
+    if (!v._cv) return false; // cr:guard
+    const ar = v._ar;
+    const st = this._st;
+    const off = this._off;
+    const meas = v._meas;
+    const dims = ar.dims;
+    const leaf = st[YG_CLEAF];
+    const p = st[YG_CPOS];
+    const at = (leaf << ar.shift) + p;
+    for (let d = 0; d < dims; d++) off[d] += meas[d][at]; // cr:carry
+    st[YG_CPOS] = p + 1;
+    st[YG_CIDX] += 1;
+    if (p + 1 < v._llen[leaf]) return true;
+    return this._cross(); // cr:cross
+  }
+
+  // The leaf crossing of next(), cold (C-25). Pops _stk until the node whose
+  // LEFT child is the subtree being left (the lca; child refs compared, a leaf
+  // is ~id), then pushes the leftmost path of the lca's right child down to the
+  // next leaf t': touches += d(t') - depth(lca) - 1, the nodes pushed below the
+  // lca. No lca (the leaf was the last): _cv = false, touches += 0 (R-E3, K2-R2).
+  // _off is already carried by next(); no finger, hit or miss write.
+  _cross() {
+    const v = this._v;
+    const st = this._st;
+    const stk = this._stk;
+    const left = v._left;
+    let child = ~st[YG_CLEAF];
+    let depth = st[YG_CDEP];
+    while (depth > 0) {
+      const u = stk[--depth];
+      if (left[u] === child) {
+        const right = v._right;
+        const top = depth + 1;
+        let ref = right[u];
+        depth = top;
+        while (ref >= 0) {
+          stk[depth++] = ref;
+          ref = left[ref];
+        }
+        v._n[YG_TOUCHES] += depth - top; // cr:pop
+        st[YG_CLEAF] = ~ref;
+        st[YG_CPOS] = 0;
+        st[YG_CDEP] = depth;
+        return true;
+      }
+      child = u;
+    }
+    v._cv = false; // cr:end
+    return false;
   }
 }

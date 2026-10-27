@@ -1,4 +1,4 @@
-// Type declarations for @zakkster/lite-yggdrasil (rung K-R1: the cursor surface (cursor(), seekIndex / seekSum, valid / index / entity, offset / measure) on top of rung F-R: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain, the k >= 2 clear() free-walk, join and append with the seam repair, splitAt with its seam repairs, and the finger hit test in the positional ops).
+// Type declarations for @zakkster/lite-yggdrasil (rung K-R2: the cursor surface (cursor(), seekIndex / seekSum / next, valid / index / entity, offset / measure) on top of rung F-R: constructor, arena, pools, counters, positional ops and seeks on a multi-leaf trunk with splits, rotations and the remove side: merge, equalize and drain, the k >= 2 clear() free-walk, join and append with the seam repair, splitAt with its seam repairs, and the finger hit test in the positional ops).
 export declare const VERSION: string;
 
 export interface SumSequenceOptions {
@@ -35,6 +35,13 @@ export interface SumCursor {
    * RangeError 'dim' (d), then 'seek' (y not finite or < 0, e.g. -1 or NaN) leaves the cursor unchanged.
    */
   seekSum(d: number, y: number): boolean;
+  /**
+   * Step to the next element and return the new valid: true inside a leaf (0 touches) or across a leaf boundary
+   * (touches the nodes pushed below the lowest common ancestor); stepping off the last element returns false and
+   * leaves valid false (index -1). On an invalid cursor it returns false and changes nothing (no field, no counter).
+   * Takes no argument; never writes the finger and adds no finger hit or miss.
+   */
+  next(): boolean;
 }
 
 export declare class SumSequence {

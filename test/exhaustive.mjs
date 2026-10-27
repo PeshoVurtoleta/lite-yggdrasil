@@ -159,9 +159,10 @@ const EX_N_SEAMS = 11;
 const EX_OPS = Object.freeze([
   'insertAt', 'removeAt', 'setMeasure', 'getMeasure', 'entityAt',
   'indexAtSum', 'sumBefore', 'total', 'splitAt', 'append', 'clear',
+  'seekIndex', 'seekSum', 'next',
 ]);
 const EX_POSITIONAL = Object.freeze(['insertAt', 'removeAt', 'setMeasure', 'getMeasure', 'entityAt']);
-const EX_NEUTRAL = Object.freeze(['indexAtSum', 'sumBefore', 'total']);
+const EX_NEUTRAL = Object.freeze(['indexAtSum', 'sumBefore', 'total', 'seekIndex', 'seekSum', 'next']);
 const EX_DROPPABLE = Object.freeze([
   'insertAt', 'removeAt', 'setMeasure', 'getMeasure', 'entityAt',
   'indexAtSum', 'sumBefore', 'splitAt', 'append',
@@ -180,7 +181,7 @@ const EX_SEED_MEASURE = 0xC2B2AE35;
 const EX_REDRAW_MAX = 100000;
 
 const EX_BFS_KEYS = Object.freeze(['B', 'nMax', 'walker', 'cap', 'drop', 'cfg']);
-const EX_SWEEP_KEYS = Object.freeze(['B', 'states', 'nSweep', 'suffixes', 'cap', 'cfg']);
+const EX_SWEEP_KEYS = Object.freeze(['B', 'states', 'nSweep', 'suffixes', 'cursor', 'cap', 'cfg']);
 const EX_DEEP_KEYS = Object.freeze(['B', 'ops', 'seed', 'nLo', 'nHi', 'drop', 'cap', 'cfg']);
 
 // ---- cold helpers -------------------------------------------------------------
@@ -437,6 +438,14 @@ function exCounts(views) {
   return out;
 }
 
+// One cursor answer as a string: (ret, valid, index, entity, offset(0), measure(0)); -0 is told from 0 (Object.is).
+function exCur(c, ret) {
+  const o = c.offset(0);
+  const m = c.measure(0);
+  return ret + '|' + c.valid + '|' + c.index + '|' + c.entity + '|' + (Object.is(o, -0) ? '-0' : o) + '|' +
+    (Object.is(m, -0) ? '-0' : m);
+}
+
 function exInvoke(views, x) {
   const a = views[0];
   const b = views[1];
@@ -453,7 +462,14 @@ function exInvoke(views, x) {
       case 'total': v = a.total(0); break;
       case 'splitAt': v = a.splitAt(x.i, b); break;
       case 'append': v = a.append(b); break;
-      default: v = views[x.i].clear(); break; // 'clear' (EX_OPS checked by the caller)
+      case 'seekIndex': v = exCur(a.cursor(), a.cursor().seekIndex(x.i)); break;
+      case 'seekSum': v = exCur(a.cursor(), a.cursor().seekSum(0, x.y)); break;
+      case 'next': v = exCur(a.cursor(), a.cursor().next()); break;
+      default: // 'clear' (EX_OPS checked by the caller)
+        v = views[x.i].clear();
+        // 0004: the engine's clear() returns the view; Oracle.clear and the stubs return undefined (K-R2 M-6, 0005 C-29)
+        if (v === views[x.i]) v = undefined;
+        break;
     }
     if (v !== null && typeof v === 'object') {
       const k = views.indexOf(v);
@@ -489,7 +505,7 @@ function exArgs(P, entry, k) {
     throw new TypeError('exhaustive: witness entry ' + k + ' is not an {op, i} with a known op');
   }
   const x = { op: entry.op, i: entry.i, e: k & 0x3FFFFFFF, m: exM(k), y: 0 };
-  if (x.op === 'indexAtSum') x.y = P.or[0].sumBefore(0, x.i);
+  if (x.op === 'indexAtSum' || x.op === 'seekSum') x.y = P.or[0].sumBefore(0, x.i);
   return x;
 }
 
@@ -521,7 +537,7 @@ function exStart(ctx) {
       const w = runs[r].views[v];
       for (let k = 0; k < EX_FINGER.length; k++) {
         if (!Object.hasOwn(w, EX_FINGER[k])) {
-          return exFail(ctx, 'off', 'C-27', 'hasOwn: view ' + v + ' (' + names[r] + ') has no own ' +
+          return exFail(ctx, names[r], 'C-27', 'hasOwn: view ' + v + ' (' + names[r] + ') has no own ' +
             EX_FINGER[k], null, 0, 0);
         }
       }
@@ -848,6 +864,8 @@ export function sweepLane(f, opts) {
   if (!Array.isArray(opts.states)) exBad('sweepLane', 'states must be an array');
   const suffixes = opts.suffixes === undefined ? true : opts.suffixes;
   if (typeof suffixes !== 'boolean') exBad('sweepLane', 'suffixes must be a boolean');
+  const cursor = opts.cursor === undefined ? false : opts.cursor;
+  if (typeof cursor !== 'boolean') exBad('sweepLane', 'cursor must be a boolean');
   const use = [];
   let C = nSweep + 1;
   for (let k = 0; k < opts.states.length; k++) {
@@ -895,7 +913,48 @@ export function sweepLane(f, opts) {
     }
   }
   if (ctx.applied === 0) exFail(ctx, 'on', 'LANE', 'closer: applied 0', null, 0, 0);
+  if (cursor && ctx.first === null) return exCursorSweep(ctx, opts, use, C);
   return exReport(ctx);
+}
+
+// The cursor sweep (0005 C-31 RK-6): its OWN ctx and 2^18 counter (replays count, as everywhere). Per state: one
+// replay, then for each i in 0..n seekIndex(i) and next() until false, then seekSum(0, sumBefore(0, i)) and next()
+// until false. Cursor ops are state- and finger-neutral, so one pair serves a whole state. report.cursor =
+// {applied, ops}; the sweep's own applied / ok fields are unchanged unless the cursor phase fails.
+function exCursorSweep(ctx0, opts, use, C) {
+  const ctx = exCtx('sweep', ctx0.f, ctx0.B, C, exCap(opts.cap, 'sweepLane'), opts.cfg, true, [], false);
+  const rep = exReport(ctx0);
+  let ops = 0;
+  const fin = () => {
+    rep.cursor = { applied: ctx.applied, ops: ops };
+    if (ctx.first !== null) {
+      rep.ok = false;
+      rep.first = ctx.first;
+      rep.divergences += ctx.divergences;
+    }
+    return rep;
+  };
+  if (exStart(ctx)) return fin();
+  for (let q = 0; q < use.length; q++) {
+    const st = use[q];
+    const P = exPair(ctx);
+    if (exReplay(ctx, P, st.witness)) return fin();
+    let wl = st.witness.length;
+    for (let fam = 0; fam < 2; fam++) {
+      for (let i = 0; i <= st.n; i++) {
+        wl++;
+        ops++;
+        if (exStep(ctx, P, exArgs(P, { op: fam === 0 ? 'seekIndex' : 'seekSum', i: i }, wl - 1), wl, null)) return fin();
+        // next() until it answers false; the oracle's cursor is valid exactly while next() answered true
+        do {
+          wl++;
+          ops++;
+          if (exStep(ctx, P, exArgs(P, { op: 'next', i: 0 }, wl - 1), wl, null)) return fin();
+        } while (P.or[0].cursor().valid);
+      }
+    }
+  }
+  return fin();
 }
 
 export function deepLane(f, opts) {

@@ -6,6 +6,11 @@
 > is published; git repo initialized (e14e2f3).
 >
 > **UPDATE (2026-10-27): the SumSequence engine is built and gated (`npm run verify`: 838 tests, types, lanes, torture); the 0.1.0 docs are written; the release itself (version bump, tag, publish) is still pending.**
+>
+> **UPDATE (2026-10-28): 0.1.0 and 0.1.1 (audit #3 fixes) are tagged and published. Next: Bench-ADOPT, then the
+> GO / NO-GO checkpoint, then SumMap 0.2.0 -- resumed after the lite-signal release (maintainer 2026-10-28:
+> "After lite-signal release, we continue developing"). Estimate to 0.2.0 and borrowed patterns: section 5
+> and the Queued section below; findings in RESEARCH.md section 11.**
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -242,6 +247,25 @@ What blocks what:
   and the README says where the trunk wins and loses.
 - The pool (0.4) needs SumMap and IntervalMap realms to be worth shipping.
 
+Estimate to SumMap 0.2.0 (2026-10-28, est., from .handoff/HISTORY.md: 28 burst sessions S0 -> 0.1.1 (S0, the
+unnumbered planner burst, 2..27), about 26 to 0.1.0, 13 of them on 2026-10-27). Nominal 15-22 burst sessions:
+
+| Stage | Bursts (est.) | Basis |
+|---|---|---|
+| Bench-ADOPT | 2-3 | planner; coder + review; one quiet-host bench run |
+| GO / NO-GO | 0 | maintainer decision on a quiet-host run log of S1 / S2 |
+| SumMap settle (Y-03 keys, new ADR + CURRENT) | 1-2 | maintainer decisions inside the burst |
+| SumMap rungs | 8-12 | keyed ops + routing I-6, fence-key finger, rank / select / sumBelow / keyAtSum, split / join by key, the >= 2^30 boxing lane, S4-depth |
+| Docs + release | 2 | as 0.1.x |
+| Audit-fix cycles | 1-3 | each of the three 0.1.x audits cost 1-2 bursts |
+
+About half of 0.1.0 because the trunk and every gate harness are reused; not less because keyed routing
+is a new invariant and most 0.1.x units needed a second review round. A NO-GO ends the program
+at SumSequence (or rescopes it), so Bench-ADOPT is the real next gate.
+Scheduling: Bench-ADOPT's timed run and the GO / NO-GO log need a QUIET host (quiet-lock); do not run
+them while another package's torture or timed tests run (the result would be PRELIMINARY). Untimed
+bursts (planner, coder, docs) can run beside another package's bursts.
+
 ---
 
 ## 6. The briefs
@@ -382,6 +406,28 @@ DONE WHEN
 - **Yggdrasil pool 0.4.0**: stable ids (Y-12), realms, per-realm back-pointers, remove(id) from all
   realms in k * O(log n); S4-cancel and S6; foil `Map` + k hand-synced arrays.
 
+Borrowed patterns per member (2026-10-28, not ruled; RESEARCH.md 11.3, evidence in
+.handoff/BORROW-2026-10-28.md). Each planner reads them before its brief:
+- SumMap 0.2.0: uint32 keys >= 2^31 read back negative from an Int32Array -- unsigned compares and a key
+  lane at 2^31 - 1, 2^31, 2^31 + 1, 2^32 - 1.
+- IntervalMap 0.3.0 (lite-bvh): caller-buffer stab / overlap with the cap test before the write; maxEnd
+  recomputed at every sums site, gated by a census (0003 G-6 style); start / end / NaN input doors before
+  any write; decide written-count vs total-count returns (RESEARCH Q-8).
+- Pool 0.4.0 (lite-arena 1.10.0, lite-fastbit32): generational handle with a FREE bit and retirement
+  instead of wrap; full-handle-checked back-pointers; fan-out remove; one membership word per element for
+  k <= 32 with the `v &= v - 1` set-bit walk. Open: generation bits vs the 30-bit entity (Q-4),
+  back-pointer to position vs leaf (Q-7: count the moves), the realm cap (Q-9).
+- Bulk constructor ("rebuild bigger", queued in README Design decisions): batch-atomic validation before
+  the first write; differential gate bulk == single inserts (lite-bvh insertLeaves).
+
+### Good-to-have -- test-only, no release, take when a burst has room
+- Seeded differential soak (RESEARCH 11.1): cursor seek + next() walks against Oracle.cursor() on trees
+  shaped by mixed mutation, 3+ views with clear() beside live siblings, SEED / ITERATIONS / OPERATIONS
+  replay, a must-fail mutant control; adapt audit/2026-10-27/claude/r2/fuzz-full.mjs. Maintainer
+  2026-10-28: "Leave it as a future idea good-to-have".
+- Docs-drift test (lite-arena test/docs-drift.test.js shape).
+- Audit every must-fail control against "fails EVERY target tier" (lite-fastbit32 T9).
+
 ### Queued -- Tier 2 / research (RESEARCH.md section 7)
 Lazy range measure update; quantile helper; rope recipe; R-4 cracked leaves; R-7 B+ fanout; R-8
 epoch persistence. Each needs a measured case before a session.
@@ -393,6 +439,7 @@ epoch persistence. Each needs a measured case before a session.
 - lite-logn: textbook members incl. its own IntervalTree (Y-07); devDep oracle / foil here.
 - lite-loglogn: integer-universe successor; shared lessons (bucket hysteresis, boxing lane), no code.
 - lite-o1 / lite-arena / lite-fastbit32: devDeps or optional adapters only.
+- lite-bvh: pattern source for IntervalMap (caller-buffer queries, summary refit); no dependency.
 - Consumers (LiteVirtual, LiteTimeline, LiteKeyframe, LiteDataTable, LiteDiCron) adopt via recipes or
   optional peers in THEIR sessions; this package never imports them.
 

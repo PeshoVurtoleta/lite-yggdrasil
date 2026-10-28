@@ -15,7 +15,8 @@ Contents
 8. Boundaries with sibling packages
 9. Prior art (sources)
 10. Open questions
-11. Post-0.1.1 review notes (2026-10-28) -- Zed tests, sibling patterns, positioning claims
+11. Post-0.1.1 review notes (2026-10-28) -- Zed tests, sibling patterns, positioning claims, caching,
+    external review #2 assessed
 
 ---
 
@@ -382,6 +383,12 @@ listing the proof's assumptions and checking each one is.
     (q * total rounds, ulp 1 in [2^52, 2^53), and can move a strict seek by one element) -- a rule the
     helper spec must state (e.g. an integer rank target), not a trunk concern; the 2^53 - 1 bound (M-4)
     is the fail-closed total check.
+- An intrusive leaf chain nextLeaf / prevLeaf (external review #2, 2026-10-28): cursor next() already
+  crosses leaves through _cross() (pop to the common ancestor, push the next leftmost path: amortized
+  O(1) per step over a walk), and neighbour leaves for merge / equalize / seams come from the descent
+  stacks. A chain adds two columns rewritten at every split, merge, seam repair, join and splitAt cut,
+  and more state for the DB-2 signature (B-32). Reopen only if counts show a member needs O(1) leaf
+  neighbours outside a descent.
 
 ---
 
@@ -433,6 +440,17 @@ listing the proof's assumptions and checking each one is.
   2026-10-28: the entity is 30-bit, so a generation packed into it costs index bits (lite-arena packs
   12 gen + 20 index bits into int32); see section 11.3.
 - Q-5 Whether IntervalMap needs a min-start summary for "free slots in [a, b)" (S5).
+  ANSWER (orchestrator 2026-10-28, not ruled): no. Start is the sort key, so a subtree's minimum start is
+  its leftmost key (found by descent, no column). Free gaps come from maxEnd alone: a point t is free iff
+  maxEndBelow(t) <= t, where maxEndBelow(t) = max end over intervals with start <= t (a prefix-max
+  descent, the MAX analogue of sumBelow). Loop: w = a; while w < b: c = maxEndBelow(w); if c > w then
+  w = c (continue); else s = successor start > w (descent) and report [w, min(s, b)), then w = s.
+  Cost: O((k' + g) log n) for g gaps and k' waterline advances. CORRECTION to external review #2: a
+  cluster is NOT coalesced in O(log n) steps -- chained intervals [0,2], [1,3], [2,4], ... advance w by
+  2 per step, so k' is O(cluster size) in the worst case. Edge cases to specify in the 0.3 ADR: zero-
+  length intervals (one splits a free gap into two touching gaps, e.g. [13,14) and [14,17)), an interval
+  starting exactly at w, and open / closed ends. Checked by a seeded brute-force comparison (20,000 cases,
+  0 mismatches; a reviewer's one-off check, 2026-10-28, script not kept).
 - Q-6 DB-2 state signature (external review, 2026-10-25): de-duplication is already RULED -- ADR 0001
   (DB-2 B values) defines DB-2 as a BFS over canonical states (shape + leaf sizes); test code may
   allocate (a `Set` of canonical serializations). TRAP, against that ruled signature: shape + leaf
@@ -445,6 +463,23 @@ listing the proof's assumptions and checking each one is.
 - Q-7 (pool) Back-pointer target: an element POSITION is rewritten on every move (in-leaf shifts, splits,
   merges, equalizes, seam repairs), so back-pointer writes would equal `moves`; a LEAF target changes only
   on cross-leaf moves and costs an O(B) in-leaf scan per lookup. Count both before choosing (section 11.3).
+  LEAN (orchestrator 2026-10-28, not ruled; refines ADR 0004 O-3 and 0005 C-12): a positional realm
+  cannot remove by id without a leaf -> root PARENT column -- with only a leaf id there is no index to
+  re-descend by, and the sums above the leaf must be pulled. That is ADR 0004 O-3, deferred by 0005 C-12
+  because an entity -> slot back-pointer "needs an entity-slot write on every leaf move, which is hot".
+  A LEAF-target back-pointer (backLeaf per realm) plus the parent column narrows that objection: an
+  in-leaf insert writes ONE backLeaf entry (the new element's) and a remove clears one; no other
+  element's entry and no parent changes. Only cross-leaf moves (split, merge, equalize, seam repair,
+  splitAt cut) rewrite backLeaf for the moved elements, and parent writes happen only at relinks (split,
+  rotation, merge splice, join, splitAt, ygFirstLeaf, ygDrain, ygRepair's root collapse, and the root
+  hand-offs in append / splitAt, where the root's parent slot is ~viewIndex per O-3) -- all cold. The
+  hot in-leaf body gains one store per insert / remove, in the opt-in build only: a ROADMAP 3.7 hot-body
+  edit, as O-3 says. Walking parents up also yields the element's index (sum of left-sibling counts) and its
+  sumBefore -- B-24's entity -> index. Costs to count: one Int32 column per node kind, a census gate that
+  every relink site writes parent (like 0003 G-6), walker reciprocity checks, and an opt-in built as a
+  separate monomorphic path at construction (D11 shape or lite-lru 0017 option (b), not a null guard;
+  section 11.5). ROADMAP 3.7's
+  byte-identity rule for prior members still applies to the shared cold helpers.
 - Q-8 (IntervalMap) stab / overlap into a caller buffer: return the count written (lite-bvh) or the total
   match count (lets the caller size a retry)? Maintainer call.
 - Q-9 (pool) Realm count: one int32 membership word caps k at 32; k > 32 needs a two-level map
@@ -542,3 +577,85 @@ The README diagrams that replaced it ("How an operation runs") needed one review
 false claims of the orchestrator's own (merge is 2t <= B, sumBefore descends by counts, ...). Rule:
 every diagram node is checked against code lines, never against the file header; the stale header is
 a FILLERS item.
+
+### 11.5 Caching: does any member need it? (lite-lru 1.19.0)
+
+No. No queued member (SumMap, IntervalMap, the pool, the bulk constructor) and no Tier 2 item needs an
+eviction cache. Yggdrasil's caches are always-coherent derived state -- node sums, the finger (a one-entry
+cache of the last leaf), the cursor's _off -- kept correct or reset by rule on every mutation and never
+evicted. An LRU inside the engine would be a second source of truth that must be invalidated after every
+split, merge and rotation: the B-17 / B-18 stale-finger class. SumMap's fence-key finger is the same kind
+of one-entry cache with the same reset rules; a multi-finger with LRU replacement is justified only by
+counts. Do not add an LRU.
+
+Patterns that transfer from lite-lru (Lru.js header, decisions 0011 / 0017 / 0019 / 0021 read; the rest
+of the 8,492-line file was not):
+- IntSlotStore (Lru.js:505-610): an open-addressed Int32 index, linear probing, backward-shift deletion
+  (no tombstones), a fixed table at load <= 0.75; its door accepts 32-bit SIGNED keys (:509), so external
+  uint32 ids need a changed door. A direct k -> slot map for dense ids is DirectSlotStore (:615, lite-lru
+  decisions/0029, not read here). Use a hash only if pool ids are EXTERNAL (a side index id -> handle);
+  dense arena-style ids need no hash. Any
+  key -> position side index inherits Q-7's cost.
+- Opt-ins: D11 picks one of two monomorphic backings at construction (pays nothing); ttl / stats OFF are
+  byte-identical IN EFFECT only (same writes per hit, 0 B) behind one predicted-not-taken null guard per
+  hot method (0017 option (a), 0019); 0017 option (b), constructor-time specialization, is the zero-byte
+  form. The D11 / option (b) shape is the one for optional features (pool realms, Tier 2 lazy range
+  update).
+- dump() / static restore() (0021): cold, warm reconstruct, no hot-path change -- a candidate sibling of
+  the queued bulk constructor (restore = bulk build from saved columns). Not planned.
+
+### 11.6 External review #2 assessed (2026-10-28) -- read before reusing any of it
+
+An external AI review (chapters 1-5: assessment, answers to Q-4 / Q-5 / Q-7, books, papers, structures)
+was checked against the ADRs, this file and llms.txt. Summary: chapter 1 is accurate; chapter 2 has one
+real refinement and one wrong complexity claim; chapters 3-4 name the right literature with several
+wrong venues, authors or chapter pointers; chapter 5's judgments are sound but two attributions are
+wrong. Use the corrected forms below, not the review text.
+
+- Ch 1 (assessment): ACCURATE. The boxing contract matches llms.txt:50-54 (0 B/op below 2^30; <= 16b + 1
+  in [2^30, 2^40]; insertAt b = dims); 13 | 4 is Table 3's append split at B = 16 (a = B + 1 - m); the R-8
+  mask flaw and the declined ownership bitsets match section 7.
+- Ch 2A (Q-5): CORRECT IDEA, WRONG BOUND. See Q-5 ANSWER: no minStart column; O((k' + g) log n), not
+  O(g log n); it also used an undefined maxEndAt().
+- Ch 2B (Q-7 + B-24): USEFUL, NOT NEW. The parent column is ADR 0004 O-3 (deferred by 0005 C-12), not a
+  hidden catch. Its new part -- a leaf-target back-pointer removes C-12's per-move objection -- is folded
+  into Q-7's LEAN with the opt-in condition and the one hot store it left out.
+- Ch 2C (Bench-ADOPT): MOSTLY ALREADY IN section 4.1 (chunk ~1K, cost formulas, chunk tuned per n). Its
+  L1-prefetch argument for the chunk-sum scan is a prediction: label it "expected". Keep its good
+  suggestion: report seek and splice (cut / paste) timings separately, not as one blend.
+- Ch 3 (books): right books, unreliable pointers.
+  - Navarro, "Compact Data Structures" (CUP 2016): dynamic structures are chapter 12 ("Dynamic
+    structures"), not chapter 6 (chapter 6 is "Sequences"); whether partial sums sit in chapter 12 is
+    UNVERIFIED.
+  - Okasaki (1998): does NOT cover cached monoidal summaries. Cached subtree sums are older (Knuth
+    6.2.3's RANK fields); Hinze and Paterson 2006 give the generic monoid form.
+  - Graefe (2011) is organized in sections, not numbered chapters; its fence-key and edge-split content
+    is real (already cited in section 9).
+  - Jackson (2012) and Knuth vol. 3 6.2.3 / vol. 4A 7.1.3 pointers: plausible, UNVERIFIED.
+- Ch 4 (papers):
+  - Blelloch, Ferizovic, Sun, "Joinable Parallel Balanced Binary Trees": ACM Transactions on Parallel
+    Computing 9(2), 2022 (DOI 10.1145/3512769), NOT JACM; the extended SPAA 2016 version.
+  - The 2003 searchable-partial-sums paper is attributed to Hon, Sadakane and Sung in the orchestrator's
+    recollection, not "Vitter"; UNVERIFIED (not found online) -- check DBLP before citing. The canonical
+    succinct dynamic partial sums result is "Succinct Dynamic Data Structures" (WADS 2001, LNCS,
+    DOI 10.1007/3-540-44634-6_39; authors Raman, Raman, Rao from recollection). Cell-probe LOWER bounds come
+    from Fredman and Saks (STOC 1989) and Patrascu and Demaine ("Tight bounds for the partial-sums problem", SODA 2004; journal SICOMP 35(4),
+    2006 -- venues from recollection, UNVERIFIED), not from these
+    upper-bound papers.
+  - Bille et al., "Succinct Partial Sums and Fenwick Trees" (SPIRE 2017); Hinze and Paterson (JFP 16(2),
+    2006); Boehm, Atkinson, Plass, "Ropes" (SPE 25(12), 1995); Bender, Demaine, Farach-Colton,
+    cache-oblivious B-trees (FOCS 2000 / SICOMP 2005, incl. the packed-memory array): as given.
+- Ch 5 (structures):
+  - Tiered vectors are Goodrich and Kloss (WADS 1999), not Brodal et al.; Rust's im::Vector is an RRB
+    tree, not a tiered vector. The fanout-8 / 16 synthesis is R-7, already gated on losing to the blocked
+    array at realistic sizes.
+  - Priority search tree (McCreight 1985) vs a maxEnd-augmented tree: SOUND. A PST's heap order on end
+    breaks split / join by key (P5), which IntervalMap needs; state the trade-off in the 0.3 ADR.
+  - Leaf chain: agreed, declined (section 7).
+- Its closing offer (map the blocked array's costs 1-to-1 onto COUNTERS): only touches (directory scan
+  steps) and moves (element shifts) correspond; a blocked array has no pulls, rotations, joins or seams.
+  Pair those two and report the rest as n/a (Bench-ADOPT planner).
+
+Intake rule for future external reviews: check each claim against decisions/ (CURRENT first), this file
+and the code before acting; label every citation verified / from recollection / UNVERIFIED; never copy a
+complexity bound without a counterexample hunt.

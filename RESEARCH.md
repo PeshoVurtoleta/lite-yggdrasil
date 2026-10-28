@@ -15,6 +15,7 @@ Contents
 8. Boundaries with sibling packages
 9. Prior art (sources)
 10. Open questions
+11. Post-0.1.1 review notes (2026-10-28) -- Zed tests, sibling patterns, positioning claims
 
 ---
 
@@ -391,8 +392,12 @@ listing the proof's assumptions and checking each one is.
 - **lite-loglogn**: integer-universe successor (StratifiedBitset / XFastTrie / YFastTrie). Shares the
   bucket-hysteresis lesson (YFastTrie K / h) and the boxing lesson (C-14), no code.
 - **lite-o1**: BitSet, CuckooMap, SparseSet -- usable by the pool for id liveness; devDep only.
-- **lite-arena**: generational handles -- the candidate id source for the pool (Y-12).
-- **lite-fastbit32 / fastbit1024**: occupancy masks if R-4 ever ships.
+- **lite-arena**: generational handles -- the candidate id source for the pool (Y-12). Its 1.10.0 handle
+  design (FREE bit, retirement, sparse-set back-pointers) is the reference for the pool (section 11.3).
+- **lite-fastbit32 / fastbit1024**: occupancy masks if R-4 ever ships; one membership word per element is
+  the reference for pool realm membership at k <= 32 (section 11.3).
+- **lite-bvh**: an augmented-summary tree over typed arrays (AABB union); the reference for IntervalMap
+  query output and summary refit (section 11.3). Patterns only, no code or dependency.
 - Consumers (LiteVirtual, LiteTimeline, LiteKeyframe, LiteDataTable, LiteDiCron): recipes or optional
   peers on THEIR side; lite-yggdrasil never imports them.
 
@@ -412,6 +417,8 @@ listing the proof's assumptions and checking each one is.
 - Idreos, Kersten, Manegold, "Database Cracking", CIDR 2007 (R-4).
 - Heinz, Zobel, Williams, "Burst tries", 2002 (R-4).
 - Graefe, "Modern B-Tree Techniques", 2011 (fence keys; monotonic-insert split).
+- Zed `sum_tree` source and tests (read 2026-10-28): github.com/zed-industries/zed, crates/sum_tree/src/
+  sum_tree.rs (`test_random`, `test_cursor`), cursor.rs, property_test.rs (a proptest generator only).
 - Jackson, "Software Abstractions" (Alloy; the small-scope hypothesis behind DB-2).
 
 ---
@@ -423,6 +430,8 @@ listing the proof's assumptions and checking each one is.
 - Q-2 Max dims per instance (fixed at construction; 1..4?) and its effect on pull cost (closed: 0005 C-14).
 - Q-3 Cursor API: one preallocated cursor per instance vs a caller-owned cursor object created once (closed: 0005 C-7).
 - Q-4 Id source for the pool: raw int32 vs lite-arena handle (generation checks cost a load per op).
+  2026-10-28: the entity is 30-bit, so a generation packed into it costs index bits (lite-arena packs
+  12 gen + 20 index bits into int32); see section 11.3.
 - Q-5 Whether IntervalMap needs a min-start summary for "free slots in [a, b)" (S5).
 - Q-6 DB-2 state signature (external review, 2026-10-25): de-duplication is already RULED -- ADR 0001
   (DB-2 B values) defines DB-2 as a BFS over canonical states (shape + leaf sizes); test code may
@@ -433,3 +442,103 @@ listing the proof's assumptions and checking each one is.
   reduced to that valid bit (a raw monotone epoch makes nearly every state distinct), or the
   shape-only BFS runs finger-disabled and every reached state's witness stream is replayed finger-on
   (FINGER standing rule). Logged as B-32 against ADR 0001. "Depth 14-16 in milliseconds" is unmeasured. Closed: 0005 C-31.
+- Q-7 (pool) Back-pointer target: an element POSITION is rewritten on every move (in-leaf shifts, splits,
+  merges, equalizes, seam repairs), so back-pointer writes would equal `moves`; a LEAF target changes only
+  on cross-leaf moves and costs an O(B) in-leaf scan per lookup. Count both before choosing (section 11.3).
+- Q-8 (IntervalMap) stab / overlap into a caller buffer: return the count written (lite-bvh) or the total
+  match count (lets the caller size a retry)? Maintainer call.
+- Q-9 (pool) Realm count: one int32 membership word caps k at 32; k > 32 needs a two-level map
+  (FastBit1024 shape) or a hard cap.
+
+---
+
+## 11. Post-0.1.1 review notes (2026-10-28)
+
+Orchestrator notes after 0.1.1 shipped. Sources: Zed's `sum_tree` crate read at its GitHub head on
+2026-10-28; three read-only readers over LiteArena 1.10.0 (2c7af47), LiteBvh 2.0.0 (57d1517) and
+LiteFastBit32 1.5.0 (36d6b73); file:line evidence in .handoff/BORROW-2026-10-28.md (repo-local, gitignored).
+Nothing here is ruled unless a maintainer quote says so.
+
+### 11.1 Zed `sum_tree` tests against ours
+
+- Zed's `test_random`: 100 seeds x 5 operations by default (SEED / ITERATIONS / OPERATIONS env vars),
+  each a splice built from cursor `slice` + `extend` + `append`, checked against a reference Vec; then a
+  filter cursor walked next / prev against the reference, a cursor seek + 10 steps checking
+  `item` / `prev_item` / `next_item` / `start`, and 10 random range summaries == the slice's summary.
+- Ours already exceeds it on most axes: the plain-array oracle (test/oracle.mjs) after every op, the
+  invariant walker (I-1..I-9 except I-4, oracle-checked, and I-6, n/a) after every op, exhaustive
+  small-scope BFS lanes, exact per-op count models (spec-counts / stubs), must-fail mutants and the
+  torture gates. Zed's sum_tree.rs tests have no count oracle, structural walker or allocation gate (the
+  other sum_tree files were not read for tests).
+- The one real gap: cursor walks are checked only on BFS states (small n) and on insert-only shapes
+  (random-position inserts n <= 40 and a 1000-element insertAt-at-end stream; test/Cursor.test.mjs rows
+  4 / 10, test/CursorLane.test.mjs). No in-suite lane walks the cursor on trees shaped by random removes,
+  merges, equalizes and seam repairs, and no lane walks cursors against the oracle on 3+ views across
+  clear() while siblings hold nodes. The audit-2 differential fuzzer did both (15.0M next() steps, k 1..6)
+  but lives in audit/2026-10-27/claude/r2/, outside `npm test`.
+- Borrowable: a seeded differential soak (Zed's shape + SEED / ITERATIONS / OPERATIONS replay; print the
+  failing seed and op index) with a must-fail mutant control. Maintainer 2026-10-28: "Leave it as a future
+  idea good-to-have".
+- Not borrowable: prev / prev_item / next_item, Bias, filter cursors, seek_forward, slice-by-cursor are API,
+  not tests; persistence and Arc sharing do not apply to a mutable arena.
+- Correction to an external comparison: Zed's `slice` / `append` share whole subtrees in O(log n) and
+  clone only the seam leaves' items (path copying through Arc::make_mut). Yggdrasil's difference is
+  mutability in one preallocated arena (no per-node allocation), not "no copy" -- a mid-leaf splitAt cut
+  and every seam repair do move elements (counted in `moves`).
+
+### 11.2 External positioning claims, checked (for README "Why this exists")
+
+- TRUE, deterministic, usable: one shared arena with up to 4096 views; append / splitAt relink nodes (no
+  element-by-element copy of the range); a finger hit adds 0 touches, hits / misses counted separately;
+  12 exact public counters (frozen COUNTERS); columns allocated once, no per-node objects; one cursor per
+  view, invalidated by every mutator, O(1) offset; fail-closed validation incl. did-you-mean option names
+  and the clear() corrupt-view check.
+- NOT usable as written: "dramatically cheaper" for local access (a timing claim, unmeasured; only the
+  touch counts are claimable); "without GC" against Zed (Rust has no GC; its cost is refcounting and path
+  copying); "almost no GC pressure" without the C-13 qualifier (b = 1 box per big-lane read); "Zed has
+  nothing this granular" (unverified).
+- Of eight recommended test additions, seven already exist (count oracles, walker after every op, finger
+  matrix, headroom / zero edges, forced pool exhaustion in test/Core.test.mjs, the I-8 height bound, a
+  second model in stubs.mjs); the eighth (multi-view interleaving with cursors) is section 11.1's gap.
+
+### 11.3 Sibling patterns that transfer (copy, never import)
+
+Already in Yggdrasil: a bounded preallocated descent stack (lite-bvh queryStack); cold error builders;
+a frozen-build env override (YG_ENGINE); must-fail controls; an O(n) structural checker (stronger than
+lite-bvh validate()); brand checks through cached intrinsic getters (lite-arena M-23 == R-A8).
+
+- IntervalMap 0.3.0 (lite-bvh): caller-buffer queries return the count written and test `hits >= cap`
+  BEFORE the write (a 0-length buffer records nothing, lite-bvh B-02). maxEnd is a summary that queries
+  read, so it must be recomputed at every site that recomputes sums (pull passes, rotations, joins,
+  repairs, splitAt); lite-bvh shipped a refit that started one level too high, invisible until a balance
+  read it. Gate it with a census like 0003 G-6. Input doors: start / end finite, start <= end, NaN
+  rejected before any write.
+- Bulk constructor (queued): batch-atomic -- validate count, lengths, aliasing, capacity and every element
+  before the first write (lite-bvh insertLeaves); differential gate: bulk build == the same sequence by
+  single inserts.
+- Pool 0.4.0 (lite-arena 1.10.0): generational handle (gen << 20 | index); a FREE bit on free slots so a
+  free slot's next handle is already dead; retirement at the max generation instead of wrap (no ABA);
+  the signedness trap (generation >= 2048 makes the handle negative: Int32Array only); sparse-set
+  back-pointers verified by the full handle; despawn fans out over every registered set. See Q-4, Q-7.
+- Pool membership (lite-fastbit32): one int32 word per element for k <= 32 realms; remove(id) from all
+  realms is the allocation-free set-bit walk `for (; v !== 0; v &= v - 1) bit = 31 - clz32(v & -v)` (paraphrased; FastBit32.js uses a while loop);
+  hasAll as `(~v & mask) === 0` (signedness-safe). See Q-9.
+- SumMap 0.2.0 (uint32 keys): a key >= 2^31 stored in an Int32Array reads back negative -- compare
+  unsigned and add a key lane at 2^31 - 1, 2^31, 2^31 + 1 and 2^32 - 1 (the lite-arena handle and
+  lite-fastbit32 FB-01 bit-31 classes).
+- Test-only, any time: a docs-drift test (lite-arena: every public method named in llms.txt, every
+  `.method(` in llms.txt examples exists, every relative link resolves); "each control must fail EVERY
+  target tier" (lite-fastbit32 T9) as an audit of our controls.
+- Only if timing claims ever ship: lite-fastbit32's release gate (K = 5 serial runs, strict-majority vote
+  per row, exit 0 / 1 / 2, REPORTED rows present but never voted, a sha256 stamp so prepublish skips an
+  unchanged gate).
+
+### 11.4 Lesson: diagrams generated from source comments
+
+An AI-generated workflow diagram (2026-10-28) copied the stale Yggdrasil.js header ("Pre-release engine
+build (rung K-R2 ...)", "Nothing is released between rungs" -- still in the shipped 0.1.1 file) and
+invented branches (every op through the finger, a repair on every remove, allocation after rotation).
+The README diagrams that replaced it ("How an operation runs") needed one review round to remove nine
+false claims of the orchestrator's own (merge is 2t <= B, sumBefore descends by counts, ...). Rule:
+every diagram node is checked against code lines, never against the file header; the stale header is
+a FILLERS item.

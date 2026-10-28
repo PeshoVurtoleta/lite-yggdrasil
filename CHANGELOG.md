@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- README: "How an operation runs", three Mermaid diagrams (positional ops with the finger test and the cold
+  split / repair paths; append, splitAt, the seeks and the cursor; the arena and view storage), checked against the
+  engine source.
+
 ## [0.1.1] - 2026-10-27
 
 ### Fixed

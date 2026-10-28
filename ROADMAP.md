@@ -27,6 +27,12 @@ of this package already had eight -- RESEARCH.md section 6).
 **This is a PLAN, not a go.** No member is built until the maintainer greenlights its session. The
 assistant never commits, publishes, pushes or tags (the suite git guard enforces it).
 
+**External reviews (rule added 2026-10-28).** Before acting on any outside review, check each claim
+against decisions/ (CURRENT first), RESEARCH.md and the code; label every citation verified / from
+recollection / UNVERIFIED; hunt for a counterexample before copying any complexity bound. RESEARCH.md
+11.2 and 11.6 record two reviews already checked this way -- reuse their corrected answers, not the
+review text.
+
 ---
 
 ## 0. Name and layout
@@ -395,6 +401,13 @@ DONE WHEN
   `npm run bench` reproduces the report; the loss table is present; provenance complete.
 ```
 
+Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
+- Report seek and splice (cut / paste) timings separately for S1 / S2, plus the blend -- not one average.
+- Counter mapping for the blocked array: only touches (directory scan steps) and moves (element shifts)
+  correspond to COUNTERS; pulls, rotations, joins and seams are n/a for it.
+- "The chunk-sum scan stays in L1 and beats the trunk's dependent loads at small n" is EXPECTED, not
+  measured; the crossover n comes only from this cycle's quiet-host run log.
+
 ### Queued -- SumMap 0.2.0, IntervalMap 0.3.0, Yggdrasil pool 0.4.0 (one full brief each at greenlight)
 
 - **SumMap 0.2.0**: uint32 keys (Y-03), routing I-6, fence-key finger, rank / select / sumBelow /
@@ -418,7 +431,20 @@ Borrowed patterns per member (2026-10-28, not ruled; RESEARCH.md 11.3, evidence 
   k <= 32 with the `v &= v - 1` set-bit walk. Open: generation bits vs the 30-bit entity (Q-4),
   back-pointer to position vs leaf (Q-7: count the moves), the realm cap (Q-9).
 - Bulk constructor ("rebuild bigger", queued in README Design decisions): batch-atomic validation before
-  the first write; differential gate bulk == single inserts (lite-bvh insertLeaves).
+  the first write; differential gate bulk == single inserts (lite-bvh insertLeaves). A cold dump() /
+  restore() pair (lite-lru 0021) is its natural sibling; not planned.
+- IntervalMap, answered (RESEARCH Q-5): no minStart column -- start is the key; free gaps come from a
+  maxEndBelow prefix-max descent plus a successor descent, O((k' + g) log n) (k' = waterline advances,
+  O(cluster size) worst case, NOT O(log n) per cluster). The 0.3 ADR states why maxEnd and not a
+  priority search tree: a PST's heap order breaks split / join by key.
+- Pool, lean (RESEARCH Q-7, refines ADR 0004 O-3 / 0005 C-12): positional realms need a parent column;
+  pair it with a LEAF-target back-pointer, so an in-leaf op writes one backLeaf entry (its own element)
+  and no parent; all other writes sit in cold relink code; the one hot store is a ROADMAP 3.7 hot-body
+  edit (O-3), so it lives in an opt-in path built at construction; a census gate on every relink site; walker reciprocity checks.
+- Not planned, with reasons (RESEARCH 7 / 11.5): no LRU or other eviction cache inside the engine (the
+  finger, sums and cursor offsets are rule-reset caches; an LRU reopens the B-17 / B-18 class); no
+  intrusive leaf chain (cursor _cross is amortized O(1) per step). lite-lru's IntSlotStore only if pool
+  ids are external uint32 (with a changed door; lite-lru's accepts int32 only).
 
 ### Good-to-have -- test-only, no release, take when a burst has room
 - Seeded differential soak (RESEARCH 11.1): cursor seek + next() walks against Oracle.cursor() on trees

@@ -86,7 +86,7 @@ The usual tools each give up one thing: an array gives up cheap inserts, a prefi
 ## Seeking by any running total
 
 <details>
-<summary>The summary with dimensions, the seek rule, and how a cursor walks.</summary>
+<summary>The summary with dimensions, the seek rule, how a cursor walks, and how an operation runs inside the tree.</summary>
 
 ### The summary with dimensions
 
@@ -114,6 +114,94 @@ Each element is `(entity, m0 [, m1, m2, m3])`. A node stores, for every dimensio
 - Any successful mutation of the view (`insertAt`, `removeAt`, `setMeasure`, `splitAt`, `append`, `clear`) leaves its cursor invalid; `append` also invalidates the other view's cursor. Reads never do. A mutation that throws leaves the cursor as it was.
 
 A full walk from index `i` is `cur.seekIndex(i); while (cur.valid) { ...; cur.next(); }`, O(log n + k) for `k` elements.
+
+### How an operation runs
+
+The tree is a weight-balanced binary tree over leaves of `leafSize` (B) elements; a leaf other than a lone root leaf holds at least `m = B / 4`. Each view remembers the last leaf it touched (the finger). The five positional operations test the finger before any descent (a `removeAt` of the last element drains first); a hit skips the descent and adds 0 touches. Apart from the first insert (ygFirstLeaf) and the last remove (ygDrain), only an insert into a full leaf or a remove that would underflow a leaf takes the cold structural path. Names in parentheses are the engine's internal functions.
+
+```mermaid
+flowchart TD
+  CALL(["insertAt / removeAt / setMeasure / getMeasure / entityAt"]) --> CHK["Argument, capacity and headroom checks<br/>such a throw changes nothing"]
+  CHK --> EDGE{"Edge case?"}
+  EDGE -->|"insertAt on an empty view"| FIRST["Allocate the root leaf, finger := it<br/>(ygFirstLeaf)"]
+  EDGE -->|"removeAt of the last element"| DRAIN["Free the leaf; at live 0 reset both pools;<br/>finger := NIL (ygDrain)"]
+  EDGE -->|no| HIT{"Finger hit?<br/>insertAt: i in (fb, fb + len], [0, len] on the first leaf; leaf not full<br/>removeAt: i in [fb, fb + len); leaf above its minimum<br/>others: i in [fb, fb + len)"}
+  HIT -->|"hit: 0 touches"| WORK["Leaf work"]
+  HIT -->|miss| DESC["One descent from the root by counts<br/>path saved in _fpath; touches += depth"]
+  DESC --> COLD{"Structural?"}
+  COLD -->|no| WORK
+  COLD -->|"insertAt into a full leaf"| SPLIT["Leaf split, Table 3 sizes (ygSplit)<br/>takes 1 leaf + 1 internal node"]
+  COLD -->|"removeAt from a leaf of m elements<br/>in a view of 2+ leaves"| UNDER["Remove, then walk to the<br/>neighbour leaf (ygUnder, T-6)"]
+  SPLIT --> ROT["Weight pull up the path<br/>with H-Y rotations, gamma = 2"]
+  UNDER --> REP{"ygRepair: do both leaves<br/>fit in half a leaf?"}
+  REP -->|"yes: merge"| MERGE["Free the leaf and its parent node<br/>then weight pull + H-Y rotations"]
+  REP -->|"no: equalize"| EQ["Even out the two leaves<br/>no weight change, no rotation"]
+  ROT --> HOME["Structural re-home: one more descent<br/>sets the finger"]
+  MERGE --> HOME
+  EQ --> HOME
+  WORK --> RW{"Writes?"}
+  RW -->|"getMeasure / entityAt"| READ["Read the slot"]
+  RW -->|"insertAt / removeAt / setMeasure"| SHIFT["Shift or write the leaf slots<br/>recount the leaf sums"]
+  SHIFT --> PULL["Hot pull pass over _fpath<br/>count + sums from the children<br/>(setMeasure: dim d's sums only)"]
+  READ --> FSET["Finger := this leaf"]
+  PULL --> FSET
+  FSET --> CNT["Bump counters in _n"]
+  HOME --> CNT
+  FIRST --> CNT
+  DRAIN --> CNT
+```
+
+`append`, `splitAt` and `clear` never read the finger and reset it (on both views for `append` / `splitAt`), as the last-element `removeAt` does; the seeks and the cursor neither read nor write it.
+
+```mermaid
+flowchart TD
+  subgraph APP["a.append(b)"]
+    A1["Checks: b is a view of the same arena,<br/>not a; headroom; pool pre-check"] --> A2{"Both non-empty?"}
+    A2 -->|"no: the non-empty tree, if any, becomes a's as is"| A5
+    A2 -->|yes| A3["Descend to a's last leaf and b's first leaf<br/>if a seam leaf is short: ygRepair (ygSeamJoin)"]
+    A3 --> A4["T-3 join of the two trees (ygJoin)<br/>takes 1 internal node; skipped when<br/>a seam merge emptied one side"]
+    A4 --> A5["b becomes empty; both fingers reset,<br/>both cursors invalid"]
+  end
+  subgraph SPL["a.splitAt(i, out)"]
+    S1["Checks: index; out is an empty view<br/>of the same arena, not a"] --> S2{"0 < i < length?"}
+    S2 -->|no| S5
+    S2 -->|yes| S3["Descend to the leaf holding i;<br/>pool pre-check on a mid-leaf cut"]
+    S3 --> S4["ygSplitCut: cut the leaf (1 new leaf on a mid-leaf cut),<br/>T-4: pop the path, join each side reusing<br/>the popped nodes (ygJoin; a boundary cut frees one), then up to 2<br/>seam repairs (ygSplitSeam)"]
+    S4 --> S5["a keeps 0..i-1, out gets i..length-1;<br/>both fingers reset, both cursors invalid"]
+  end
+  subgraph SEEK["Seeks and the cursor: finger-neutral"]
+    K1["indexAtSum: one descent by sums<br/>sumBefore: one descent by counts"]
+    K2["cursor.seekIndex / seekSum<br/>one descent, path kept in _stk,<br/>running sums in _off"] --> K3["cursor.next()<br/>inside a leaf: 0 touches"]
+    K3 -->|"end of leaf"| K4["_cross(): pop _stk to the common ancestor,<br/>push down to the next leaf"]
+    K4 -->|"no next leaf"| K5["cursor invalid"]
+  end
+```
+
+All storage is typed arrays allocated once, when the arena is built; the views of one arena share it, which is why `append` and `splitAt` relink nodes instead of copying elements.
+
+```mermaid
+flowchart LR
+  subgraph ARENA["One arena: typed arrays allocated once by new SumSequence / SumSequence.arena"]
+    HDR["hdr Int32Array 5<br/>live, leaf bump, leaf free head,<br/>internal bump, internal free head"]
+    INT["Internal nodes, Lmax - 1<br/>left, right, weight, count,<br/>sums per dim, inext (free list)"]
+    LF["Leaves, Lmax<br/>llen, lsum per dim,<br/>lnext (free list)"]
+    SL["Element slots, Lmax x leafSize<br/>ent (entity id), meas per dim"]
+    SCR["Scratch: sx (staged measures),<br/>jstack (join), sstack (split / seam)"]
+  end
+  subgraph VIEW["Each view"]
+    V1["_root, _len"]
+    V2["Finger: _fl, _fb, _fdepth, _fpath"]
+    V3["_n: 12 counters"]
+    V4["_cv: cursor valid"]
+  end
+  subgraph CUR["Its one cursor"]
+    C1["_st: leaf, pos, depth, index"]
+    C2["_stk: root path"]
+    C3["_off: running sum per dim"]
+  end
+  VIEW -->|"refs to the shared columns"| ARENA
+  VIEW --- CUR
+```
 
 </details>
 

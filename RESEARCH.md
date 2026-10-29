@@ -785,12 +785,21 @@ LiteArena, LiteLogN, LiteO1, ObjectPool, DataStructureCatalog swept by three rea
 checked for what transfers to the queued members. Guide line numbers are as of 2026-10-29. Nothing here is
 ruled.
 
-- Delta debugging (BeautifulCode Part 8, Zeller's ddmin): the missing piece beside the seeded soak and the
-  transition matrix (11.1 and 11.7, ROADMAP Good-to-have). No test here shrinks a failing op stream. Two engine
-  traps: ops carry positions, so a replayed sub-log must normalize each argument against the current
-  length (i mod (len + 1) for insertAt; i mod len for removeAt / setMeasure, dropping the op when
-  len is 0) to stay legal; and shrink only while the SAME named walker / oracle check
-  fails, else ddmin drifts to another bug. A debugging tool, run after a failure, never inside a gate.
+- Delta debugging (BeautifulCode Part 8, Zeller's ddmin): the piece beside the seeded soak and the
+  transition matrix (11.1 and 11.7, ROADMAP Good-to-have). Built 2026-10-29 as test/ddmin.mjs (a debugging
+  tool, run after a failure, never inside a gate: not a *.test.mjs, not in files[]). Two engine traps it
+  handles: ops carry positions, so each replayed op is legalized against the views' CURRENT lengths, read
+  from the Oracles op by op (i mod (len + 1) for insertAt; i mod len for removeAt / setMeasure, dropping the
+  op when len is 0; an insert is dropped once the views hold C elements) -- a length model computed ahead drifts after an op that throws on both sides (review r1
+  found one: a false capacity failure on the correct build); and it shrinks only while the SAME
+  failure signature (oracle / cursor / walker code / one-sided throw) fails, else ddmin drifts to another
+  bug. `node test/ddmin.mjs demo` plants an equalize bug in a temp copy (buildMutant): 400 ops -> 6, which
+  pass on the real build. Suite precedent, more complete: LiteSignal bench/soak/shrink.mjs (`npm run
+  soak:shrink`): truncate after the failing step, ddmin, argument simplification to a fixpoint, a confirm
+  run, and a self-contained repro test file written out. test/ddmin.mjs has the first three; the confirm run is
+  only in its demo, and it writes no repro file.
+  Open: its per-op comparison reads elements through the C-4 finger, so a replay with the comparison can
+  differ from one without it (a finger bug could hide); not yet checked.
 - Inlining budgets (PracticeOfProgramming Part 7 Correction 2; V8.md inlining-limit table): every member
   adds bytes to shared hot functions (maxEnd in the pull pass, key compares in the leaf scan). Maglev's
   inline limit is 100 bytecode bytes, and this engine already has Maglev-only boxing rows (decisions/0005

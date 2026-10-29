@@ -30,7 +30,7 @@ assistant never commits, publishes, pushes or tags (the suite git guard enforces
 **External reviews (rule added 2026-10-28).** Before acting on any outside review, check each claim
 against decisions/ (CURRENT first), RESEARCH.md and the code; label every citation verified / from
 recollection / UNVERIFIED; hunt for a counterexample before copying any complexity bound. RESEARCH.md
-11.2 and 11.6 record two reviews already checked this way -- reuse their corrected answers, not the
+11.2, 11.6 and 11.7 record three reviews already checked this way -- reuse their corrected answers, not the
 review text.
 
 ---
@@ -453,18 +453,32 @@ Borrowed patterns per member (2026-10-28, not ruled; RESEARCH.md 11.3, evidence 
   2026-10-28: "Leave it as a future idea good-to-have".
 - Docs-drift test (lite-arena test/docs-drift.test.js shape).
 - Audit every must-fail control against "fails EVERY target tier" (lite-fastbit32 T9).
+- Transition coverage matrix (RESEARCH 11.7, review #3's DB-14): join and seam repair classified by
+  (height difference, seam occupancies, rotation kind) from outside the engine; every cell hit or listed
+  unreachable with a reason; cases from the DB-2 B = 4 enumerator; no new COUNTERS, no hot-body change.
 
 ### Queued -- Tier 2 / research (RESEARCH.md section 7)
 Lazy range measure update; quantile helper; rope recipe; R-4 cracked leaves; R-7 B+ fanout; R-8
 epoch persistence. Each needs a measured case before a session.
+- Lazy range update planner notes (RESEARCH 11.7 C): tag pushes touch both children, rotations and
+  equalize / merge push or apply tags off the spine (state the touches / moves counts); a tag op resets
+  the finger or a hit applies pending tags; a negative delta needs min(range) + delta >= 0 (a MIN summary
+  or an O(k) scan) on top of the I-3 total check; integer deltas only.
+- R-8 (RESEARCH 11.7 A): refcounted path copying conflicts with the pool's parent column / back-pointers
+  and with the finger hit -- choose between persistence and pool back-pointers before planning either.
+- Idea, not planned: a per-entry change stamp with a MAX summary (the IntervalMap maxEnd mechanism)
+  finds rows changed since t0 in O(k x (log n + B)) without persistence; removals need a tombstone or an edit log.
+- Not planned (RESEARCH 11.7): an Euler tour facade (LiteLogN EulerTourTree / LinkCutTree), a wavelet
+  matrix (LiteLogN WaveletTree), timing wheels (LiteO1), a --trace-deopt gate (not deterministic).
 
 ---
 
 ## 7. Cross-package boundaries (state them in the README)
 
-- lite-logn: textbook members incl. its own IntervalTree (Y-07); devDep oracle / foil here.
+- lite-logn: textbook members incl. its own IntervalTree (Y-07); devDep oracle / foil here. Its
+  EulerTourTree / LinkCutTree, WaveletTree and PersistentSegTree are not duplicated here (RESEARCH 11.7).
 - lite-loglogn: integer-universe successor; shared lessons (bucket hysteresis, boxing lane), no code.
-- lite-o1 / lite-arena / lite-fastbit32: devDeps or optional adapters only.
+- lite-o1 / lite-arena / lite-fastbit32: devDeps or optional adapters only (lite-o1 owns the timing wheels).
 - lite-bvh: pattern source for IntervalMap (caller-buffer queries, summary refit); no dependency.
 - Consumers (LiteVirtual, LiteTimeline, LiteKeyframe, LiteDataTable, LiteDiCron) adopt via recipes or
   optional peers in THEIR sessions; this package never imports them.

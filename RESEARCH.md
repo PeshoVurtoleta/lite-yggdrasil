@@ -16,7 +16,7 @@ Contents
 9. Prior art (sources)
 10. Open questions
 11. Post-0.1.1 review notes (2026-10-28) -- Zed tests, sibling patterns, positioning claims, caching,
-    external review #2 assessed
+    external reviews #2 and #3 assessed, the maintainer's learning guides
 
 ---
 
@@ -311,7 +311,7 @@ listing the proof's assumptions and checking each one is.
 
 ### Tier 2 -- strong candidates
 - **Lazy range measure update** (shift every clip in a range by dt; collapse a section) -- a lazy tag
-  per node; needs its own invariant set.
+  per node; needs its own invariant set (rows from an outside proof sketch, corrected: 11.7 C).
 - **Percentile / quantile helper** over a SumMap count or weight dim.
 - **Rope payload helper** (piece-table recipe for text) -- a recipe first, a member only if earned.
 
@@ -326,7 +326,8 @@ listing the proof's assumptions and checking each one is.
   slots are reused, so bit order stops matching time order after the first reuse; the single AND is
   only correct for at most 30 epochs ever; past that `1 << d` wraps mod 32 and the AND can read
   0, silently freeing a node a live snapshot still reads. A ring with renumbering could rescue it, at the cost
-  of the one-instruction claim.
+  of the one-instruction claim. Refcounted path copying is the standard rescue, but it conflicts with the
+  pool's parent column and back-pointers and with the C-4 finger hit (11.7 A).
 - R-9 **Prefix bit-directory as a lookup aid (SumMap, keys spread over the uint32 range)**: the "Canopy" of an
   early blueprint -- a bit directory over the top 16 key bits (65,536 prefixes: 4 levels of 32-ary words;
   lite-fastbit32's two-level FastBit1024 covers only 1,024). As a ROUTER above the
@@ -395,10 +396,13 @@ listing the proof's assumptions and checking each one is.
 ## 8. Boundaries with sibling packages
 
 - **lite-logn**: textbook O(log n) members incl. its planned IntervalTree (D7: both exist, distinct).
-  lite-logn is a devDep oracle / foil here, never a runtime dep.
+  lite-logn is a devDep oracle / foil here, never a runtime dep. It ships EulerTourTree / LinkCutTree
+  (dynamic forests), WaveletTree (static wavelet matrix) and PersistentSegTree (path copying): not
+  duplicated here (11.7).
 - **lite-loglogn**: integer-universe successor (StratifiedBitset / XFastTrie / YFastTrie). Shares the
   bucket-hysteresis lesson (YFastTrie K / h) and the boxing lesson (C-14), no code.
-- **lite-o1**: BitSet, CuckooMap, SparseSet -- usable by the pool for id liveness; devDep only.
+- **lite-o1**: BitSet, CuckooMap, SparseSet -- usable by the pool for id liveness; devDep only. Its
+  TimerWheel / HierarchicalTimerWheel / CoarseTimerWheel cover timing wheels (11.7).
 - **lite-arena**: generational handles -- the candidate id source for the pool (Y-12). Its 1.10.0 handle
   design (FREE bit, retirement, sparse-set back-pointers) is the reference for the pool (section 11.3).
 - **lite-fastbit32 / fastbit1024**: occupancy masks if R-4 ever ships; one membership word per element is
@@ -659,3 +663,180 @@ wrong. Use the corrected forms below, not the review text.
 Intake rule for future external reviews: check each claim against decisions/ (CURRENT first), this file
 and the code before acting; label every citation verified / from recollection / UNVERIFIED; never copy a
 complexity bound without a counterexample hunt.
+
+### 11.7 External review #3 assessed (2026-10-29) -- post-0.5.0 proposals
+
+An external AI review proposed work "after v0.5.0": three engine mechanisms (refcounted copy-on-write
+with structural diffing, "Norn"; Euler tour trees on SumSequence, "Ratatoskr"; lazy range tags), three
+sibling packages (lite-mimir, lite-heimdall, lite-bifrost), three new pipeline gates (DB-13..DB-15) and a
+reading list. It was checked against this file, ROADMAP.md, the suite catalog (~/LiteCatalog) and the
+LiteLogN 1.5.1 / LiteO1 1.11.3 sources. Summary: it cites this repo correctly (R-8, I-3, DB-4, the 3.2
+event rule, the B-ids) but did not check the suite, so three of its five new structures already ship
+elsewhere; none of its engine proposals handles the C-4 finger. Nothing here is ruled.
+
+- Framing:
+  - There is no v0.5.0 in the plan: after pool 0.4.0 come the demo, then Tier 2 (ROADMAP section 5
+    graph); the bulk constructor is queued without a version.
+  - Naming: section 1 says the myth names exactly one mechanism (the pool) and "Nothing else in the API
+    is named after a myth". In-package "Norn" / "Ratatoskr" names break that rule.
+- A. Refcounted copy-on-write + structural diff (R-8): RIGHT MECHANISM, NOT AN ADD-ON.
+  - Its account of the R-8 mask flaw matches section 7. Refcounted path copying (copy a node whose count
+    is > 1, push the shared reference one level down, on clear() free a node only when its count reaches
+    0) is the standard rescue (Zed's Arc::make_mut, 11.1). LiteLogN's PersistentSegTree is path copying
+    WITHOUT refcounts: a monotonic bump arena that never frees a node (LiteLogN decisions/0017 D-PST2),
+    so it is no precedent for clear().
+  - (1) Pool 0.4.0 conflict, missed: the parent column (ADR 0004 O-3) and the Q-7 leaf back-pointer
+    assume one parent per node and one leaf per entity; a shared node has a parent per version.
+    Persistence and pool back-pointers cannot both hold as designed -- a choice to make before either
+    is planned.
+  - (2) The finger, missed: a C-4 hit writes its leaf and pulls sums up _fpath with no descent; under
+    sharing every hit must check the leaf's and every ancestor's count (a ROADMAP 3.7 hot-body edit, and
+    a hit is no longer 0 touches). The review copies only on a descent.
+  - (3) Off-spine writes need an unshare too: H-Y rotations move a sibling's child, ygRepair writes the
+    in-order neighbour leaf w in the sibling subtree, join and the split seam walk two spines, ygSplitCut reuses popped nodes in place. A
+    leaf copy is O(B x dims), not O(1).
+  - The diff payoff is overstated: skipping equal node ids is sound, but equalize / merge move unchanged
+    entries into new leaves, so a diff costs O(delta x (log n + B)) and yields changed regions, not an
+    edit script.
+  - Zed does not diff by node identity: its text buffer's edits_since filters fragments by a
+    max_version summary (from recollection, UNVERIFIED). The engine-native equivalent is a per-entry
+    change stamp with a MAX summary -- the maxEnd mechanism IntervalMap 0.3.0 adds -- giving the rows
+    changed since t0 in O(k x (log n + B)) with no persistence and no pool conflict (the stamp's
+    width and wrap policy still to state). Removals are invisible
+    that way (they need a tombstone or an edit log). An idea, not planned.
+- B. Euler tour trees on SumSequence: DECLINE as a facade.
+  - Already shipped: LiteLogN 1.5.0 EulerTourTree (Henzinger-King tour in a parent-pointer treap:
+    connected, component and subtree folds, expected O(log n), zero allocation) and 1.3.0 LinkCutTree
+    (path folds).
+  - "85% already built" hides the hard part: link / cut / connected must find where a vertex occurrence
+    sits and which tree holds it -- the open Q-7 / parent-column hot-store question. Positional ops
+    alone cannot.
+  - Counts are off: link = reroot one tour (split + append) + split the other after u + 4 appends (L,
+    (u,v), the rerooted tour, (v,u), R) -- 2 splits + 5 appends, or 2 splits + 3 appends + 2 arc
+    inserts -- not "2 splitAt + 2 append". Each component is a view, so a cut needs a preallocated view (about n view objects to stay
+    zero-GC). A vertex weight must sit on exactly one of its occurrences.
+  - A dynamic forest is not dynamic graph connectivity: general connectivity (Holm, de Lichtenberg,
+    Thorup; from recollection, UNVERIFIED) needs about log n levels of Euler tour trees plus non-tree edge sets.
+  - At most: a benchmark of SumSequence against LiteLogN's treap tour after the pool exists
+    (worst-case vs expected bounds, leaf locality).
+- C. Lazy range tags (Tier 2): RIGHT PLACE, WRONG PROOF SKETCH. Rows for its DB-4 table when planned:
+  - "0 extra node touches" is false: pushing a tag writes both children (off the spine); a rotation
+    must push the tag of the node whose child it moves; equalize / merge between leaves with different
+    pending tags must apply the sibling's tag first (O(B)). The O(log n) bound survives; touches and
+    moves are frozen COUNTERS, so the counts must be stated.
+  - Finger and cursor: a tag above the finger leaf leaves its stored measures stale, and the cursor's
+    _off reads raw values -- the B-17 / B-18 stale-finger class. A tag op resets the finger, or a hit
+    applies pending tags; the spec states which.
+  - I-3 guard: a positive integer delta over k elements is checked by total + k x delta <= 2^53 - 1. A
+    negative delta ("collapse a section") must keep every measure >= 0: it needs min(range) + delta >= 0,
+    a MIN summary or an O(k) scan, which the review omitted. delta must be an integer (B-2).
+  - A tag must distribute over every summary the node keeps (+delta over maxEnd is fine; a scale
+    factor c only as a non-negative integer, per I-3).
+- Sibling packages:
+  - lite-mimir (wavelet matrix): DUPLICATE. LiteLogN 1.1.0 ships WaveletTree, a static wavelet matrix
+    (Claude / Navarro); 1.4.0 added quantileInto and rebuildFrom; lite-hud takes it as an optional injected peer (its crossCheck
+    factory).
+  - lite-heimdall: HALF DUPLICATE. The wheel half is LiteO1's TimerWheel (Varghese-Lauck),
+    HierarchicalTimerWheel (the Linux tvec shape) and CoarseTimerWheel. A kinetic tournament is absent from the catalog, but pairing
+    it with a wheel puts two mechanisms under one name; its research is numeric robustness (float
+    certificate times, simultaneous events), not the tree.
+  - lite-bifrost: OPEN, MISQUOTED. Bender, Fineman, Gilbert, Tarjan give (from recollection,
+    UNVERIFIED) amortized O(min(m^(1/2), n^(2/3))) per inserted edge in the sparse case and no per-edge
+    O(log n) bound.
+    Lengauer-Tarjan dominators are static (one-shot); incremental dominators are a second problem.
+    Pearce and Kelly's dynamic topological sort is the practical baseline (Lengauer-Tarjan and
+    Pearce-Kelly from recollection, UNVERIFIED). A suite question (perhaps
+    lite-signal's), not this package's.
+- Gates:
+  - DB-13 (deopt gate parsed from --trace-deopt): REJECT as a gate. Deopts depend on JIT heuristics and
+    timing (the B/op lanes already need --no-concurrent-recompilation, llms.txt:59); the trace format
+    changes between Node versions; the [2^30, 2^40] lane leaves the Smi range on purpose. Its examples
+    miss: an Int32Array store at bit 31 wraps silently with no deopt (key lanes at 2^31 - 1, 2^31, 2^31 + 1
+    and 2^32 - 1 catch it, 11.3); "holey arrays" do not apply to typed-array columns. At most a REPORTED, Node-pinned census.
+  - DB-14 (transition coverage matrix): KEEP as a good-to-have. It extends the 3.2 rule ("every
+    structural event fires > 0") to combinations of (height difference, seam occupancies, rotation kind)
+    for join and seam repair. Conditions: every cell is hit or listed unreachable with a reason (else
+    the gate cannot fail); calls are classified from outside the engine (the walker reads shapes before
+    and after), so the 12 frozen COUNTERS and the hot body stay unchanged; cases come from the DB-2
+    B = 4 enumerator.
+  - DB-15 (Alloy / TLA+): OPTIONAL design aid. Jackson is already DB-2's source (section 9). A model of
+    pool back-pointer reciprocity can help the 0.4.0 DB-1 pass, but it needs a JVM and cannot gate
+    npm test; the DB-2 enumerator plus walker reciprocity is already executable small-scope checking.
+- Literature:
+  - For persistence cite Driscoll, Sarnak, Sleator, Tarjan, "Making data structures persistent" (JCSS
+    38, 1989; from recollection), which the review omits. Bagwell's "Ideal Hash Trees" (2001; from
+    recollection, UNVERIFIED) covers hash tries, not sequences. Stucki et al., "RRB Vector" (ICFP 2015;
+    from recollection, UNVERIFIED) uses GC-managed JVM nodes with radix balance, not refcounting.
+  - As the review gave them, from recollection, UNVERIFIED: Henzinger and King (JACM 1999); Tarjan,
+    "Dynamic trees as search trees via Euler tours" (Mathematical Programming, 1997); Claude, Navarro,
+    Ordonez, "The Wavelet Matrix" (Information Systems, 2015); Varghese and Lauck (SOSP 1987); Basch,
+    Guibas, Hershberger (kinetic data structures, SODA 1997 / J. Algorithms 1999). Bender et al. is in
+    ACM TALG 12(2); its year (2015 or 2016) is UNVERIFIED.
+- Kept for later, not planned: the change-stamp MAX summary (after 0.3.0); DB-14; the C rows in the
+  Tier 2 entry; the A conflict in R-8. Declined: an in-package Euler tour facade, lite-mimir, the wheel
+  half of lite-heimdall, DB-13 as a gate.
+
+### 11.8 The maintainer's learning guides, read for the next members (2026-10-29)
+
+The maintainer's study notes (~/Work/Portfolio/Learning: BeautifulCode, PracticeOfProgramming,
+HotPathCosts read in full by the orchestrator; V8, ElementsKinds, TypedArrays, ENGINE-ANATOMY, Loops,
+Bitwise, Trees, OrderedMaps, RangeQueries, DeriveRankSelect, DeriveWindowFoldUint32, SuccinctBits, BigO,
+LiteArena, LiteLogN, LiteO1, ObjectPool, DataStructureCatalog swept by three read-only readers) were
+checked for what transfers to the queued members. Guide line numbers are as of 2026-10-29. Nothing here is
+ruled.
+
+- Delta debugging (BeautifulCode Part 8, Zeller's ddmin): the missing piece beside the seeded soak and the
+  transition matrix (11.1 and 11.7, ROADMAP Good-to-have). No test here shrinks a failing op stream. Two engine
+  traps: ops carry positions, so a replayed sub-log must normalize each argument against the current
+  length (i mod (len + 1) for insertAt; i mod len for removeAt / setMeasure, dropping the op when
+  len is 0) to stay legal; and shrink only while the SAME named walker / oracle check
+  fails, else ddmin drifts to another bug. A debugging tool, run after a failure, never inside a gate.
+- Inlining budgets (PracticeOfProgramming Part 7 Correction 2; V8.md inlining-limit table): every member
+  adds bytes to shared hot functions (maxEnd in the pull pass, key compares in the leaf scan). Maglev's
+  inline limit is 100 bytecode bytes, and this engine already has Maglev-only boxing rows (decisions/0005
+  A17-10). Each member planner runs the two-lane (Maglev and TurboFan) inlining diff on every hot function
+  it touches, beside the B/op gate.
+- SumMap 0.2.0 keys (Bitwise rules 9, 11, 13; PracticeOfProgramming Correction 1): signed int32 inside,
+  unsigned only at the edge. An unsigned compare that stays int32 is (a ^ 0x80000000) < (b ^ 0x80000000)
+  -- an option to measure, not a rule. The key lanes of 11.3 stand; what Bitwise rule 13 adds is testing
+  each word in both forms (x | 0 and x >>> 0) plus the out-of-domain -1, 2^32 and NaN. The midpoint trap
+  (BeautifulCode Part 2) applies only to key-space bisection: use lo + ((hi - lo) >>> 1) there, on the
+  uint32 values (not the int32-stored form) and only while hi - lo < 2^32 (sentinels -1 / 2^32 give
+  mid = lo forever); the engine's own halvings (Yggdrasil.js:632, :789) are single-operand shifts of small
+  sizes (:632 halves B, :789 halves a two-leaf size t < 2B), with no lo + hi sum, so the trap cannot arise.
+- SumMap property tests (SuccinctBits, DeriveRankSelect): rank(select(k)) === k for every 0 <= k < size (exclusive rank, 0-based select, SuccinctBits.md 2.1);
+  select(rank(x)) === x only when x is a member (for an absent key rank is the insertion point).
+- Pool 0.4.0 tests (PracticeOfProgramming 6.2, 6.4; BeautifulCode Part 2, Savoia): a conservation law
+  (live + retired + free = capacity, as lite-arena's activeCount + retiredCount + remainingCapacity() ===
+  capacity at Arena.js:604, and per-realm membership counts) asserted after every op; the generation
+  edges (lite-arena 1.10.0: the sign bit at gen 2048; the Pool's own width is open, Q-4) and retirement reached with a scratch copy that shrinks the generation budget, never
+  a shipped option.
+- IntervalMap 0.3.0 maxEnd (DeriveWindowFoldUint32, "you can't un-OR"): max is not invertible, so maxEnd
+  is recomputed from the children, never adjusted by a delta. The hot pull pass already recomputes: it
+  rescans the leaf and reads both children per level (setMeasure Yggdrasil.js:1544-1554; insertAt :1370-1386 and removeAt :1459-1475 have the same shape), so maxEnd fits it as is.
+- Bench-ADOPT (BigO Part 4, Dongarra, Loops): a chunked array is O(chunk) + O(n / chunk) per insert, not
+  O(1); compare constants and tails at fixed n, not a "no log n" story. Precedent:
+  LiteO1/benchmark/ (METHODOLOGY.md, SESSION_A_ADOPT_BRIEF.md, Harness.mjs); provenance template:
+  ElementsKinds.md:11-21.
+- Lazy range tags (Tier 2): the condition is a monoid ACTION -- apply(tag, summary) computable without the
+  children (+c on a range adds c x count to a sum), tags that compose, and apply distributes over the fold (apply(t, x . y) = apply(t, x) . apply(t, y)) -- not
+  commutativity of the fold.
+
+Do not import these guide statements into a spec:
+- V8.md:509 "a 31-bit signed int" as a law: Node 26 (no pointer compression) has 32-bit Smis
+  (ElementsKinds.md:98-99, ENGINE-ANATOMY.md:770); 31-bit holds on pointer-compressed V8 (Chrome, Electron). The 2^30 lane edge in llms.txt
+  stays: it is the portable edge, and llms.txt states lanes, not a Smi width.
+- OrderedMaps.md:264, :280: deterministic split / merge needing O(n) rebuilds is scapegoat-specific;
+  weight-balanced trees split and join in O(log n) (this engine).
+- OrderedMaps.md:430-432: lazy reversal is cheap there because its folds are commutative -- sufficient,
+  not necessary: a non-commutative fold keeps a reversed aggregate beside the forward one and the tag swaps
+  them (a monoid action, above). Do not import commutativity as the condition.
+- RangeQueries.md:239-242: folds need only associativity (and an identity, or an empty flag) when left and right
+  accumulators are kept apart;
+  do not carry a commutativity restriction into a spec.
+- Trees.md:158, :224: a BVH query as O(log n) ignores overlap and output size; IntervalMap queries pay per
+  reported interval (Q-5 counts it that way).
+- BigO.md:82: quickselect is EXPECTED O(n), worst case O(n^2) -- matters for the quantile helper.
+- Stale package guides (fix in the Learning repo, not here): LiteArena.md describes 1.9.0 (1.10.0's FREE
+  bit is 0x2000, bit 13); LiteLogN.md describes 1.4.0 (no EulerTourTree); DataStructureCatalog calls
+  lite-loglogn a scaffold (it is 0.4.0).

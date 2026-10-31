@@ -11,6 +11,15 @@
 > GO / NO-GO checkpoint, then SumMap 0.2.0 -- resumed after the lite-signal release (maintainer 2026-10-28:
 > "After lite-signal release, we continue developing"). Estimate to 0.2.0 and borrowed patterns: section 5
 > and the Queued section below; findings in RESEARCH.md section 11.**
+>
+> **UPDATE (2026-10-31; supersedes the 2026-10-28 sequencing): Bench-ADOPT is under way, ahead of the lite-signal
+> release (maintainer 2026-10-31: "start
+> next, i will release 0.2.0, then signal"). Committed: the Bench v2 kit copy and the blocked-array and Fenwick
+> rivals (3c6ef73), adapters / dimensions D1-D8 / kernel lane (629f04b), runner / report / README generator / Bench
+> tests (7b4187b). Left: the rival fixes R-BA9 / R-BA10, the rival tests and rival B/op lanes (g2a TASKS 5-6), the
+> docs batch, then group 2b (scenarios, sweep, unroll A/B, loss rows, quiet-host run) and the pre-registered GO /
+> NO-GO (section 5). SumMap settle input: RESEARCH.md 13
+> (PROPOSED); rivals and GO / NO-GO: RESEARCH.md 14; scenario mixes: RESEARCH.md 15 (PROPOSED).**
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -432,6 +441,12 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   R-BA11 "Sweep picks per n (Recommended)": "The default stays max(16, ceil(sqrt(C))) rounded up to a multiple of 4
   (as built); the group 2b sweep runs each n over a chunkCap grid and the fastest chunkCap per n is the rival's
   reported value, printed in the header (RESEARCH 4.1 'chunk size tuned per n')."
+- Scenario mixes (PROPOSED, not ruled; RESEARCH 15): fixed n with balanced structural ops; every mix's ratios,
+  positions, measure distribution, n and seed printed; each op class reported apart from the blend; S1 = local scroll
+  + visible-window next() walk, near-viewport remeasures, S1a tail-feed / S1b list-edit structural variants; S2 =
+  caret-local typing, Enter / backspace as insertAt / removeAt, balanced bulk cut / paste, S2a typing-only and S2b
+  bulk-only variants; S7 = 1:1 draw + reweight and S7b draw-heavy. The ratios are assumptions until a real host is
+  instrumented (RESEARCH 15.5). The g2b planner turns them into scenario specs and asks the maintainer to rule them.
 
 ### Queued -- SumMap 0.2.0, IntervalMap 0.3.0, Yggdrasil pool 0.4.0 (one full brief each at greenlight)
 

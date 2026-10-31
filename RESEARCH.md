@@ -20,6 +20,7 @@ Contents
 12. Tier 2 / Tier 3 detail and the blocked-array rival (maintainer notes, 2026-10-31)
 13. SumMap 0.2.0 settle brief (maintainer research, checked 2026-10-31; PROPOSED)
 14. Competent rivals and the pre-registered GO / NO-GO (maintainer research, 2026-10-31)
+15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; PROPOSED)
 
 ---
 
@@ -1176,3 +1177,84 @@ crossover is <= 32k and SumSequence wins at 100k, AND the S7 loss row shows the 
 reweighting. PAUSE and evaluate R-7 (B+ fanout) if BlockedArray beats SumSequence at n >= 100k on S1 or S2. Any
 other outcome (for example an S1 crossover between 64k and 100k) has no automatic verdict: the maintainer decides
 from the table. "Wins" = the median of K interleaved runs on a QUIET host; a PRELIMINARY log decides nothing.
+
+## 15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; PROPOSED)
+
+Status: PROPOSED input for the group 2b planner (Bench-ADOPT); nothing here is ruled, and benchmark/Scenarios.mjs
+registers no scenario yet. Every ratio below is a stated ASSUMPTION, not an observation: no op-mix telemetry from a
+production virtualiser or editor is cited. The architecture references (VS Code's piece tree, CodeMirror's tree of
+lines) are from recollection and say nothing about op frequencies. What makes a mix defendable is that its weights,
+positions and sizes are printed in the report header and every op class is also reported on its own, so a reader can
+re-weight it.
+
+### 15.1 Rules every mix follows
+
+- Fixed n: structural ops are balanced (insert / remove, cut / paste), so each run measures at its stated n; a
+  crossover at an n that drifted during the run is meaningless.
+- Parameter set per scenario, all printed: op ratios, how each event decomposes into engine calls, the position
+  distribution (uniform, near the viewport / caret, tail), the measure distribution, n, seed.
+- Bench law: measures are integers in [0, 255] (benchmark/Adapters.mjs:434), so S1 heights and S2 line lengths are
+  capped at 255; a long-line variant would need that law revisited.
+- Report each op class (seek, walk, reweight, small edit, bulk move) and the blend separately (ROADMAP Bench-ADOPT
+  planner notes: seek and splice apart, plus the blend). Counts beside every time. Scenarios.mjs PHASES is frozen to
+  seek | splice | blend (validateBuilt); rows beyond those three need a shape change that the g2b planner must raise.
+- Locality is real and stays in: scrolling and typing are local, which helps SumSequence's finger and every cursor.
+  The report says which rivals have a finger (none) and which have a cursor (BlockedArray and FenwickRebuild; the
+  SpliceFoil has none, Adapters.mjs:563, so its S1 walk is index access).
+- A mix chosen so that the engine wins fails the honesty review (4.3), so each scenario has a variant where a rival
+  is expected to win, and that variant feeds the loss table.
+
+### 15.2 S1 -- virtual list, n = 1M rows (and the size sweep)
+
+The draft's per-1,000 mix (920 seeks / 50 resizes / 30 structural) sits outside its own stated ranges (resize
+0.02-0.05 and structural 0.005-0.02 relative to scroll; 50 / 920 = 0.054 and 30 / 920 = 0.033) and treats a scroll
+as a random seek. Proposed instead, per 1,000 events:
+
+| Events | Decomposition | Positions |
+|---|---|---|
+| 920 scroll frames | seekSum(0, y), then next() over the visible window W (W = viewport / mean height, about 30) | y moves by a small delta from the last frame; 2% of frames jump to a uniform y (scrollbar drag) |
+| 50 remeasures | setMeasure(i, 0, h) | i inside or next to the visible window |
+| 30 structural | 15 insertAt + 15 removeAt (n stays fixed) | S1a feed / log: insert at the tail, remove at the head; S1b list edit: both near the viewport |
+
+Heights: most rows at one base height (for example 32), a minority uniform in [20, 200], about 5% zero (collapsed;
+4.2 asks for zero heights). S1a's tail inserts flatter the suffix-rebuild Fenwick (O(log n), 14.1), but its head
+removes are that rival's worst case (a full rebuild, 14.1); both ends suit the blocked array. It is reported, not
+hidden.
+
+### 15.3 S2 -- editor line index, n = 100k lines
+
+The draft's line-touch claim contradicts its own mix: it cites paste / cut as 15-30% of lines touched, but its mix
+(700 small edits x ~2 lines, 150 mid edits x ~20, 50 bulk ops x 2k-10k) puts about 98% of touched lines in the bulk
+ops. Its 50 bulk ops also add about 300k lines per 1,000 events unless cuts balance them, and pressing Enter is a
+structural insert, not a setMeasure. Proposed instead, per 1,000 events:
+
+| Events | Decomposition | Positions |
+|---|---|---|
+| 600 character edits | setMeasure(i, d, len +- 1) for each d | the caret line, which moves by a few lines, with rare jumps |
+| 100 line splits / joins | 50 Enter (setMeasure + insertAt) + 50 backspace at a line start (setMeasure + removeAt) | caret line |
+| 150 mid-size edits | k setMeasure, k in [10, 50] (re-indent, format selection) | around the caret |
+| 50 bulk moves | 25 cut + 25 paste of a block of L in [2k, 10k] lines (cut = 2 splitAt + append into a clipboard view; paste = splitAt + 2 append) | uniform; each paste immediately follows its cut |
+| 100 seeks | 50 indexAtSum(0, offset) (click -> line) + 50 sumBefore(0, line) (go to line) | near the caret |
+
+Dims (assumption): 2 = UTF-16 code units including the newline, and UTF-8 bytes. Line lengths are short-tailed,
+mostly 0-80, capped at 255 (15.1). Variants, reported separately: S2a typing only (character edits, line splits /
+joins, seeks; the blocked array is expected to win at more n -- a loss-table candidate) and S2b bulk moves only.
+That bulk moves dominate the touched lines in the blend is a choice of this mix; S2a / S2b let a reader see both
+regimes.
+
+### 15.4 S7 -- weighted pick, fixed n
+
+The draft says both "100% setMeasure" and "~5% draws". A weighted pick is mostly draws (the lite-pick pattern), so
+proposed, per 1,000 events at fixed n (10k, 100k, 1M):
+- S7: 500 draws indexAtSum(0, y), y an integer uniform in [0, total) (total <= 255 x 1M < 2^30, so draws stay off the
+  boxing lane, 4.2), each followed by setMeasure of the drawn item (500): a bandit update, or sampling without
+  replacement with refill (weight 0, then restored).
+- S7b draw-heavy: 950 draws + 50 reweights at uniform positions.
+No inserts or deletes in either. This is the expected Fenwick win (the 4.3 resize-only row; R-BA12 requires the loss
+row to show it).
+
+### 15.5 Replacing the assumptions
+
+Real ratios would come from instrumenting a real host: count calls per frame in a lite-virtual demo while scrolling a
+feed, or per keystroke in an editor demo, and record them with provenance like any REPORTED number. Until then the
+mixes above stay labelled assumptions in the report header.

@@ -17,6 +17,7 @@ Contents
 10. Open questions
 11. Post-0.1.1 review notes (2026-10-28) -- Zed tests, sibling patterns, positioning claims, caching,
     external reviews #2 and #3 assessed, the maintainer's learning guides
+12. Tier 2 / Tier 3 detail and the blocked-array rival (maintainer notes, 2026-10-31)
 
 ---
 
@@ -311,14 +312,16 @@ listing the proof's assumptions and checking each one is.
 
 ### Tier 2 -- strong candidates
 - **Lazy range measure update** (shift every clip in a range by dt; collapse a section) -- a lazy tag
-  per node; needs its own invariant set (rows from an outside proof sketch, corrected: 11.7 C).
-- **Percentile / quantile helper** over a SumMap count or weight dim.
-- **Rope payload helper** (piece-table recipe for text) -- a recipe first, a member only if earned.
+  per node; needs its own invariant set (rows from an outside proof sketch, corrected: 11.7 C; detail: 12.1).
+- **Percentile / quantile helper** over a SumMap count or weight dim (exact recipe, checked: 12.1).
+- **Rope payload helper** (piece-table recipe for text) -- a recipe first, a member only if earned (12.1).
 
 ### Tier 3 -- research track (measured, never assumed)
 - R-4 **Cracked leaves** (unsorted append, sort / select at burst): pays only if the measured
-  crossover moves; in-order scans then pay a per-leaf sort.
-- R-7 **B+ internal fanout** vs the binary trunk: shallower and cache-friendlier, harder split / join.
+  crossover moves; in-order scans then pay a per-leaf sort. Not applicable to SumSequence, and four SumMap
+  collisions (12.2): proposed for Declined at the SumMap planner pass.
+- R-7 **B+ internal fanout** vs the binary trunk: shallower and cache-friendlier, harder split / join
+  (pull op count and seam cascade: 12.2).
 - R-8 **Epoch persistence**: birth / death epoch per node, free only when no live snapshot falls in
   [birth, death); leaves copied whole; secondary realms not versioned (a documented limit); fixed
   arena fills faster (fail closed). A proposed 30-bit live-snapshot mask (`spanMask = (1 << d) -
@@ -327,7 +330,8 @@ listing the proof's assumptions and checking each one is.
   only correct for at most 30 epochs ever; past that `1 << d` wraps mod 32 and the AND can read
   0, silently freeing a node a live snapshot still reads. A ring with renumbering could rescue it, at the cost
   of the one-instruction claim. Refcounted path copying is the standard rescue, but it conflicts with the
-  pool's parent column and back-pointers and with the C-4 finger hit (11.7 A).
+  pool's parent column and back-pointers and with the C-4 finger hit (11.7 A), and makes 'pool' reachable
+  from setMeasure / removeAt (12.2).
 - R-9 **Prefix bit-directory as a lookup aid (SumMap, keys spread over the uint32 range)**: the "Canopy" of an
   early blueprint -- a bit directory over the top 16 key bits (65,536 prefixes: 4 levels of 32-ary words;
   lite-fastbit32's two-level FastBit1024 covers only 1,024). As a ROUTER above the
@@ -336,7 +340,8 @@ listing the proof's assumptions and checking each one is.
   prefix holds at most one leaf of keys), to skip the top trunk levels on random point lookups.
   Every leaf split / merge / equalize changes which leaf owns which prefixes, so maintenance is not
   O(1); "saves 6-8 levels" needs a count before it is believed. Gate: measured lookups saved vs
-  directory maintenance on a split / merge stream.
+  directory maintenance on a split / merge stream. The lowest-cover table breaks on rotations and cannot
+  serve rank / sumBelow; the zero-maintenance form is a fence-checked leaf-hint table, get(k) only (12.2).
 
 ### Declined (do not reopen without new evidence)
 - SWAR key signatures in leaves: help equality only, not ordered seek; BigInt64Array lanes allocate.
@@ -849,3 +854,121 @@ Do not import these guide statements into a spec:
 - Stale package guides (fix in the Learning repo, not here): LiteArena.md describes 1.9.0 (1.10.0's FREE
   bit is 0x2000, bit 13); LiteLogN.md describes 1.4.0 (no EulerTourTree); DataStructureCatalog calls
   lite-loglogn a scaffold (it is 0.4.0).
+
+---
+
+## 12. Tier 2 / Tier 3 detail and the blocked-array rival (maintainer notes, 2026-10-31)
+
+Source: the maintainer's own research notes (researchNotes/Tiers2+3.md and researchNotes/BlockedArray.md, repo-local, not committed), checked by the orchestrator against this file, llms.txt, decisions/ and the code,
+and by running them. What survived is below, corrected where marked; nothing here is ruled or scheduled.
+
+### 12.1 Tier 2 in detail
+
+Rule for every Tier 2 item: it stays on the shelf until a consumer spike or a benchmark scenario shows a
+measured need; then its invariants / DB-4 table are written and reviewed; then it is built as a
+construction-time opt-in (D11 shape, lite-lru 0017 option (b)) or its own facade, so a default SumSequence
+pays 0 extra bytes and 0 extra instructions (ROADMAP 3.7).
+
+- T2-1 Lazy range measure update. Two different operations:
+  - (a) range shift, m_i := m_i + delta: a pure additive integer tag. On SumSequence it changes measures
+    only. On IntervalMap it also moves the sort key, so it is order-preserving iff the shifted run a..b stays strictly between the unshifted rows just outside it: (start_{a-1}, id_{a-1}) < (start_a + delta, id_a) and (start_b + delta, id_b) < (start_{b+1}, id_{b+1}) -- e.g. a whole suffix with
+    delta >= 0, or a whole prefix with delta <= 0.
+  - (b) section collapse / restore (heights driven to 0 and back): no additive tag can do it without breaking
+    I-3 (m >= 0); an affine tag (mul, add) with mul in {0, 1} collapses but loses the heights, so restore needs
+    a second dim (dim0 = active height, dim1 = intrinsic height).
+  - Check first: shared-arena splitAt + append already detach a range into a standby view and paste it back
+    in O(log n), moving elements only in the seam leaves; and in a positional timeline a ripple shift of
+    every clip after i is one setMeasure on the gap before it. Measure whether these already cover LiteVirtual
+    / S1 "collapse a section" before planning tags.
+  - DB-4 rows: as 11.7 C (pushes write both children; rotations and equalize / merge apply tags off the
+    spine; the finger and cursor go stale -- reset them on a tag op, or a hit applies pending tags (11.7 C; flushing on every descent alone misses a C-4 hit and next(), which never descend); delta > 0
+    needs total + count x delta <= 2^53 - 1; delta < 0 needs min(range) + delta >= 0 -- a MIN summary or an O(k) scan (11.7 C); a collapse to 0 can use (b)'s mul = 0 instead).
+  - Admission: the tag is a monoid action -- apply(t, s) from the summary alone, tags compose, and apply
+    distributes over the fold (11.8). Commutativity is not required.
+- T2-2 Quantile helper. indexAtSum is strict (I-4: smallest i with sumBefore + getMeasure > y), so a naive
+  y = q x total is wrong twice: q = 1 returns length, and an exact boundary shifts by one (weights
+  [25, 25, 25, 25], q = 0.5, y = 50 gives index 2; the Type-1 median is index 1). Because prefix sums are
+  integers (I-3), the Hyndman-Fan Type 1 quantile (smallest i with prefix >= q x W) is
+  indexAtSum(d, T - 1) with T = ceil(q x W); q = 0 is taken as indexAtSum(d, 0), the first element with a
+  positive measure (a convention: leading zero-measure rows are skipped); total 0 returns -1. The exact entry
+  takes an integer ratio, quantileRatio(seq, d, num, den), T = ceil(num x W / den) in BigInt (W x num can pass
+  2^53). Checked 2026-10-31 on the 0.1.1 build: 36,000 brute-force cases (4,000 random sequences of 1..40
+  weights with zeros, 9 ratios incl. 0, 1, 1/1000, 99/100) against the Type-1 definition, 0 mismatches; one total near 2^53 was spot-checked (2^53 - 2, q = 1/2; printed, not counted, and binary64 passes it too -- at W = 2^53 - 1, q = 99/100 a binary64 ceil is one low, the BigInt form is not). BigInt allocates, so it is a cold recipe, never a hot method. Status: a
+  documented recipe first; a method only if a consumer (S4 depth) needs it.
+- T2-3 Rope / piece-table recipe. Each entity names a row of a caller-owned piece table (buffer, start,
+  length); SumSequence(cap, { dims: 2 }) keeps dim0 = chars, dim1 = line feeds; offset -> line and line ->
+  offset are indexAtSum + sumBefore. An edit inside piece k is NOT a splitAt: seekSum to (k, rel), then
+  setMeasure(k) for the left half and insertAt(k + 1) / insertAt(k + 2) for the new text and the right half.
+  Those two inserts hit the C-4 finger only while the leaf is not full and i > fb (C-4: insertAt i in
+  (fb, fb + len], [0, len] on the first leaf); the insert that splits the leaf is a miss. Line-feed counts of
+  the halves come from a sorted per-buffer array of line-start offsets plus a binary search (the VS Code
+  piece-tree trick; from recollection). Multi-piece cut / paste (S2) is splitAt + append after the two
+  boundary pieces are split. Status: recipe + S2 scenario first.
+- Production parallels (from recollection, UNVERIFIED): VS Code's piece tree and Zed's rope keep a summary
+  tree over piece descriptors with no lazy tags; HdrHistogram takes a binary64 percentile and rounds it to an integer count rank (from recollection, UNVERIFIED), so the exact integer-ratio entry here is this package's choice, not a borrowed convention.
+
+### 12.2 Tier 3 audit (DB-1 applied to R-4, R-7, R-8, R-9)
+
+- R-4 Cracked leaves. Does not apply to SumSequence: position is implicit, so an unsorted leaf needs a
+  permutation array that shifts on every insert anyway. On SumMap: keyAtSum / select / successor / seekKey
+  need key-ordered prefix sums inside the landing leaf, so every read on an unsorted leaf sorts it (and a sort
+  during a read moves slots, invalidating a cursor or a Q-7 back-pointer); set(k) still scans every slot for a
+  duplicate; deleting the leaf's maximum key rescans for the new fence (I-6). At B = 16 the sorted shift moves at most 15 slots of 64 key bytes (one or two cache lines, unaligned). Proposal: move R-4 to Declined in the SumMap 0.2.0 planner pass
+  unless a B >= 32 microbenchmark shows otherwise (not ruled).
+- R-7 B+ internal fanout. Under I-2 (summaries recomputed from children, never by deltas) a fanout-F node
+  recomputes from up to F children, so the pull ARITHMETIC per spine is (F - 1) / log2 F x log2 L ops per dim:
+  3.75 x at F = 16, 1.5 x at F = 4, against 1.0 x for the binary trunk (comparing full-tree heights; the trunk's worst case is H(L), T-10). That is an op count, not a time: a
+  wide node's child sums are contiguous (one or two cache lines) where the binary trunk's are dependent loads,
+  so the cost has to be measured. A splitAt / join cut leaves up to log_F L internal nodes on each cut spine
+  below F / 2 children, each needing a multi-way merge / borrow. Gate: Bench-ADOPT GO / NO-GO; if explored,
+  test F = 4 beside F = 16.
+- R-8 Persistence. Adds a fourth conflict to 11.7 A's three: the pools are sized for live elements (0001
+  T-9: Lmax = ceil(C / m) + K, K = max non-empty sequences per arena; the code's internal pool is Lmax - 1;
+  0004 A-5 adds a transient term), which is why llms.txt:41 can call RangeError 'pool' an unreachable
+  backstop. Under path copying (or epochs) a setMeasure or removeAt on a snapshotted view allocates a new leaf
+  and up to H internal nodes with no new element, so 'pool' becomes reachable from ops that never allocate
+  today. R-8 already says the arena "fills faster (fail closed)"; the new part is WHICH ops can then throw and
+  that the llms.txt backstop promise breaks. Alternatives: the change-stamp MAX summary of 11.7 A for "rows changed since t0" (not reads of an old version; removals need a tombstone or an edit log; no copying and no pool growth, but it is a member opt-in: the hot pull pass of that member recomputes one more
+  summary); an explicit cold cloneInto(outView) charged against available (an idea, not planned).
+- R-9 Prefix bit-directory. Mapping a prefix to its lowest covering trunk node breaks on rotations (the cover
+  moves between u and its child; repairing it scans every prefix under u), and a mid-trunk jump cannot answer
+  rank or sumBelow (they need the left sums of every skipped ancestor). The workable form is an untrusted
+  leaf-hint table, hint[k >>> 16] = a leaf id, checked on use against the leaf's own keys (a hit if
+  keys[0] <= k <= keys[len - 1]; else descend and overwrite the hint), so splits, merges, equalizes and
+  rotations maintain nothing. Limits: the check needs to know the leaf belongs to this view (no owner column
+  exists; Q-7), a freed leaf id must never satisfy it (B-18 class), and a hit serves get(k) only -- set /
+  delete need the spine for their pulls -- where section 1 already concedes a Map. Gate: after SumMap 0.2.0
+  ships its fence-key finger, and only if a benchmark shows a 256 KB table (65,536 x Int32) beating the
+  top-of-trunk descent.
+
+### 12.3 The blocked-array rival draft (B-31, section 4.1)
+
+researchNotes/BlockedArray.md holds a BlockedArray class mirroring the SumSequence API (insertAt / removeAt /
+setMeasure / getMeasure / entityAt / sumBefore / indexAtSum / splitAt / append / clear / arena, same error
+tokens and check order) plus a bench harness. Layout: a per-view directory (dir, dirSize, dirSums by dim)
+over fixed-size chunks in a shared pool; split at chunkCap, merge or equalize below chunkCap / 4; default
+chunkCap = max(16, ceil(sqrt(capacity))) rounded to a multiple of 4; directory sums kept by deltas (fine for
+a rival: I-2 binds the engine, and integer measures keep deltas exact).
+
+Checked 2026-10-31 by a differential fuzz against test/oracle.mjs: 300 seeds, 500,083 ops (1..3 views,
+dims 1..2, chunkCap 8 / 16 / 32, capacity 32 / 200 / 2,000; insert, remove, setMeasure, splitAt, append,
+clear, reads), 0 mismatches in entities, dim-0 measures, every dim's total, the dim-0 reads (entityAt / getMeasure / sumBefore / indexAtSum) and removeAt's return value (dim 1 is checked only through totals and the directory-sum invariant -- a getMeasure(i, 1) mutant survives; only valid arguments are drawn, so no error token or check order is compared), and its own invariants held after
+every op (no chunk at chunkCap, no underflowing chunk in a multi-chunk view, directory sums exact, no chunk
+leaked, no 'pool' throw). Big-lane measures ([2^30, 2^40]) were not fuzzed.
+
+Gaps before it is a fair Bench-ADOPT rival:
+- No cursor: S1's seek + next() walks need seekIndex / seekSum / next (chunk index + local index, O(1) next).
+- Space: the pool holds maxChunks x chunkCap slots, maxChunks = ceil(C / (chunkCap / 4)) + 2 x views + 4,
+  i.e. 4 x C + (2 x views + 5) x chunkCap element slots at most (about 4 x C only when C >> chunkCap; C = 32 at chunkCap 32 gives 10 x C at 1 view, 14 x C at 3 views), and every view allocates a maxChunks-entry directory; report memory beside time.
+- "0 B/op on steady-state hot paths" is unmeasured: sumBefore returns a double, the same boxing lane as the
+  engine's; gate it with the torture meter like the engine's lanes.
+- The 4 x unrolled directory loops are a hypothesis (PracticeOfProgramming Correction 2: unrolling can cost
+  Maglev inlining at 100 bytecode bytes): compare against the plain loop with
+  LiteUtils/inlining-budget-diff.sh (driver mode) and a timed A/B.
+- The harness is single-run, not interleaved, and not under the quiet lock: its numbers are PRELIMINARY /
+  REPORTED at most; the real cells use the LiteO1 benchmark harness methodology (11.8).
+- The head-to-head compares chunkCap ~248 with leafSize 16: sweep both; the edit cells insert and remove at
+  the same index, so they almost never split or merge (only the churn phase B does) -- add a net-growth phase.
+- Counter mapping: dirScans <-> touches and elemMoves <-> moves only (11.6); the rest is n/a.
+- Fixed in the note: the splice foil's seek target used length x 25 instead of its running total, and the
+  CLI entry check compared a raw file:// string instead of pathToFileURL(argv[1]).

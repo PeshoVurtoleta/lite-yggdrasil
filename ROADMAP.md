@@ -407,6 +407,13 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   correspond to COUNTERS; pulls, rotations, joins and seams are n/a for it.
 - "The chunk-sum scan stays in L1 and beats the trunk's dependent loads at small n" is EXPECTED, not
   measured; the crossover n comes only from this cycle's quiet-host run log.
+- Rival draft (2026-10-31, RESEARCH 12.3): researchNotes/BlockedArray.md (repo-local, not committed), 0
+  mismatches against the Oracle over 500,083 fuzzed ops. Before it is the rival (in benchmark/, section 4.1):
+  add a cursor (seekIndex / seekSum / next) for S1; report space beside time (at most 4 x C + (2 x views + 5) x chunkCap element slots plus a directory per view); gate its B/op lanes like the engine's; A/B its 4 x unrolled loops against plain
+  ones (LiteUtils/inlining-budget-diff.sh driver mode + a timed run); interleaved runs under the quiet lock
+  with the LiteO1 benchmark harness; sweep chunkCap and leafSize; add a net-growth edit phase (its edit cells almost never split or merge).
+- Inlining gate for every member that edits a hot function: LiteUtils/inlining-budget-diff.sh, driver mode,
+  frozen before build vs the live file, both tiers; STATISTICAL, run under the quiet lock, never in npm test.
 
 ### Queued -- SumMap 0.2.0, IntervalMap 0.3.0, Yggdrasil pool 0.4.0 (one full brief each at greenlight)
 
@@ -468,6 +475,10 @@ epoch persistence. Each needs a measured case before a session.
   and with the finger hit -- choose between persistence and pool back-pointers before planning either.
 - Idea, not planned: a per-entry change stamp with a MAX summary (the IntervalMap maxEnd mechanism)
   finds rows changed since t0 in O(k x (log n + B)) without persistence; removals need a tombstone or an edit log.
+- Tier 2 / Tier 3 detail (RESEARCH 12.1 / 12.2, maintainer notes 2026-10-31): the quantile recipe is
+  checked (36,000 cases, 0 mismatches) and ready as a docs recipe; R-4 is proposed for Declined at the SumMap
+  planner pass; R-8 would also make RangeError 'pool' reachable from setMeasure / removeAt; R-9 only as a
+  get(k) leaf-hint table after SumMap ships; R-7 needs the pull op count measured as time.
 - Not planned (RESEARCH 11.7): an Euler tour facade (LiteLogN EulerTourTree / LinkCutTree), a wavelet
   matrix (LiteLogN WaveletTree), timing wheels (LiteO1), a --trace-deopt gate (not deterministic).
 

@@ -245,6 +245,10 @@ function scanDirState(rel, pattern, keep) {
 
 const SCAN_STATES = SCAN_DIRS.map(([rel, pattern, keep]) => scanDirState(rel, pattern, keep));
 
+// Committed bench output (the run of record writes them, R-BA1): scanned only when present, so the
+// generated files are held to the same ASCII + banned-name law; benchmark/out/ is gitignored, never scanned.
+const SCAN_FILES = ['benchmark/results.json', 'benchmark/report.html'];
+
 // states: [{ rel, pattern, exists, isDir, names }] -- pure.
 function checkScanDirs(states) {
   const out = [];
@@ -266,6 +270,7 @@ function loadRealFiles() {
     ...listDir('test/types', () => true),
     ...listDir('.', (n) => n.endsWith('.md')),
     ...SCAN_STATES.flatMap((st) => st.names),
+    ...SCAN_FILES,
   ]);
   for (const name of names) {
     const p = join(ROOT, name);

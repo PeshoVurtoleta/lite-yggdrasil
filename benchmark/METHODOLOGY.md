@@ -9,10 +9,11 @@ redesign (ROADMAP section 3.8).
 
 ASCII-only (`->`, `<=`, `x`, "degrees"). Zero runtime deps, `node:test` only.
 
-Status (2026-10-31): Harness.mjs and Template.mjs are in place. The adapters,
-scenarios, dimensions, kernel lanes, runner, report, README generator and its
-README pin test land in later Bench-ADOPT batches; the sections below are the
-contract they are built to, and until they land no `npm run bench` script exists.
+Status (2026-10-31): Harness.mjs, Template.mjs, the adapters, dimensions and
+kernel lanes are in place (629f04b); the runner, report and README generator
+(`npm run bench`, `bench:report`, `bench:readme`) landed in group 1 B3 and the
+README pin test in B4; scenarios S1 / S2 / S7 register in group 2. The sections
+below are the contract they are built to.
 
 ## The one rule
 
@@ -113,7 +114,7 @@ The expected losses are hypotheses to be MEASURED and printed with their
 crossover n (or "none up to n = <max measured>"): static data (a prefix-sum array
 + binary search), resize-only (Fenwick, S7), the blocked array below its
 crossover (S1 / S2), point lookup by key (`Map`), tiny n (a plain array splice), split / join on a 2-element sequence (overhead dominates).
-A report with no loss rows fails the honesty review, and a MEASURED results.json
+A report with no loss rows fails the honesty review, and a MEASURED QUIET results.json
 with zero loss rows is rejected by the generator.
 
 ## Determinism

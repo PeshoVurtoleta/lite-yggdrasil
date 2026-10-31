@@ -215,11 +215,45 @@ const PKG = JSON.parse(PKG_BYTES.toString('utf8'));
 // so checkFilesExist reports it instead of passing vacuously (a directory
 // entry counts as missing: files[] names files only).
 // The ASCII and banned-name scans also cover repo sources that do not ship:
-// test/*.mjs, test/types/*, and the root *.md files.
+// test/*.mjs, test/types/*, the root *.md files, and the SCAN_DIRS below.
 function listDir(rel, keep) {
   const st = statSync(join(ROOT, rel), { throwIfNoEntry: false });
   if (!st || !st.isDirectory()) return [];
   return readdirSync(join(ROOT, rel)).filter(keep).map((n) => (rel === '.' ? n : rel + '/' + n));
+}
+
+// Repo dirs that join the ASCII + banned-name scans when present, one row per
+// pattern, globbed at run time. An absent dir is fine; a dir that exists but
+// matches no file for a pattern (or is not a directory) is a violation, so a
+// renamed extension cannot silently drop a whole dir from the scan.
+const SCAN_DIRS = [
+  ['benchmark', '*.mjs', (n) => n.endsWith('.mjs')],
+  ['benchmark', '*.md', (n) => n.endsWith('.md')],
+  ['benchmark/rivals', '*.js|*.mjs', (n) => n.endsWith('.js') || n.endsWith('.mjs')],
+];
+
+function scanDirState(rel, pattern, keep) {
+  const st = statSync(join(ROOT, rel), { throwIfNoEntry: false });
+  if (!st) return { rel, pattern, exists: false, isDir: false, names: [] };
+  if (!st.isDirectory()) return { rel, pattern, exists: true, isDir: false, names: [] };
+  const names = listDir(rel, keep).filter((name) => {
+    const f = statSync(join(ROOT, name), { throwIfNoEntry: false });
+    return !!f && f.isFile();
+  });
+  return { rel, pattern, exists: true, isDir: true, names };
+}
+
+const SCAN_STATES = SCAN_DIRS.map(([rel, pattern, keep]) => scanDirState(rel, pattern, keep));
+
+// states: [{ rel, pattern, exists, isDir, names }] -- pure.
+function checkScanDirs(states) {
+  const out = [];
+  for (const s of states) {
+    if (!s.exists) continue;
+    if (!s.isDir) out.push(s.rel + ' exists but is not a directory');
+    else if (s.names.length === 0) out.push(s.rel + '/ exists but matches no ' + s.pattern + ' file');
+  }
+  return out;
 }
 
 function loadRealFiles() {
@@ -231,6 +265,7 @@ function loadRealFiles() {
     ...listDir('test', (n) => n.endsWith('.mjs')),
     ...listDir('test/types', () => true),
     ...listDir('.', (n) => n.endsWith('.md')),
+    ...SCAN_STATES.flatMap((st) => st.names),
   ]);
   for (const name of names) {
     const p = join(ROOT, name);
@@ -244,8 +279,16 @@ const REAL_FILES = loadRealFiles();
 
 test('real package: the scan map covers repo sources, not only shipped files', () => {
   for (const n of ['test/Scaffold.test.mjs', 'test/types/smoke.ts', 'test/types/tsconfig.json',
-    'ROADMAP.md', 'RESEARCH.md', 'SCOPE.md']) {
+    'ROADMAP.md', 'RESEARCH.md', 'SCOPE.md',
+    'benchmark/Harness.mjs', 'benchmark/Template.mjs', 'benchmark/METHODOLOGY.md']) {
     assert.ok(REAL_FILES.has(n), 'scan map is missing ' + n);
+  }
+});
+
+test('real package: every present SCAN_DIRS dir matches files, and each joins the scan map', () => {
+  assert.deepEqual(checkScanDirs(SCAN_STATES), []);
+  for (const st of SCAN_STATES) {
+    for (const n of st.names) assert.ok(REAL_FILES.has(n), 'scan map is missing ' + n);
   }
 });
 
@@ -434,6 +477,10 @@ const CONTROLS = [
     f.set('Yggdrasil.d.ts', Buffer.from('export declare const VERSION: string;\n'));
     return checkDtsExports(f, { SumSequence: class SumSequence {}, VERSION: '0.0.0' });
   }],
+  ['checkScanDirs', 'benchmark/ exists but matches no *.mjs file', () =>
+    checkScanDirs([{ rel: 'benchmark', pattern: '*.mjs', exists: true, isDir: true, names: [] }])],
+  ['checkScanDirs', 'benchmark/rivals exists but is a file', () =>
+    checkScanDirs([{ rel: 'benchmark/rivals', pattern: '*.js|*.mjs', exists: true, isDir: false, names: [] }])],
   ['checkDtsExports', '.d.ts declares an extra Ghost', () => {
     const f = goodFiles();
     f.set('Yggdrasil.d.ts', Buffer.from('export declare const VERSION: string;\nexport declare const Ghost: number;\n'));
@@ -459,6 +506,14 @@ test('control MUST pass: checkAscii allows U+00D7 and U+00B5', () => {
   assert.deepEqual(checkAscii(goodPkg(), f), []);
 });
 
+// Positive control: an absent scan dir is fine; a present one with a match passes.
+test('control MUST pass: checkScanDirs allows an absent dir and a dir with a match', () => {
+  assert.deepEqual(checkScanDirs([
+    { rel: 'benchmark/rivals', pattern: '*.js|*.mjs', exists: false, isDir: false, names: [] },
+    { rel: 'benchmark', pattern: '*.md', exists: true, isDir: true, names: ['benchmark/METHODOLOGY.md'] },
+  ]), []);
+});
+
 // Meta: every check owns at least one must-fail control.
 test('meta: every check has a must-fail control', () => {
   assert.deepEqual(Object.keys(CHECKS), [
@@ -471,9 +526,10 @@ test('meta: every check has a must-fail control', () => {
     'checkEntryPoints',
     'checkVersionSites',
   ]);
-  const names = [...Object.keys(CHECKS), 'comparePackList', 'checkExports', 'checkDtsExports'];
+  const names = [...Object.keys(CHECKS), 'comparePackList', 'checkExports', 'checkDtsExports',
+    'checkScanDirs'];
   const covered = new Set(CONTROLS.map((c) => c[0]));
   for (const n of names) assert.ok(covered.has(n), 'no must-fail control for ' + n);
   for (const c of covered) assert.ok(names.includes(c), 'control for unregistered check ' + c);
-  assert.equal(CONTROLS.length, 31, 'control count changed: update this pin deliberately');
+  assert.equal(CONTROLS.length, 33, 'control count changed: update this pin deliberately');
 });

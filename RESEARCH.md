@@ -18,6 +18,8 @@ Contents
 11. Post-0.1.1 review notes (2026-10-28) -- Zed tests, sibling patterns, positioning claims, caching,
     external reviews #2 and #3 assessed, the maintainer's learning guides
 12. Tier 2 / Tier 3 detail and the blocked-array rival (maintainer notes, 2026-10-31)
+13. SumMap 0.2.0 settle brief (maintainer research, checked 2026-10-31; PROPOSED)
+14. Competent rivals and the pre-registered GO / NO-GO (maintainer research, 2026-10-31)
 
 ---
 
@@ -972,3 +974,205 @@ Gaps before it is a fair Bench-ADOPT rival:
 - Counter mapping: dirScans <-> touches and elemMoves <-> moves only (11.6); the rest is n/a.
 - Fixed in the note: the splice foil's seek target used length x 25 instead of its running total, and the
   CLI entry check compared a raw file:// string instead of pathToFileURL(argv[1]).
+
+## 13. SumMap 0.2.0 settle brief (maintainer research, checked 2026-10-31)
+
+Status: PROPOSED. Nothing in this section is ruled; the SumMap settle burst (ROADMAP section 5) turns each item into
+a maintainer ruling or rejects it. "Gate" below means a gate to be built, not one that exists. Checked against
+I-1..I-9 (section 5), B-17 / B-23 (section 6), 11.3 / 11.8, ADR 0005 C-1..C-6 / C-13 / C-25, Yggdrasil.js and
+lite-logn's Treap (LogN.js:1912).
+
+### 13.1 Keys: uint32 domain, int32 storage, unsigned order
+
+- Door: every key argument is checked first with `typeof k !== 'number' || (k >>> 0) !== k` (the engine's own index
+  check, Yggdrasil.js:1287-1288). It rejects negatives, >= 2^32, fractions, NaN and +-Infinity in one test. It
+  accepts -0; the store below turns it into +0.
+- Storage: keys live in Int32Array leaf slots and node summaries as their 32-bit pattern (`k | 0`).
+- Order: every compare, routing test and fence test is unsigned. `(a ^ -2147483648) < (b ^ -2147483648)` is an
+  exact order-preserving map of [0, 2^32 - 1] onto int32 and stays int32; `(a >>> 0) < (b >>> 0)` is the
+  alternative. Which one is faster is measured (11.8: an option, not a rule) with the two-lane inlining diff.
+- Returns: a key leaves the engine as `raw >>> 0`; "no key" is -1, which is never a valid key.
+- I-7 amendment (closes B-23): "Ids and internal indices are non-negative int32, leaves negative (~leafId). SumMap keys
+  are uint32 bit patterns in Int32Array columns, compared only in unsigned order, converted with `>>> 0` only at the
+  public return."
+- Boxing bands (64-bit V8 with pointer compression: Smi = [-2^30, 2^30)). In stored int32 form:
+
+| Key range | Stored int32 | Boxes? |
+|---|---|---|
+| [0, 2^30) | itself | no |
+| [2^30, 2^31) | itself | yes, wherever it becomes a JS value |
+| [2^31, 3 x 2^30) | [-2^31, -2^30) | yes, same |
+| [3 x 2^30, 2^32) | [-2^30, 0) | no inside; only the `>>> 0` return boxes |
+
+  Every key >= 2^30 boxes at the public return, and a caller's key >= 2^30 arrives already boxed (the caller's
+  allocation). The big-key lane therefore straddles 2^30, 2^31 and 3 x 2^30, not only 2^30 and 2^31. Its bound has
+  the C-13 form (<= 16 x b + 1 B/op, ADR 0005 C-13 as amended by R-A1: b = dims for insertAt), with b defined per op
+  and counting key boxes as well as measure boxes.
+
+### 13.2 Routing (I-6) and the fence-key finger (closes B-17c)
+
+- Routing: node u caches maxKey[u] = maxKey[right[u]]; leaf L caches its last key. Descent goes left iff
+  u32le(q, maxKey[left[u]]). The leftmost leaf owns [0, max], an interior leaf owns (max(prev), max], the rightmost
+  owns (max(prev), 2^32 - 1].
+- Fence bounds, computed on the descent that seats the finger (track both a right-turn and a left-turn flag):
+  _flo = (max of left[w] at the deepest right turn w) + 1, or 0 with no right turn; the + 1 cannot wrap, because the
+  right subtree is non-empty and keys are unique. _fhi = maxKey(leaf), or 2^32 - 1 (bit pattern -1) with no left
+  turn. For a leaf that is not the rightmost, the leaf is the rightmost leaf of left[deepest left turn], so both
+  forms of _fhi agree.
+- Hit test, for the key-point ops get / has / getMeasure / set / setMeasure / delete:
+  `_fleaf !== NIL && u32le(_flo, k) && u32le(k, _fhi)`. rank / select / sumBelow / keyAtSum always descend from
+  the root (C-2).
+- Re-seat on every miss: each key-point descent resets the finger leaf, its bounds and its path. B-17a was a miss
+  that left the finger stale.
+- Shape changes are misses: an insert into a full leaf (it splits; the C-4 rule), a delete that underflows or drains
+  the leaf, and every merge / equalize / join / splitAt / clear set _fleaf = NIL.
+- Both views: splitAt invalidates the finger and cursor of this AND out; join of this AND other (as 0005 C-5: splitAt
+  and append set both views' finger NIL).
+- Tail delete (B-17c): a delete of slot len - 1 that leaves newLen >= m in a leaf that is not the rightmost shrinks
+  _fhi to the new last key while the pull pass updates maxKey up the path; otherwise keys in (newMax, oldMax] would
+  hit the finger instead of routing right under I-6.
+- Standing gate: finger on == finger off, identical answers and walker state, on every op stream (B-17 law).
+- Leaf search is positional (binary or linear over slots), so the key-space midpoint trap of 11.8 does not arise.
+
+### 13.3 Public API (proposed contracts)
+
+Point and mutation ops: `set(k, entity, m0, m1?, m2?, m3?) -> this` (insert, or update entity + measures in place
+with the headroom checked on the delta; capacity is checked only for a new key); `setMeasure(k, d, m) -> boolean`
+(false when k is absent); `delete(k) -> entity or -1`; `has(k) -> boolean`; `get(k) -> entity or -1`;
+`getMeasure(k, d) -> number or NaN` (dim checked first). The absent-key convention (false / -1 / NaN rather than a
+throw) is a design call for the settle burst, not settled.
+
+| Method | Contract | Empty / out of range |
+|---|---|---|
+| `rank(k)` | number of keys x with u32lt(x, k) | 0 if empty or k <= minKey; length if k > maxKey |
+| `select(r)` | the key x with rank(x) === r | r not an integer in [0, length) -> RangeError 'index' |
+| `sumBelow(d, k)` | sum of measure(x, d) over u32lt(x, k) | 0 when no key is < k |
+| `keyAtSum(d, y)` | smallest k with sumBelow(d, k) + getMeasure(k, d) > y (strict, I-4) | y < 0 / NaN / +-Infinity -> 'seek'; y >= total(d) -> -1 |
+| `successor(k)` | smallest key x with u32lt(k, x) | -1 when none (incl. k = 2^32 - 1) |
+| `predecessor(k)` | largest key x with u32lt(x, k) | -1 when none (incl. k = 0) |
+| `minKey()` / `maxKey()` | first / last key | -1 when empty |
+
+- `splitAt(k, out) -> this`: this keeps the keys < k, out (an empty view of the same arena) receives the keys >= k.
+  `splitAt(select(i), out)` gives the same split as SumSequence's `splitAt(i, out)`.
+- `join(other) -> this`: same arena (else 'operand'), other !== this (else 'operand'), and if both are non-empty
+  u32lt(this.maxKey, other.minKey) (else RangeError 'order', a new token), all checked before any write; other is
+  left empty (as append does); both views' fingers and cursors are invalidated.
+- Carried over from SumSequence unchanged: `length`, `total(d)`, `clear()`, `readCounters(out)`, `resetCounters()`.
+- Cursor (one per view, invalidated by every mutation): `seekKey(k)` (smallest x with u32le(k, x); false past
+  maxKey), `seekSum(d, y)`, `seekIndex(r)`, `next()` (needed for an S4 depth walk); fields valid, index, key (-1 if
+  invalid), entity (-1 if invalid), offset(d), measure(d).
+- Check order: the settle burst states it for every op (the brief states it for getMeasure only).
+
+### 13.4 Benchmark rival matrix (4.1 rules: an unsupported cell is the string n/a with its reason)
+
+| Cell | SumMap | sorted typed array (primary foil) | sorted-btree | lite-logn Treap / Scapegoat | Map (counter-foil) |
+|---|---|---|---|---|---|
+| get / set / delete | compete | compete (O(n) shift) | compete | compete | compete (expected winner) |
+| successor / predecessor | compete | compete | compete (UNVERIFIED: method names) | compete | n/a (unordered) |
+| rank / select | compete | compete (index arithmetic) | n/a? (UNVERIFIED: no order statistics) | compete | n/a (unordered) |
+| sumBelow / keyAtSum, S4-depth | compete | compete (prefix rebuild) | n/a (no summaries) | n/a (size-only summary) | n/a (no summaries) |
+| splitAt | compete | compete (copy) | compete (UNVERIFIED: clone + deleteRange) | compete (Treap split) | n/a |
+| join | compete | compete (copy) | n/a? (UNVERIFIED) | compete (Treap merge) | n/a |
+
+Verified: Treap has rank, select, successor, predecessor, split(key) and a static merge (LogN.js:1912 onward).
+Scapegoat's methods are not checked here. Every sorted-btree cell is checked against the pinned version by the planner.
+
+### 13.5 DB-4 proof-assumption table (corrected)
+
+| Result | Assumption | SumMap representation | Status |
+|---|---|---|---|
+| Hirai-Yamamoto BB<3,2> | weight balance only (the proof is about weights, not keys) | weight = leaf count (I-1), as SumSequence | holds as in 0.1 |
+| Blelloch-Ferizovic-Sun join | every key of L < every key of R | join checks u32lt(this.maxKey, other.minKey) at the door | to be gated (K-10) |
+| Graefe fence keys (from recollection) | leaf intervals partition the domain; a changed bound updates or drops the cache | [_flo, _fhi] rules of 13.2 | to be gated (finger on == off, DB-2 at B = 4, 8) |
+| I-4 strict seek (the engine's own rule) | integer prefix sums, zero-width items | keyAtSum descends by sum_d with strict >, scans leaf keys in unsigned order | to be gated: keyAtSum(d, sumBelow(d, k)) === k whenever getMeasure(k, d) > 0 |
+| x -> x ^ 2^31 | an order-preserving bijection [0, 2^32) -> int32 | the u32lt / u32le forms | arithmetic fact; to be gated by the straddle rows (K-3, K-4, K-4b) |
+
+The brief's Hyndman-Fan citation belongs only to the Tier 2 quantile helper (12.1), not to keyAtSum.
+
+### 13.6 DB-7 boundary catalogue (corrected and extended)
+
+- K-1 bad keys: undefined, null, '5', NaN, Infinity, -1, 1.5, 2^32 -> RangeError 'key'; map and counters unchanged.
+- K-2 -0: set(-0, ...) then get(0); Object.is(select(0), 0).
+- K-3 Smi edge: 2^30 - 1 and 2^30 (unsigned order; < 2^30 at 0 B/op, >= 2^30 on the big-key lane).
+- K-4 sign bit: 2^31 - 1, 2^31, 2^31 + 1 (stored 2147483647, -2147483648, -2147483647); rank / select / successor /
+  predecessor stay ascending.
+- K-4b stored-form Smi edge: 3 x 2^30 - 1 (3221225471) and 3 x 2^30 (3221225472) (13.1 bands).
+- K-5 extremes: 0 and 2^32 - 1 (stored -1): predecessor(0) === -1, successor(2^32 - 1) === -1, and no internal "empty"
+  sentinel equals the stored -1.
+- K-6 update in place: set(k, e1, 10) then set(k, e2, 25): length unchanged, moves 0, get(k) === e2, total(0) + 15,
+  headroom checked on + 15.
+- K-7 tail delete (B-17c): finger leaf [10, 20, 30, 40, 50] beside [60, 70, 80, 90] (B >= 8); delete(50) shrinks _fhi
+  to 40; set(45) misses the finger and lands in the right leaf, as with the finger off.
+- K-8 zero measures: keys 10 (m 0), 20 (m 50), 30 (m 0), 40 (m 50): keyAtSum(0, 0) = 20, (0, 49) = 20, (0, 50) = 40,
+  (0, 100) = -1 (recomputed 2026-10-31).
+- K-9 splitAt at k = 0 (all to out), at a present and an absent key between two keys, at maxKey + 1 when
+  maxKey < 2^32 - 1, and at 2^32 - 1 when that key is present (maxKey + 1 = 2^32 is not a key); join restores the
+  sequence.
+- K-10 join order: this.maxKey = 100, other.minKey = 100 (or 50) -> RangeError 'order' before any write.
+- K-11 insert into a full leaf: a finger miss; the finger re-seats.
+- K-12 drain the last key: the finger is NIL; the next set does not write a freed leaf (B-17b).
+- K-13 join with this empty, other empty, other === this, other from another arena ('operand').
+- K-14 setMeasure on an absent key: false, counters unchanged.
+- K-15 each key in its int32 form (-1 for 2^32 - 1, -2147483648 for 2^31) must throw (11.8, Bitwise rule 13).
+
+### 13.7 Decisions for the settle burst
+
+An I-9 amendment (I-9 says "positional only"; SumMap's finger is keyed by [_flo, _fhi], 13.2); absent-key convention (13.3); per-op check order; the unsigned-compare form (measured); the big-key lane's b per op;
+the sorted-btree cells; whether Scapegoat stays a rival.
+
+## 14. Competent rivals and the pre-registered GO / NO-GO (maintainer research, 2026-10-31)
+
+Rulings R-BA9..R-BA12 (2026-10-31, quoted in ROADMAP section 5 and the Bench-ADOPT notes). A weak rival makes the
+GO / NO-GO meaningless, so both SumSequence rivals are made as strong as a competent engineer would make them.
+
+### 14.1 Suffix-rebuild Fenwick (R-BA9: a 'suffix' mode of benchmark/rivals/FenwickRebuild.js)
+
+- LiteVirtual today has no positional insert: setCount re-runs init(), which reallocates the sizes and fully rebuilds
+  the tree (Virtual.js:668-677, :748-751). The 'full' mode keeps that baseline row.
+- In a 1-based tree, node k covers [k - lsb(k) + 1, k], so an insert or delete at 0-based i leaves tree[1..i]
+  unchanged.
+- The trap: copying the shifted measures into tree[i + 1..n] and running the linear cascade only from i + 1 misses
+  every node p >= i + 1 whose child j <= i. The fix: first add tree[j] to tree[j + lsb(j)] for the nodes j reached by
+  peeling the low bits of i (`for (j = i; j > 0; j &= j - 1)`), which are exactly the nodes j <= i whose parent lies
+  past i; then cascade j = i + 1..n. Cost: (n - i) copies + at most popcount(i) seeds + (n - i) cascade adds.
+- Probe (2026-10-31, a scratch script outside the repo; exact counts, not a gate -- the 'suffix' mode's oracle test lands with R-BA9): 20,000 random inserts / removes against brute prefix sums, 0
+  mismatches; the naive cascade breaks within 4 ops. At n = 2^16: a middle insert costs 32,769 copies + 1 seed +
+  32,767 cascade adds (a full rebuild is about 2n); a tail append costs 1 copy, 0 seeds, 0 cascade adds; a head insert
+  costs the same as a full rebuild. So the rebuild part halves at the middle; with the n / 2 shifts the middle insert
+  is about 1.5n versus 2.5n units, not 2x overall.
+- The drafted PartialFenwickRival class was not adopted (R-BA9): it had non-ASCII comments, error messages that are
+  not the engine's tokens, no cursor / splitAt / append, and a treeAdds counter that counted the init copies and the
+  cascade adds as one.
+
+### 14.2 BlockedArray split and chunkCap (R-BA10, R-BA11)
+
+- Split (R-BA10): an insert at index == length into a full last chunk splits 3/4 : 1/4 (the old chunk keeps
+  chunkCap - chunkCap / 4); an insert at index 0 into a full first chunk splits 1/4 : 3/4; every other split stays
+  1/2 : 1/2. This is SumSequence's 13|4 / 4|13 trigger (I-5 Table 3): a mid-chunk insert into the last chunk is not
+  an append. Today's _split is always 1/2 : 1/2 (BlockedArray.js:873-878).
+- chunkCap (R-BA11): the built default is already max(16, ceil(sqrt(C))) rounded up to a multiple of 4, and the
+  constructor already rejects a chunkCap that is not a multiple of 4 (BlockedArray.js:52, :69-71), so chunkCap / 2
+  and chunkCap / 4 never truncate. The drafted clamp to [64, 4096] in steps of 16 was not adopted; the group 2b sweep
+  picks the fastest chunkCap per n and reports it (4.1 "tuned per n").
+
+### 14.3 Predicted crossovers (all nominal; nothing here enters README or llms.txt)
+
+- Count model, per insert (nominal; SumSequence B = 16, about 11 per leaf; BlockedArray chunkCap = sqrt(n), about
+  0.7 x chunkCap per chunk): SumSequence ~ log2(n / 11) touches + ~5.5 moves; BlockedArray ~ 0.71 sqrt(n) directory
+  scans + ~0.35 sqrt(n) moves = ~1.06 sqrt(n). The two meet near n = 53 (near n = 115 if the draft's "+ 8" replaces
+  the + 5.5 moves; near n = 290 if it is added on top), not at the draft's 256-512. The model leaves out SumSequence's pulls and the rival's directory-sum
+  updates, and the unit costs differ, so the count crossover is not a speed prediction; it only says that any time
+  crossover above it comes from constant factors.
+- Time hypotheses (expected, unmeasured; stated before the run so they can be wrong): BlockedArray's stride-1 scans
+  and copyWithin are much cheaper per unit than the trunk's dependent loads, so its time win should reach much
+  further: S1 crossover expected in [8k, 32k], S2 in [4k, 16k] (S2 earlier: if S2 carries two measures -- an assumption, 4.2 fixes no dims for S2 -- dims 2 doubles the move bytes; and the
+  10k-line cut / paste is O(log n) on the trunk but O(n / chunkCap + chunkCap) on the directory). The "8-12x per
+  unit" factor behind these bands is a guess, not a measurement.
+
+### 14.4 GO / NO-GO, pre-registered (R-BA12)
+
+GO for SumMap 0.2.0 if S1's crossover against BlockedArray is <= 64k and SumSequence wins at 100k and 1M, AND S2's
+crossover is <= 32k and SumSequence wins at 100k, AND the S7 loss row shows the Fenwick rival winning fixed-n
+reweighting. PAUSE and evaluate R-7 (B+ fanout) if BlockedArray beats SumSequence at n >= 100k on S1 or S2. Any
+other outcome (for example an S1 crossover between 64k and 100k) has no automatic verdict: the maintainer decides
+from the table. "Wins" = the median of K interleaved runs on a QUIET host; a PRELIMINARY log decides nothing.

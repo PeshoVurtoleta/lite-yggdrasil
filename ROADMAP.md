@@ -251,6 +251,12 @@ What blocks what:
   (ADR 0003 G-1: no timing ... gates anything, in verify or at /release); a PRELIMINARY / PENDING
   log is labelled so in the decision. NO-GO = the program stops at SumSequence (or is rescoped),
   and the README says where the trunk wins and loses.
+  Pre-registered reading (maintainer 2026-10-31, R-BA12 "Pre-register, gap closed (Recommended)"; RESEARCH 14.4):
+  "Pre-registered before the run: GO if S1's crossover vs BlockedArray is <= 64k and SumSequence wins at 100k and
+  1M, AND S2's crossover is <= 32k and SumSequence wins at 100k, AND the S7 loss row shows the Fenwick rival winning
+  fixed-n reweighting. PAUSE and evaluate R-7 if BlockedArray beats SumSequence at n >= 100k on S1 or S2. Any other
+  outcome has no automatic verdict: the maintainer decides from the table. 'Wins' = median of K interleaved runs on a
+  QUIET host; a PRELIMINARY log decides nothing."
 - The pool (0.4) needs SumMap and IntervalMap realms to be worth shipping.
 
 Estimate to SumMap 0.2.0 (2026-10-28, est., from .handoff/HISTORY.md: 28 burst sessions S0 -> 0.1.1 (S0, the
@@ -414,12 +420,26 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   with the LiteO1 benchmark harness; sweep chunkCap and leafSize; add a net-growth edit phase (its edit cells almost never split or merge).
 - Inlining gate for every member that edits a hot function: LiteUtils/inlining-budget-diff.sh, driver mode,
   frozen before build vs the live file, both tiers; STATISTICAL, run under the quiet lock, never in npm test.
+- Competent rivals -- RULED (unlike the notes above, which are not ruled): maintainer 2026-10-31, RESEARCH 14;
+  option text quoted verbatim:
+  R-BA9 "Mode in FenwickRebuild.js (Recommended)": "The bit-straddle suffix rebuild is added as a 'suffix' mode of
+  benchmark/rivals/FenwickRebuild.js, keeping its engine tokens, check order, cursor, splitAt / append and BA-8
+  counters; the strong-rival slot uses mode 'suffix', and mode 'full' stays as the LiteVirtual-today baseline row.
+  The drafted PartialFenwickRival class is not added as a separate file."
+  R-BA10 "3/4:1/4 on append only (Recommended)": "An insert at index == length into a full last chunk splits it 3/4 :
+  1/4 (the old chunk keeps chunkCap - chunkCap/4), an insert at index 0 into a full first chunk splits 1/4 : 3/4, and
+  every other split stays 1/2 : 1/2 -- the same trigger as SumSequence's 13|4 / 4|13 rule (I-5 Table 3)."
+  R-BA11 "Sweep picks per n (Recommended)": "The default stays max(16, ceil(sqrt(C))) rounded up to a multiple of 4
+  (as built); the group 2b sweep runs each n over a chunkCap grid and the fastest chunkCap per n is the rival's
+  reported value, printed in the header (RESEARCH 4.1 'chunk size tuned per n')."
 
 ### Queued -- SumMap 0.2.0, IntervalMap 0.3.0, Yggdrasil pool 0.4.0 (one full brief each at greenlight)
 
 - **SumMap 0.2.0**: uint32 keys (Y-03), routing I-6, fence-key finger, rank / select / sumBelow /
   keyAtSum / splitAt / join; the >= 2^30 boxing lane as a first-class torture lane; S4-depth
   scenario; rivals `sorted-btree`, lite-logn Treap / Scapegoat (`n/a` for sum seek), `Map` counter-foil.
+  Settle input (PROPOSED, not ruled): RESEARCH 13 -- keys and boxing bands, fence-key finger rules, API contracts,
+  rival matrix, DB-4 table, K-1..K-15 boundary rows, and the decisions the settle burst must take (13.7).
 - **IntervalMap 0.3.0**: (start, entityId) order, maxEnd summary, stab / overlap into caller typed
   arrays, split / join; S3 active-at-t and S5 booking; rivals `@flatten-js/interval-tree` and
   lite-logn's IntervalTree once shipped (Y-07: both exist; the benchmark compares, neither replaces).

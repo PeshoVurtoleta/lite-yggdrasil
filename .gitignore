@@ -7,3 +7,7 @@
 # a SIGKILLed XftWitness run leaves its mutant copy behind
 /test/_xftw-mutant-*
 /audit/
+/researchNotes/
+
+# bench output of a non-publish run (only the run of record writes results.json / report.html)
+/benchmark/out/

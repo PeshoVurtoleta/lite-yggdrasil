@@ -9,11 +9,14 @@ redesign (ROADMAP section 3.8).
 
 ASCII-only (`->`, `<=`, `x`, "degrees"). Zero runtime deps, `node:test` only.
 
-Status (2026-10-31): Harness.mjs, Template.mjs, the adapters, dimensions and
+Status (2026-11-01): Harness.mjs, Template.mjs, the adapters, dimensions and
 kernel lanes are in place (629f04b); the runner, report and README generator
 (`npm run bench`, `bench:report`, `bench:readme`) landed in group 1 B3 and the
-README pin test in B4; scenarios S1 / S2 / S7 register in group 2. The sections
-below are the contract they are built to.
+README pin test in B4. Uncommitted at fb09e6f (burst 31-32): the rival fixes, the
+rival tests and B/op lanes, and the scenario runner with S7 / S7b. S1 and S2 are
+ruled (R-BA16, R-BA17) but not built yet (g2b-2); the chunkCap sweep, the unroll
+A/B and the run of record are g2b-3. The sections below are the contract they
+are built to.
 
 ## The one rule
 
@@ -83,8 +86,55 @@ even when every timing differs.
 - D8 Workload micro-benchmarks -- the op-row workloads.
 
 Scenarios (RESEARCH section 4.2: S1 virtual list, S2 editor line index, S7
-weighted pick for this release line) are their own axis, run against the foil,
-the strong rivals and the engine with exact op counts beside the times.
+weighted pick for this release line) are their own axis, run against the strong
+rivals and the engine with exact op counts beside the times; the SpliceFoil runs
+no scenario (R-BA15). Built: S7 and S7b. Ruled, not built: S1 (S1a, S1b) and S2
+(S2a, S2b). `npm run bench -- --scenario S7` runs one scenario's cells.
+
+## Scenario cells (maintainer rulings R-BA14..R-BA18)
+
+- One cell = one label x scenario x size, in one child process
+  (`--cell --scenario <Sid> --member <label> --n <n>`).
+- Result key: `<label>/<Sid>@<n>`, e.g. `FenwickRebuild.suffix/S7@10000`. The label is
+  an adapter name or `Name.variant`; the scenario id matches `S\d+[a-z]?`; n is a
+  positive integer (the Bench.mjs result-key regex). A second cell with the same
+  key exits 2 ("duplicate result key": one cell per label x scenario x n).
+- Each scenario builds one precomputed stream (20 blocks of 1,000 events; 20,000
+  events); a phase replays only its class's events out of it, and blend (last)
+  replays all of them: S7 seek 10,000 / reweight 10,000 / blend 20,000, S7b
+  19,000 / 1,000 / 20,000. Phases are seek | walk | reweight | edit | bulk | blend
+  (R-BA15; 'splice' is retired); S7 / S7b run seek, reweight and blend. The handle
+  is filled untimed and refilled before every phase.
+- Cross-check: for every (scenario, n) group the runner compares, across all
+  labels, each phase's checksum, endState and traceHash, and exits 1 with
+  "checksum mismatch", "endState mismatch", "traceHash mismatch" or "phase
+  mismatch" (a differing phase list; each names both labels) before anything is
+  written. Reweight is setMeasure only, so its
+  checksum is 0 by design on every label; the endState digest (length and
+  sumBefore every n/64 rows plus the total, read cold after the phase) is what
+  carries it.
+- Fill: a FenwickRebuild handle (mode 'full' rebuilds its whole tree on every
+  insert) is filled through append in 1024-row chunks from a partner handle, so
+  the fill is one rebuild per chunk, not per row. This is untimed. An arena
+  adapter (SumSequence, BlockedArray) cannot append across handles and fills row
+  by row.
+- `--quick` caps every size at 4096 (deduped) and the event stream at 1/10 (2,000
+  events). A smoke, never a run of record.
+- B/op lanes (R-BA14): the rival lanes that kernel-lane's laneSet can run stay in
+  `npm run kernel-lane`; getMeasure, entityAt, total, seekSum + 50 next and the
+  edit lanes (insertAt at the end / removeAt at 0 on view 1 of a 3-view arena) run in
+  the `--expose-gc` child of `test/Rivals.test.mjs`. Both are in `npm run verify`.
+  The edit lanes are gated only after JIT warm-up (60 windows outside the gated
+  region), because the rare repair paths box while still interpreted: `_merge` runs
+  interpreted and `removeAt` in Maglev until tier-up (Rivals.test.mjs:995-997);
+  the gate is < 16 B per 2000-op call and < 1 B/op.
+- The scenario interpreter (runScript) is gated in the
+  `--expose-gc` child of `test/Scenarios.test.mjs` (every S7 / S7b label x views
+  0..2, n 4096, 60 warm calls outside the region): < 1 B/event and < 16 B per
+  call, with a must-fail per-call control; cursorWalkSum(0, y, 30) at < 1 B/op.
+- FenwickFixed is retired (R-BA18); selecting it throws with that reason. The
+  Fenwick rival is FenwickRebuild mode 'suffix'; mode 'full' stays as the
+  LiteVirtual-today row.
 
 ## Foils and rivals (RESEARCH section 4.1)
 
@@ -93,7 +143,7 @@ the strong rivals and the engine with exact op counts beside the times.
 | Primary foil (fair, O(n)) | `Array.splice` + prefix-sum rebuild into an Int32Array | moves only; every other counter `n/a` |
 | Strong rival | blocked array (sqrt decomposition), hand-written in `benchmark/rivals/` | its own chunk scans, moves, splits, printed beside ours |
 | Strong rival | Fenwick + rebuild on insert, hand-written in `benchmark/rivals/FenwickRebuild.js` from LiteVirtual Virtual.js:46-84 | moves only; node visits and rebuilds in native columns; touches `n/a` |
-| Counter-foil (where we should lose) | Fenwick on a fixed-length, resize-only workload (S7) | as above |
+| Counter-foil (where we should lose) | FenwickRebuild mode 'suffix' on the fixed-length S7 / S7b draw + reweight workload (R-BA18; the FenwickFixed slot is retired) | as above |
 
 Rules for every rival (ROADMAP section 3.8, maintainer rulings R-BA4, R-BA7,
 R-BA8):

@@ -21,6 +21,8 @@ Contents
 13. SumMap 0.2.0 settle brief (maintainer research, checked 2026-10-31; PROPOSED)
 14. Competent rivals and the pre-registered GO / NO-GO (maintainer research, 2026-10-31)
 15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; RULED R-BA15..R-BA18, 2026-11-01)
+16. SumMap settle evidence: compare-form probe, Smi top, sorted-btree, absent keys, R-7, S4-depth (maintainer
+    research, checked 2026-11-01; PROPOSED)
 
 ---
 
@@ -1275,3 +1277,157 @@ row to show it).
 Real ratios would come from instrumenting a real host: count calls per frame in a lite-virtual demo while scrolling a
 feed, or per keystroke in an editor demo, and record them with provenance like any REPORTED number. Until then the
 mixes above stay labelled assumptions in the report header.
+
+---
+
+## 16. SumMap settle evidence (maintainer research, checked 2026-11-01; PROPOSED)
+
+Covers: the compare-form probe, the Smi top, sorted-btree 2.1.0, absent-key precedent, R-7 at average occupancy,
+the S4-depth mix and draft settle options.
+
+Status: PROPOSED input for the SumMap 0.2.0 settle burst. Nothing here is ruled; it corrects and extends 13.1, 13.3,
+13.4, 13.7 and 12.2 R-7 without replacing them. Draft proposals R-SM1..R-SM5 (16.7) are option text for that burst's
+questions, not rulings. "The earlier draft" below means the maintainer's research as pasted in chat on 2026-11-01
+(its probe script and tables; not kept in the repo).
+
+### 16.1 Unsigned compare forms: the probe (13.1, 13.7)
+
+Probe: .handoff/evidence/research7/probe-u32-compare.mjs (logs probe-run2.log, probe-deopt.log). Forms: X = Int32Array
+keys + xor-bias compare, S = Int32Array keys + `>>> 0` compare, U = Uint32Array keys. Kernels: a 16-slot leaf binary
+search returning a slot, an I-6-style fence step that stores flo / fhi into the finger's typed array, and a "ret"
+kernel that returns the found key across a megamorphic call (the public boundary, 0005 C-13). Bands: [0, 2^30),
+[2^30, 2^31), [2^31, 3 x 2^30), a top band whose keys reach 2^32 - 4 (queries reach 2^32 - 1), and a band
+straddling 2^31 inside one leaf. Queries come from a per-leaf table (k & 1023), so no query is loop-invariant.
+Allocation through test/torture-meter.mjs (new-space
+delta, GC windows discarded, min of windows 1..5, empty baseline). Two controls, both bit: C1 a signed compare on
+Int32Array keys disagrees with the reference only in the straddle band (1 / 1024 leaves); C2 the ret kernels read
+0 B/op when every returned key is below the Smi top and > 0 when any is above it.
+Host: node v26.8.2, arm64, 2026-11-01, 1 run, host PRELIMINARY (load1 5.02 against baseline 2.21; two other busy node
+processes), flags --expose-gc --no-concurrent-recompilation --min-semi-space-size=4 --max-semi-space-size=4.
+
+- Allocation (DETERMINISTIC counts on this build): leaf and fence kernels read 0 B/op in every band for all three
+  forms. The ret kernels read 0 B/op below 2^31, 15.25 B/op in the two bands at or above 2^31 (one heap number per
+  returned key; 3 of 64 queries return -1) and 7.58 B/op in the straddle band.
+- Deopts (--trace-deopt, same run shape): when the first keys >= 2^31 arrive, S and U deopt (leafS,
+  leafU, fenceS, fenceU: "not int32", "lost precision", "not a Smi"); X never deopts (leafX, fenceX: none). retX and
+  retU deopt at the boundary conversion. Later windows read 0 B/op, so they were reoptimized (inferred; --trace-opt
+  was not run).
+- Timing: X, S and U sit within about 1 ns of each other in every band (medians 5-10 ns per call including the
+  driver's megamorphic call); the band-to-band swing is larger than the form-to-form gap. PRELIMINARY: decides nothing.
+- Not reproduced: the claim that a Uint32Array or `>>> 0` key carried through a branch phi boxes inside the engine.
+  On this build it reads 0 B/op; a fence kernel offered as the "must-fail allocating control" cannot fail here (DB-8).
+  The earlier draft probe also clamped a negative heapUsed delta to 0 (Math.max(0, heapUsed - h0)), so a GC inside
+  the window read as 0 B/op (from the pasted script; UNVERIFIED in the repo).
+
+Reading: steady-state allocation does not separate the forms. What separates them is that X stays int32 end to end
+and survives the first >= 2^31 key without a deopt. That favours X for the I-7 amendment, pending a QUIET timing run.
+
+### 16.2 The Smi top depends on the V8 build (corrects 13.1's boxing bands)
+
+`%IsSmi` on node v26.8.2 arm64: 2^30 and 2^31 - 1 are Smis, 2^31 is not; `process.config.variables.
+v8_enable_pointer_compression` = 0. Node's default builds run without pointer compression, so a Smi is a full int32.
+With pointer compression, a Smi is 31-bit ([-2^30, 2^30)). Consequences:
+- 13.1's bands (a returned key boxes from 2^30) hold for pointer-compressed builds only. On the gated host, a returned
+  key boxes from 2^31, and stored int32 keys never box.
+- No shipped 0.1.1 claim is falsified: README / llms.txt gate Node v26.8.2 only and leave other builds ungated. On
+  Node "below 2^30, 0 B/op" is conservative and the big lane (16 x b + 1 B/op, drawn from [2^30, 2^40]) still boxes;
+  on a pointer-compressed build the same bounds hold by argument (Smi top 2^30, 12 B HeapNumber), not measured.
+- SumMap's big-key lane needs keys >= 2^31 (the 2^31 - 1, 2^31, 2^31 + 1, 2^32 - 1 rows of the ROADMAP borrowed
+  pattern). A lane drawn only from [2^30, 2^31) reads 0 B/op on Node, so its control could not fail there (DB-8).
+- The probe reads the build flag and sets its expectation from it; every later boundary lane should do the same.
+
+### 16.3 sorted-btree 2.1.0, checked (13.4)
+
+npm: sorted-btree 2.1.0 (latest; 2.0.0-alpha.0 before it; MIT; no dependencies; npm "modified" 2026-09-29). Checked
+against b+tree.d.ts and extended/union.d.ts of 2.1.0 (unpkg), not run:
+- successor / predecessor: compete (nextHigherKey / nextLowerKey; also nextHigherPair / nextLowerPair and
+  getPairOrNextHigher / getPairOrNextLower).
+- rank / select: n/a (no positional or order-statistic method).
+- sumBelow / keyAtSum, S4-depth: n/a (no range aggregate; reduce runs over the whole tree).
+- splitAt: compete via clone() (shares the root) + deleteRange(low, high, includeHigh) or withoutRange; the d.ts
+  gives deleteRange O(log size + number of items deleted).
+- join: compete via extended/union(treeA, treeB, combineFn), documented as "reusing subtrees wherever possible
+  without mutating either input", O(N + M) when the trees overlap and O(log(N + M) x D) for D disjoint key ranges. A
+  key-disjoint join is the small-D case. It returns a NEW tree. The earlier draft's "join: n/a" is wrong for 2.1.0.
+- get on a miss returns undefined.
+Its allocation per mutation is not measured. Under R-BA7 every rival lane in kernel-lane runs inside verify and an
+allocating rival fails it (SPEC BA-7), and BA-7a (R-BA14) puts the test/Rivals.test.mjs child in verify too, so
+sorted-btree could only be a timing-only rival outside both, or left out. That is a maintainer call (R-SM1). R-BA4
+(ROADMAP section 3) already rules the one planned devDependency: "lite-logn arrives as a devDependency with
+SumMap"; sorted-btree would be a second one.
+
+### 16.4 Absent-key precedent (13.3)
+
+13.3 already proposes -1 / NaN / false. Precedent, checked:
+- -1: this package's 0.1.1 cursor (index and entity are -1 while invalid; llms.txt:27, :43); lite-lru's internal
+  IntSlotStore.get returns NIL = -1 (LiteLru/Lru.js:69, :540).
+- NaN: this package's 0.1.1 cursor offset(d) / measure(d) while invalid (llms.txt:27).
+- Counter-precedent: lite-logn Treap.get (LiteLogN/LogN.js:1966-1976) and lite-loglogn (LiteLogLogN/LogLogN.js:212-231)
+  return undefined on a miss. Treap holds arbitrary Float64 values, so -1 would be ambiguous there; lite-loglogn's
+  StratifiedBitset.successor returns a uint32 key or undefined, a genuine style counter-precedent for key results.
+  SumMap returns 30-bit entities, so -1 is unambiguous for entity results.
+  sorted-btree also returns undefined. The earlier draft cited Treap and lite-loglogn as -1 / NaN precedent: wrong.
+- A returned key of 2^32 - 1 reads 4294967295 (raw >>> 0), so -1 never collides with a key.
+
+### 16.5 R-7 at average occupancy (adds to 12.2)
+
+12.2 gives full-node pull arithmetic ((F - 1) / log2 F: 3.75 x at F = 16, 1.5 x at F = 4). At n = 1M, B = 16 and an
+average leaf occupancy of about 11 (L about 90,909), with nodes at average occupancy a (H = log_a L, pull = H x (a - 1)
+per dim under I-2), all nominal:
+
+| | binary BB<3,2> | F = 4 (a = 3) | F = 8 (a = 6) | F = 16 (a = 12) |
+|---|---|---|---|---|
+| height above the leaves | about 17-19 | about 10-11 | about 6-7 | about 4-5 |
+| pull adds per dim per op | about 17 (1.0 x) | about 21 (1.26 x) | about 32 (1.9 x) | about 51 (3.1 x) |
+| child sums per node per dim | 16 B | 32 B (half a line) | 64 B (one line) | 128 B (two lines) |
+
+Proposed hedge if the R-BA12 PAUSE branch fires: measure F = 4 and F = 8 first (12.2 says F = 4 beside F = 16). The
+earlier draft's Maglev inline-fit row is not carried: it was not measured (the 100-bytecode-byte limit is 11.8's).
+
+### 16.6 S4-depth -- order-book depth (PROPOSED for 0.2.0; every ratio an assumption)
+
+Context only, from recollection and UNVERIFIED: Cont, Stoikov and Talreja (2010), Bouchaud et al., "Trades, Quotes
+and Prices" (2018). No number from them is used. Phases per R-BA15 (seek | walk | reweight | edit | bulk | blend); the
+mix uses seek, walk, reweight and edit.
+- Model: one book side per SumMap. Entry = an occupied price level: key = uint32 tick, dim 0 = aggregate resting
+  volume, an integer in [1, 255] (bench law, benchmark/Adapters.mjs:531-533). Order-level cancel by id is S4-cancel
+  (0.4.0). Fixed n: level opens and closes alternate 1:1, so length stays in [n - 1, n + 1].
+- Side orientation: a bid book's best is maxKey; an ask book's best is minKey. The tail-best rival keeps the best
+  level at the tail of its array for each side (ascending for bids, descending for asks), so the rival is not
+  handicapped on one side. Run one side, or both, with the orientation stated.
+- Positions by RANK from the best level, not by tick distance. With initial keys spaced 2 apart
+  (k_i = 100000 + 2i), "within 1..4 ticks of maxKey" can name an empty tick, and setMeasure returns false (a wasted
+  op). Reweights pick the level at rank r from the best end.
+- Opens need a free tick: inside a window of w ticks next to the best there are only about w / 2 free ticks with
+  spacing 2. Each open picks a free tick in its window, else the next free tick outward (stated, counted). A
+  close removes an occupied level in its window.
+- Depth: keyAtSum(0, total(0) - V) is the deepest level needed to fill V from the best (bid side; 13.3's strict
+  rule), for V in [1, total(0)].
+- Per 1,000 events, n in {256, 1024, 4096, 16384, 65536}, initial volumes uniform in [16, 255]:
+  650 reweight setMeasure(k, 0, w), w uniform in [1, 255], at rank r from the best: 70% r in [0, 4), 20% r in
+  [4, 32), 10% uniform. 150 edit, 75 open set(k, e, w) + 75 close delete(k), alternating; S4a (top-of-book, the
+  loss-table candidate against the tail-best array): both within 8 ticks of the best; S4b (wide): half within 16
+  ticks, half uniform. 150 seek: 100 depth queries + 50 sumBelow(0, limitKey); S4a V uniform in
+  [1, min(total(0), 1024)], S4b V uniform in [1, total(0)]. 50 walk: cursor.seekKey(best) + next() over up to 10
+  levels (the bid side walks toward lower keys: best-first needs a prev(), which 13.3 does not propose;
+  seekIndex(max(0, length - 10)) + next() covers the same levels deepest-first with 13.3's API: an open API question).
+- The rival may not need new code: lite-logn's SortedArray (LiteLogN/LogN.js:6447) keeps keys ascending in a typed
+  array, shifts with copyWithin on set / delete (:6542), and has rank / select / keyAt / valueAt / successor /
+  predecessor but no sums. A bid-side depth query is then an O(d) valueAt scan from the tail, which is the tail-best
+  rival this section describes; it arrives with lite-logn as a devDependency (R-BA4). Its zero-GC lanes and a
+  mirrored ask-side form are unchecked.
+
+### 16.7 Draft settle proposals (option text, not ruled)
+
+- R-SM1 rivals: lite-logn Treap and a tail-best sorted array (lite-logn SortedArray if its lanes read 0 B/op, else
+  hand-written in benchmark/rivals/) are the live rivals, gated in kernel-lane under R-BA7; sorted-btree's cells stay
+  documented (16.3) and it is not installed. The Map counter-foil stays (13.4); whether Scapegoat stays
+  a rival is 13.7's open question.
+- R-SM2 keys: Int32Array storage as k | 0, the xor-bias compare, `>>> 0` only at public key returns (16.1, pending
+  a QUIET timing run that separates the forms or shows none).
+- R-SM3 absent keys: -1 for key and entity results, NaN for getMeasure (dim checked first), false for predicates
+  (13.3, precedent 16.4).
+- R-SM4 finger: amend I-9 so SumSequence keeps the positional finger and SumMap uses the inclusive fence-key finger
+  [_flo, _fhi] (bit pattern -1 = 2^32 - 1 on the rightmost leaf) for the six key-point ops, with the tail-delete
+  shrink of 13.2.
+- R-SM5 S4-depth: S4a and S4b per 16.6, with a decision on the bid-side walk direction.

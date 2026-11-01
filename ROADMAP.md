@@ -21,7 +21,7 @@
 > Left: S1 and S2 (g2b-2; ruled R-BA16 / R-BA17, not built), then the chunkCap sweep, unroll A/B, loss rows, run of
 > record and results.json (g2b-3) and the pre-registered GO /
 > NO-GO (section 5). SumMap settle input: RESEARCH.md 13
-> (PROPOSED); rivals and GO / NO-GO: RESEARCH.md 14; scenario mixes: RESEARCH.md 15 (RULED, R-BA15..R-BA18).**
+> (PROPOSED) and RESEARCH.md 16 (PROPOSED: compare-form probe, Smi top, sorted-btree, S4-depth); rivals and GO / NO-GO: RESEARCH.md 14; scenario mixes: RESEARCH.md 15 (RULED, R-BA15..R-BA18).**
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -546,6 +546,10 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   scenario; rivals `sorted-btree`, lite-logn Treap / Scapegoat (`n/a` for sum seek), `Map` counter-foil.
   Settle input (PROPOSED, not ruled): RESEARCH 13 -- keys and boxing bands, fence-key finger rules, API contracts,
   rival matrix, DB-4 table, K-1..K-15 boundary rows, and the decisions the settle burst must take (13.7).
+  Settle evidence (PROPOSED, not ruled): RESEARCH 16 -- the compare-form probe (all forms 0 B/op inside the engine;
+  only xor-bias survives the first key >= 2^31 without a deopt), the build-dependent Smi top (node default: a
+  returned key boxes from 2^31, so the big-key lane needs keys >= 2^31), sorted-btree 2.1.0 checked, absent-key
+  precedent, R-7 at average occupancy, the S4-depth mix (S4a / S4b), and draft settle options R-SM1..R-SM5.
 - **IntervalMap 0.3.0**: (start, entityId) order, maxEnd summary, stab / overlap into caller typed
   arrays, split / join; S3 active-at-t and S5 booking; rivals `@flatten-js/interval-tree` and
   lite-logn's IntervalTree once shipped (Y-07: both exist; the benchmark compares, neither replaces).

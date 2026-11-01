@@ -22,8 +22,8 @@
  *   Fill line law: d0 = 1 p 0.10; uniform [2, 81] p 0.85; uniform [82, 255] p 0.05; d1 = d0 (p 0.90) else d0 +
  *   uniform [1, d0] capped 255 -> P(d1 > d0) = 0.10 (minus the d0 = 255 cap, p ~ 0.0003).
  * Transient note: a pair writes d0 then d1, so d0 > d1 can exist BETWEEN the two writes of one pair; the invariant
- * 1 <= d0 <= d1 <= 255 is checked after every record that is not the first half of a pair (and every written value
- * is checked for [1, 255] after every record).
+ * 1 <= d0 <= d1 <= 255 is checked after every event (each written d0 / d1 pair; BA-27), i.e. after every record that is not the
+ * first half of a pair (and every written value is checked for [1, 255] per record).
  * Deterministic: pinned seeds, no timing in any assertion. Test harness only, never shipped.
  * ASCII only. MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
  */
@@ -418,6 +418,7 @@ function census(n, script, fill) {
     const c = {
         errs: [], n: R, ops: new Int32Array(9), enters: 0, joins: 0, clampHits: 0, enterD1Gt: 0, enterD1: 0, enterCSum: 0,
         pairs: 0, free: 0, charOk: 0, charPlus: 0, charMinus: 0, seq: '', runBad: 0, finalLens: null,
+        seekR: [], seekOff: [], seekD0: [], seekY: [],
     };
     const err = (m) => { if (c.errs.length < 20) c.errs.push(m); };
     const rec = (r, f) => script[r * REC + f];
@@ -473,6 +474,14 @@ function census(n, script, fill) {
             } else err('REMOVE ' + r + ' is not the third record of a join');
         } else if (op === OP.SEEK) {
             if (a !== 0 || cc !== 0 || !(b >= 0 && b < o.total(0))) err('seek ' + r + ' ' + [a, b, cc]);
+            else {
+                // recover the offset law input: the row holding y, its start, its d0 (a seek mutates nothing)
+                const row = o.indexAtSum(0, b);
+                c.seekR.push(r);
+                c.seekY.push(b);
+                c.seekOff.push(b - o.sumBefore(0, row));
+                c.seekD0.push(o.getMeasure(row, 0));
+            }
         } else if (op === OP.SUM) {
             if (a !== 0 || cc !== 0 || !(b >= 0 && b <= len)) err('sum ' + r + ' ' + [a, b, cc]);
         }
@@ -496,7 +505,7 @@ function census(n, script, fill) {
                 }
             }
         }
-        // invariant 1 <= d0 <= d1 <= 255 after every record that is not the first half of a pair; and total length in [n, n + 1]
+        // invariant 1 <= d0 <= d1 <= 255 after every event (each d0 / d1 pair, i.e. every record that is not the first half of a pair); and total length in [n, n + 1]
         const total = vs[0].length + vs[1].length + vs[2].length;
         if (total < n || total > n + 1) err('total length ' + total + ' after record ' + r);
         const partial = op === OP.SET && b === 0;
@@ -522,6 +531,43 @@ function census(n, script, fill) {
     return c;
 }
 
+// Seek offset law (Scenarios.mjs:1035): y = prefix(row) + uniform [0, d0(row)). Given each seek's own d0, P(offset = 0) =
+// P(offset = d0 - 1) = 1 / d0 and the fraction (offset + 0.5) / d0 has mean exactly 0.5 (discrete uniform) and variance
+// (1 - 1 / d0^2) / 12 <= 1/12. Over N seeks:
+//   zero count Z: mean sum(1 / d0_i), variance sum((1 / d0_i)(1 - 1 / d0_i)), band +-5 sd (S2 @ 4096: Z 139, mean 131.5, sd 6.5);
+//   top count T (offset = d0 - 1, d0 >= 2 only: a d0 = 1 seek is already in Z): mean sum over d0 >= 2 of 1 / d0, same sd as Z
+//   (S2 @ 4096: T 63, mean 54.5); offset in [0, d0 - 1) reads T = 0 (-8.4 sd S2, -9.4 sd S2a) while Z moves only +3.9 / +4.9 sd;
+//   mean fraction: 0.5, sd <= sqrt(1 / 12 / N) = 0.0091 at N = 1,000, band +-5 sd = +-0.046.
+// The expectations are conditional on the observed d0, so the caret walk / Enter-reshaped line lengths need no model.
+// Not pinned (not separable at N = 1,000): the seek ROW (caret locality; the law is conditional on the row holding y) and an
+// offset drawn on d1 instead of d0 (d1 = d0 on 90% of rows: +1.3 / +1.5 sd).
+function seekLawErrs(c) {
+    const out = [];
+    const N = c.seekOff.length;
+    let mu = 0;
+    let vr = 0;
+    let z = 0;
+    let mt = 0;
+    let t = 0;
+    let fr = 0;
+    for (let i = 0; i < N; i++) {
+        const d = c.seekD0[i];
+        const off = c.seekOff[i];
+        if (!(off >= 0 && off < d)) out.push('seek offset ' + off + ' outside [0, ' + d + ')');
+        mu += 1 / d;
+        vr += (1 / d) * (1 - 1 / d);
+        if (off === 0) z++;
+        if (d > 1) { mt += 1 / d; if (off === d - 1) t++; }
+        fr += (off + 0.5) / d;
+    }
+    if (N < 50) out.push('only ' + N + ' seeks: coverage floor');
+    const sd = Math.sqrt(vr);
+    if (!(Math.abs(z - mu) <= 5 * sd)) out.push('P(offset = 0): ' + z + ' zero offsets of ' + N + ', expected ' + mu.toFixed(1) + ' +- 5 x ' + sd.toFixed(1));
+    if (!(Math.abs(t - mt) <= 5 * sd)) out.push('P(offset = d0 - 1): ' + t + ' top offsets of ' + N + ', expected ' + mt.toFixed(1) + ' +- 5 x ' + sd.toFixed(1));
+    if (!(Math.abs(fr / N - 0.5) <= 5 * Math.sqrt(1 / 12 / N))) out.push('mean (offset + 0.5) / d0 = ' + (fr / N) + ', expected 0.5');
+    return out;
+}
+
 const censusMemo = new Map();
 function censusOf(id, n) {
     const key = id + '/' + n;
@@ -534,11 +580,16 @@ function censusOf(id, n) {
 
 describe('A4: the full-stream census over the blend replay (R-BA17, R-BA23, R-BA24, R-BA27)', () => {
     for (const id of ['S2', 'S2a']) {
-        test('A4: ' + id + ' @ 4096 blend: every record valid, 1 <= d0 <= d1 <= 255 after every record, length in [n, n + 1], ends at n with clip and tail 0', () => {
+        test('A4: ' + id + ' @ 4096 blend: every record valid, 1 <= d0 <= d1 <= 255 after every event (each written d0 / d1 pair; 1 <= d <= 255 per record), length in [n, n + 1], ends at n with clip and tail 0', () => {
             const c = censusOf(id, 4096);
             assert.deepEqual(c.errs, [], 'first violations');
             assert.deepEqual(c.finalLens, [4096, 0, 0]);
             assert.equal(c.runBad, 0, 'a maximal SPLIT / APPEND run that is not a whole number of 6-record units');
+        });
+
+        test('A4: ' + id + ' @ 4096 seek offset law (Scenarios.mjs:1035): y = line start + offset uniform in [0, d0); P(offset = 0), P(offset = d0 - 1) and mean offset fraction inside +-5 sd of the law', () => {
+            assert.equal(censusOf(id, 4096).seekOff.length, 1000, 'all 1,000 seeks measured');
+            assert.deepEqual(seekLawErrs(censusOf(id, 4096)), []);
         });
 
         test('A4: ' + id + ' @ 4096 record-class totals: INSERT = REMOVE = SEEK = SUM = 1,000 (S2) / same for S2a; SPLIT = APPEND = 1,500 (S2) / 0 (S2a); structural ops alternate, insert first', () => {
@@ -630,10 +681,9 @@ describe('A4: the full-stream census over the blend replay (R-BA17, R-BA23, R-BA
         }
     });
 
-    test('A4 must-fail: the census catches a mutated join value, Enter row, Enter d1, a broken pair and a dropped unit record (control: the unmutated stream is clean)', () => {
+    test('A4 must-fail: the census catches a mutated join value, Enter row, Enter d1 and a broken pair; the seek law catches offsets forced to 0 / d0 - 1 (100 seeks) and the top column dropped (S2 @ 4096) (control: the unmutated stream is clean)', () => {
         const built = sc('S2').build(null, 1024, SEED, scenarioEvents(true));
         const blend = built.phases[built.phases.length - 1].script;
-        assert.deepEqual(census(1024, blend, built.fill).errs, [], 'control: clean');
         const firstOf = (op) => { for (let k = 0; k < blend.length; k += REC) if (blend[k] === op) return k / REC; return -1; };
         const mut = (r, f, v) => { const m = Int32Array.from(blend); m[r * REC + f] = v; return m; };
         const rm = firstOf(OP.REMOVE);
@@ -647,6 +697,29 @@ describe('A4: the full-stream census over the blend replay (R-BA17, R-BA23, R-BA
             ['pair dims swapped', mut(ins - 2, 2, 1)],
         ];
         for (const [name, script] of rows) assert.ok(census(1024, script, built.fill).errs.length > 0, 'census missed: ' + name);
+        // seek offset law must-fail: every offset forced to 0 and forced to d0 - 1 (a constant floor(d0 / 2) keeps mean ~0.5 and drops Z from
+        // 15.5 to 9 here, -2.9 sd: not separable at 100 seeks; at 1,000 seeks the per-id rows catch it at -8.4 / -9.4 sd)
+        const c0 = census(1024, blend, built.fill);
+        assert.deepEqual(c0.errs, [], 'control: clean');
+        assert.deepEqual(seekLawErrs(c0), [], 'control: seek law clean');
+        const seekMut = (name, f) => {
+            const m = Int32Array.from(blend);
+            for (let i = 0; i < c0.seekR.length; i++) m[c0.seekR[i] * REC + 2] = c0.seekY[i] - c0.seekOff[i] + f(c0.seekD0[i]);
+            const cm = census(1024, m, built.fill);
+            assert.deepEqual(cm.errs, [], name + ': still a valid stream');
+            assert.ok(seekLawErrs(cm).length > 0, 'seek law missed: ' + name);
+        };
+        seekMut('offset forced to 0', () => 0);
+        seekMut('offset forced to d0 - 1', (d) => d - 1);
+        // offset in [0, d0 - 1) (the top column never drawn) is separable only at the full 1,000 seeks: S2 @ 4096, top column moved down one
+        const b4 = build('S2', 4096);
+        const c4 = censusOf('S2', 4096);
+        const m4 = Int32Array.from(b4.phases[b4.phases.length - 1].script);
+        for (let i = 0; i < c4.seekR.length; i++) if (c4.seekD0[i] > 1 && c4.seekOff[i] === c4.seekD0[i] - 1) m4[c4.seekR[i] * REC + 2] = c4.seekY[i] - 1;
+        const cm4 = census(4096, m4, b4.fill);
+        assert.deepEqual(cm4.errs, [], 'offset in [0, d0 - 1): still a valid stream');
+        assert.ok(seekLawErrs(cm4).some((e) => e.startsWith('P(offset = d0 - 1)')), 'seek law missed: offset in [0, d0 - 1)');
+        assert.ok(seekLawErrs({ seekOff: [0], seekD0: [1] }).length > 0, 'floor');
     });
 });
 

@@ -18,10 +18,12 @@
 > rivals (3c6ef73), adapters / dimensions D1-D8 / kernel lane (629f04b), runner / report / README generator / Bench
 > tests (7b4187b). Committed (burst 31-32): the rival fixes R-BA9 / R-BA10 / R-BA13 (5b5f375),
 > test/Rivals.test.mjs, the rival B/op lanes, and group 2b-1 (the scenario runner, S7 / S7b, the cross-check) (bd7faf3).
-> Left: S1 and S2 (g2b-2; ruled R-BA16 / R-BA17, not built), then the chunkCap sweep, unroll A/B, loss rows, run of
+> Built since: S1a / S1b (3a7a668) and S2 / S2a / S2b (g2b-2b, review APPROVED, uncommitted in the working tree).
+> Left: the chunkCap sweep, unroll A/B, loss rows, run of
 > record and results.json (g2b-3) and the pre-registered GO /
 > NO-GO (section 5). SumMap settle input: RESEARCH.md 13
-> (PROPOSED) and RESEARCH.md 16 (PROPOSED: compare-form probe, Smi top, sorted-btree, S4-depth); rivals and GO / NO-GO: RESEARCH.md 14; scenario mixes: RESEARCH.md 15 (RULED, R-BA15..R-BA18).**
+> (PROPOSED) and RESEARCH.md 16 (PROPOSED: compare-form probe, Smi top, sorted-btree, S4-depth); rivals and GO /
+> NO-GO: RESEARCH.md 14; scenario mixes: RESEARCH.md 15 (RULED, R-BA15..R-BA27).**
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -206,7 +208,8 @@ What makes it public and honest:
   prints the exact command.
 - AS BUILT (2026-10-31, HEAD fb09e6f; commits 3c6ef73, 629f04b, 7b4187b; group 1 B1-B4): benchmark/Bench.mjs (runner),
   Report.mjs, Readme.mjs (README generator, `--check`), Dimensions.mjs (D1-D8), Adapters.mjs, Scenarios.mjs (registry,
-  EMPTY: S1 / S2 / S7 arrive in group 2b), Matrix.mjs, kernel-lane.mjs (engine adapter B/op lanes; RIVAL_LANES = []),
+EMPTY at that commit: S1 / S2 / S7 arrive in group 2b), Matrix.mjs, kernel-lane.mjs (engine adapter B/op lanes;
+  RIVAL_LANES = []),
   METHODOLOGY.md, and test/Bench.test.mjs (76 tests in 6 suites, 76 pass,
   run 2026-10-31). At that commit not built: benchmark/results.json and report.html (no run of record yet; the README
   shows the PENDING form), the rival fixes, the rival tests and rival B/op lanes, and group 2b. The registry and
@@ -217,9 +220,18 @@ What makes it public and honest:
   RIVAL_LANES, R-BA14); Adapters.mjs (rivals BlockedArray, BlockedArray.plain, FenwickRebuild.suffix,
   FenwickRebuild.full; FenwickFixed RETIRED, R-BA18; cursorWalkSum, createViews); Scenarios.mjs (R-BA15 shape,
   runScript, S7 / S7b, phaseEndState); Bench.mjs (scenario child, keys <label>/<Sid>@<n>, crossCheck of checksum +
-  endState + traceHash, exit 1 on a mismatch, exit 2 on a duplicate key); test/Scenarios.test.mjs. Not built: S1 and
-  S2 (g2b-2), the chunkCap sweep, the unroll A/B, the run of record and results.json (g2b-3), the bulk and
+  endState + traceHash, exit 1 on a mismatch, exit 2 on a duplicate key); test/Scenarios.test.mjs. Not built at
+that commit: S1 and S2 (since built, see the next two lines), the chunkCap sweep, the unroll A/B, the run of record
+  and results.json (g2b-3), the bulk and
   view-indexed opcodes.
+- AS BUILT (3a7a668, g2b-2a + g2b-2b B1): S1a / S1b registered (dims 1, 1 view; R-BA16, R-BA19; they use WALK),
+  plus the SPLIT 7 / APPEND 8 opcodes and the 3-view runner (R-BA21).
+- AS BUILT (g2b-2b, working tree, uncommitted; review APPROVED): S2 / S2a / S2b registered from one generator
+  (buildEditor, EDITOR_MASK) under R-BA17 and R-BA19..R-BA27; S2 and S2b are the only users of SPLIT 7 / APPEND 8;
+capacity n + 1; A6 cells S2@131072, S2@100000, S2b@131072 pass on 4 labels (Fenwick full excluded: g2b-3 wall
+  time). No timing is
+  of record (S2 quick cells ran PRELIMINARY). The S2 generator law is gated in
+  test/EditorFeed.test.mjs, an independent oracle (38 tests, review APPROVED).
 - **Rivals at a pinned version** (`sorted-btree`, `@flatten-js/interval-tree`, lite-logn) as
   devDependencies, their versions printed in the header; a rival that cannot answer a query gets
   `n/a` with the reason.
@@ -489,9 +501,10 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   R-BA11 "Sweep picks per n (Recommended)": "The default stays max(16, ceil(sqrt(C))) rounded up to a multiple of 4
   (as built); the group 2b sweep runs each n over a chunkCap grid and the fastest chunkCap per n is the rival's
   reported value, printed in the header (RESEARCH 4.1 'chunk size tuned per n')."
-- Scenario rulings -- RULED (maintainer, AskUserQuestion; R-BA13 2026-10-31, R-BA14..R-BA18 2026-11-01; option text
+- Scenario rulings -- RULED (maintainer, AskUserQuestion; R-BA13 2026-10-31, R-BA14..R-BA27 2026-11-01; option text
   quoted verbatim from the maintainer-local, gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"). S7 / S7b
-  are built (bd7faf3); S1 / S2 (R-BA16, R-BA17) are ruled but not built (g2b-2):
+  are built (bd7faf3); S1a / S1b (R-BA16) are built (3a7a668); S2 / S2a / S2b (R-BA17) are built in the working tree
+  (g2b-2b, uncommitted):
   R-BA13 "Suffix append too (Recommended)" (2026-10-31, maintainer, AskUserQuestion): "In mode 'suffix', append
   rebuilds only the tree nodes from the old length onward (O(k + log n)), because nodes 1..n already hold exact sums;
   mode 'full' keeps the full O(n + k) rebuild. "Keeping splitAt / append" in R-BA9 means the same operations, tokens
@@ -531,6 +544,47 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   [0, total), each followed by setMeasure(i, 0, w) on the drawn i, w uniform in [0, 255]. S7b = 950 draws + 50
   setMeasure at uniform i. The Fenwick rival is FenwickRebuild mode 'suffix'. The FenwickFixed slot is retired, and
   its reason is printed in the header. Phases: seek, reweight, blend."
+  R-BA19 "Seeded shuffle (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "Each 1,000-event block places its
+  event classes by a Fisher-Yates shuffle, drawn from the scenario's seeded PRNG, of the block's exact class counts
+  (S1: 920 frames, 50 setMeasure, 30 structural), so every block holds the ruled counts. Structural ops alternate
+  insertAt / removeAt in stream order, insertAt first. In S2 a cut and its paste fill two adjacent slots (one shuffled
+  unit). y starts uniform in [0, total); top is the row indexAtSum(0, min(y, total - 1)) lands on."
+  R-BA20 "Event = records (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "An event is one or more
+  consecutive script records, all in that event's phase class. Character edit = 2 setMeasure; Enter = 2 setMeasure +
+  insertAt; line-start backspace = 2 setMeasure + removeAt; mid edit = 2k setMeasure; cut = 2 splitAt + append; paste
+  = splitAt + 2 append; a seek = 1 record. A phase's events counts whole events, its ops counts records, and ns/event
+  = phase time / events. Character and mid edits -> reweight; Enter / backspace -> edit; cut / paste -> bulk;
+  indexAtSum / sumBefore -> seek. S2 phases: seek, reweight, edit, bulk, blend."
+  R-BA21 "SPLIT / APPEND opcodes (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "SPLIT [7, i, v, 0] =
+  main.splitAt(i, views[v]) and APPEND [8, v, 0, 0] = main.append(views[v]), with v 1 = clip and 2 = tail;
+  runScript(h, script, views) takes the view array, and main = views[0] is the only receiver. A cut of rows [i, i + L)
+  is SPLIT(i + L, tail), SPLIT(i, clip), APPEND(tail); its paste at j uniform in [0, n - L] is SPLIT(j, tail),
+  APPEND(clip), APPEND(tail). The runner fails a phase that ends with a non-empty clip or tail. Capacity n + 1 is the
+  arena total for SumSequence / BlockedArray and per instance for FenwickRebuild."
+  R-BA22 "Masked blocks (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "S2, S2a and S2b come from one
+  editor generator, each as its own seeded 20-block stream. An S2 block is the R-BA17 1,000. An S2a block drops the
+  150 mid edits and 50 bulk ops (600 character edits, 50 Enter, 50 backspace, 50 indexAtSum, 50 sumBefore = 800
+  events; 16,000 in the stream). An S2b block is 25 cuts + 25 pastes (50 events; 1,000 in the stream). S2 and S2b run
+  on 3 views, S2a on 1. Phases: S2 = seek, reweight, edit, bulk, blend; S2a = seek, reweight, edit, blend; S2b =
+  bulk."
+  R-BA23 "Redraw d1 (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "Enter splits the caret row r (d0 = m,
+  newline included) at a column c uniform in [0, m - 1]: setMeasure(r, 0, c + 1), setMeasure(r, 1, d1a), insertAt(r +
+  1, m - c, d1b), where d1a and d1b are each re-drawn by the R-BA17 d1 rule from their new d0; the caret moves to r +
+  1."
+  R-BA24 "Clamp to 255 (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "A line-start backspace joins row r =
+  max(1, caret) into r - 1: setMeasure(r - 1, 0, min(255, a0 + b0 - 1)), setMeasure(r - 1, 1, min(255, a1 + b1 - 1)),
+  removeAt(r); the caret moves to r - 1. Every value the editor writes is clamped to [1, 255] with d1 >= d0: a
+  character edit writes d0' = clamp(d0 + s, 1, 255), d1' = clamp(d1 + s, d0', 255)."
+  R-BA25 "Fresh line law (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "A mid edit rewrites rows [s, s +
+  k), k uniform in [10, 50], s = min(caret, n - k); each row gets a fresh d0 / d1 from the R-BA17 line law, written d0
+  then d1, rows in order."
+  R-BA26 "Uniform cut (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "L = max(2, floor(U x min(1, n /
+  100000))) with U an integer uniform in [2000, 10000]; a cut takes rows [i, i + L) with i uniform in [0, n - L]; its
+  paste goes to j uniform in [0, n - L] as ruled."
+  R-BA27 "Every event (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "The caret starts uniform in [0, n)
+  and moves before every event of every class: 1% jump to a uniform row in [0, length), else clamp(caret + uniform
+  [-3, 3], 0, length - 1). Character edits, mid edits and seeks use row min(caret, n - 1), and sumBefore indices are
+  clamped to [0, n], because a class phase replays its records at length n."
 - Scenario mixes (the original proposal, superseded by R-BA15..R-BA18 above; RESEARCH 15): fixed n with balanced
   structural ops; every mix's ratios, positions, measure distribution, n and seed printed; each op class
   reported apart from the blend; S1 = local scroll +

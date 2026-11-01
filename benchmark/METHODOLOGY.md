@@ -12,10 +12,11 @@ ASCII-only (`->`, `<=`, `x`, "degrees"). Zero runtime deps, `node:test` only.
 Status (2026-11-01): Harness.mjs, Template.mjs, the adapters, dimensions and
 kernel lanes are in place (629f04b); the runner, report and README generator
 (`npm run bench`, `bench:report`, `bench:readme`) landed in group 1 B3 and the
-README pin test in B4. Uncommitted at fb09e6f (burst 31-32): the rival fixes, the
-rival tests and B/op lanes, and the scenario runner with S7 / S7b. S1 and S2 are
-ruled (R-BA16, R-BA17) but not built yet (g2b-2); the chunkCap sweep, the unroll
-A/B and the run of record are g2b-3. The sections below are the contract they
+README pin test in B4. Committed in burst 31-32 (5b5f375, bd7faf3): the rival fixes, the
+rival tests and B/op lanes, and the scenario runner with S7 / S7b. S1a / S1b are
+built (3a7a668) and S2 / S2a / S2b are built in the working tree (g2b-2b, R-BA17,
+R-BA19..R-BA27; uncommitted at this edit); the chunkCap sweep, the unroll A/B and
+the run of record are g2b-3. The sections below are the contract they
 are built to.
 
 ## The one rule
@@ -88,8 +89,38 @@ even when every timing differs.
 Scenarios (RESEARCH section 4.2: S1 virtual list, S2 editor line index, S7
 weighted pick for this release line) are their own axis, run against the strong
 rivals and the engine with exact op counts beside the times; the SpliceFoil runs
-no scenario (R-BA15). Built: S7 and S7b. Ruled, not built: S1 (S1a, S1b) and S2
-(S2a, S2b). `npm run bench -- --scenario S7` runs one scenario's cells.
+no scenario (R-BA15). Built: S7, S7b, S1a, S1b, S2, S2a and S2b (there is no bare
+S1; S2 is registered as itself). `npm run bench -- --scenario S7`
+runs one scenario's cells.
+
+| Id | dims / views | Per block | Stream events (--quick: /10) | Phases |
+|---|---|---|---|---|
+| S1a, S1b | 1 / 1 | 920 cursorWalkSum(0, y, 30) + 50 setMeasure + 30 structural (15 insertAt + 15 removeAt) | 20,000 | walk, reweight, edit, blend |
+| S2 | 2 / 3 | 600 char edits + 50 Enter + 50 backspace + 150 mid edits + 25 cut + 25 paste + 50 indexAtSum + 50 sumBefore (1,000) | 20,000 | seek 2,000, reweight 15,000, edit 2,000, bulk 1,000, blend 20,000 |
+| S2a | 2 / 1 | the S2 block without mid edits and bulk (800) | 16,000 | seek, reweight, edit, blend |
+| S2b | 2 / 3 | 25 cut + 25 paste (50) | 1,000 | bulk |
+| S7, S7b | 1 / 1 | 500 draw + reweight pairs / 950 draws + 50 reweights | 20,000 | seek, reweight, blend |
+
+S1a inserts at the list length and removes at row 0; S1b inserts and removes in the
+viewport window (R-BA16). Heights: 80% are 32, 15% uniform in [20, 200], 5% are 0.
+S2 rows are filled by the line rule: row i = [d0, d1]; d0 is 1 (10%), uniform
+[2, 81] (85%) or uniform [82, 255] (5%); d1 = d0 (90%), else d0 + uniform [1, d0]
+capped at 255 (R-BA17). The fractions realised at n 131072 with the default seed
+are deterministic (seeded generator, not measurements): S2 d0 = 1 0.10068, d0 > 81
+0.04962, d1 > d0 0.10043; S2a 0.09982 / 0.04993 / 0.09810; S2b 0.10024 / 0.05083 /
+0.09974. The S2 caret moves before every event; between a cut and its paste,
+"length" means the main view's rows (length - L). Capacity is n + 1 for S1 and S2
+(the arena total across all views for SumSequence /
+BlockedArray, per instance for FenwickRebuild; R-BA21).
+
+Two opcodes exist only for the 3-view scenarios (S2 and S2b): SPLIT 7 = splitAt(i,
+views[v]) and APPEND 8 = append(views[v]), v in {1, 2} (clip, tail). A cut is
+SPLIT(i + L, 2), SPLIT(i, 1), APPEND(2); a paste is SPLIT(j, 2), APPEND(1),
+APPEND(2). Both views are empty again when a phase ends (checked cold by the
+runner). These facts are DETERMINISTIC. The opcode rows, the empty-view check and the cell
+event counts are gated in test/Scenarios.test.mjs; the S2 generator law (phase
+events and ops, record shapes, block counts, caret, fill bands) is gated in
+test/EditorFeed.test.mjs, an independent oracle.
 
 ## Scenario cells (maintainer rulings R-BA14..R-BA18)
 
@@ -99,10 +130,13 @@ no scenario (R-BA15). Built: S7 and S7b. Ruled, not built: S1 (S1a, S1b) and S2
   an adapter name or `Name.variant`; the scenario id matches `S\d+[a-z]?`; n is a
   positive integer (the Bench.mjs result-key regex). A second cell with the same
   key exits 2 ("duplicate result key": one cell per label x scenario x n).
-- Each scenario builds one precomputed stream (20 blocks of 1,000 events; 20,000
-  events); a phase replays only its class's events out of it, and blend (last)
+- Each scenario builds one precomputed stream of 20 blocks (a block is 1,000
+  events; S2a 800, S2b 50, so the stream is 20,000 events, S2a 16,000, S2b 1,000);
+  a phase replays only its class's events out of it, and blend (last)
   replays all of them: S7 seek 10,000 / reweight 10,000 / blend 20,000, S7b
-  19,000 / 1,000 / 20,000. Phases are seek | walk | reweight | edit | bulk | blend
+  19,000 / 1,000 / 20,000, S2 seek 2,000 / reweight 15,000 / edit 2,000 / bulk
+  1,000 / blend 20,000. A cell's `events` is the stream's event count, never a
+  build parameter. Phases are seek | walk | reweight | edit | bulk | blend
   (R-BA15; 'splice' is retired); S7 / S7b run seek, reweight and blend. The handle
   is filled untimed and refilled before every phase.
 - Cross-check: for every (scenario, n) group the runner compares, across all
@@ -118,8 +152,8 @@ no scenario (R-BA15). Built: S7 and S7b. Ruled, not built: S1 (S1a, S1b) and S2
   the fill is one rebuild per chunk, not per row. This is untimed. An arena
   adapter (SumSequence, BlockedArray) cannot append across handles and fills row
   by row.
-- `--quick` caps every size at 4096 (deduped) and the event stream at 1/10 (2,000
-  events). A smoke, never a run of record.
+- `--quick` caps every size at 4096 (deduped) and the event stream at 1/10 (S2
+  2,000 events, S2a 1,600, S2b 100). A smoke, never a run of record.
 - B/op lanes (R-BA14): the rival lanes that kernel-lane's laneSet can run stay in
   `npm run kernel-lane`; getMeasure, entityAt, total, seekSum + 50 next and the
   edit lanes (insertAt at the end / removeAt at 0 on view 1 of a 3-view arena) run in

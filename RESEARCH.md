@@ -1199,7 +1199,8 @@ from the table. "Wins" = the median of K interleaved runs on a QUIET host; a PRE
 
 Status: RULED (maintainer, AskUserQuestion, 2026-11-01: R-BA15 shape, R-BA16 S1, R-BA17 S2, R-BA18 S7; option text
 quoted in ROADMAP section 6, "Scenario rulings -- RULED"). S7 / S7b are built in benchmark/Scenarios.mjs (bd7faf3,
-burst 31-32); S1 and S2 are ruled but NOT built (g2b-2). Where this section's original proposal differs
+burst 31-32); S1a / S1b are built (3a7a668) and S2 / S2a / S2b are built in the working tree (g2b-2b, uncommitted).
+Where this section's original proposal differs
 from a ruling, the ruling wins. Every ratio below is a stated ASSUMPTION, not an observation: no op-mix telemetry from a
 production virtualiser or editor is cited. The architecture references (VS Code's piece tree, CodeMirror's tree of
 lines) are from recollection and say nothing about op frequencies. What makes a mix defendable is that its weights,
@@ -1260,6 +1261,17 @@ mostly 0-80, capped at 255 (15.1). Variants, reported separately: S2a typing onl
 joins, seeks; the blocked array is expected to win at more n -- a loss-table candidate) and S2b bulk moves only.
 That bulk moves dominate the touched lines in the blend is a choice of this mix; S2a / S2b let a reader see both
 regimes.
+
+### 15.3a As built (g2b-2b)
+
+S2 is implemented as ruled (R-BA23..R-BA27); writes are d0 then d1, so d0 <= d1 holds after every event, not every
+record. The 15.3 table is the proposal; the ruled mix is R-BA17 (ROADMAP section 6) and benchmark/METHODOLOGY.md.
+Cell `events` = the stream's event count (S2 20,000, S2a 16,000, S2b 1,000; --quick /10), never the build parameter.
+Deterministic generator facts at n 131072 with the default seed (seeded-generator outputs, not measurements;
+DETERMINISTIC:
+test/EditorFeed.test.mjs gates the fill bands and the reweight-ops band, not these exact values): fill fractions
+d0 = 1 / d0 > 81 / d1 > d0 are S2 0.10068 / 0.04962 / 0.10043, S2a 0.09982 / 0.04993 / 0.09810, S2b 0.10024 / 0.05083 /
+0.09974; S2 reweight ops at n 1024 are 204,332 (the band R-BA17 / R-BA25 imply: [84,000, 324,000]).
 
 ### 15.4 S7 -- weighted pick, fixed n
 
@@ -1420,7 +1432,8 @@ mix uses seek, walk, reweight and edit.
 ### 16.7 Draft settle proposals (option text, not ruled)
 
 - R-SM1 rivals: lite-logn Treap and a tail-best sorted array (lite-logn SortedArray if its lanes read 0 B/op, else
-  hand-written in benchmark/rivals/) are the live rivals, gated in kernel-lane under R-BA7; sorted-btree's cells stay
+hand-written in benchmark/rivals/) are the live rivals, gated in verify under R-BA7 / BA-7a (kernel-lane, plus the
+  test/Rivals.test.mjs child for the read and cursor lanes); sorted-btree's cells stay
   documented (16.3) and it is not installed. The Map counter-foil stays (13.4); whether Scapegoat stays
   a rival is 13.7's open question.
 - R-SM2 keys: Int32Array storage as k | 0, the xor-bias compare, `>>> 0` only at public key returns (16.1, pending

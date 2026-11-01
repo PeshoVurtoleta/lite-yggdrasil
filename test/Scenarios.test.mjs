@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { Oracle } from './oracle.mjs';
 import {
     validateBuilt, SCENARIOS, PHASES, OP, REC, validateScenario, selectScenario, runScript, runScenario, resolveLabel,
-    fillHandle, appendPartner, scenarioEvents,
+    fillHandle, appendPartner, scenarioEvents, phasesFrom,
 } from '../benchmark/Scenarios.mjs';
 import {
     ADAPTERS, SumSequenceAdapter, BlockedArrayAdapter, FenwickSuffixAdapter, FenwickFullAdapter,
@@ -482,6 +482,60 @@ describe('g2b-2b A2: runScript SPLIT / APPEND against the oracle; the runner che
         // control: the unwrapped adapter runs the same scenario clean
         await assert.doesNotReject(() => runScenario('SumSequence', sc, n, { seed: SEED, samples: 1 }));
     });
+    test('the per-sample check: an append that works in the count pass and does nothing in sample 0 throws "non-empty clip / tail"', async () => {
+        const sc = scen(new Int32Array([7, n - 10, 1, 0, 8, 1, 0, 0]), 1);
+        const orig = SumSequenceAdapter.createViews;
+        let calls = 0;
+        SumSequenceAdapter.createViews = function (...args) {
+            const vs = orig.apply(this, args);
+            const real = vs[0].append;
+            vs[0].append = function (v) { calls++; if (calls === 1) return real.call(this, v); };
+            return vs;
+        };
+        try {
+            // without the per-sample checkViewsEmpty the length check would fire first ("length 1014 != 1024")
+            await assert.rejects(() => runScenario('SumSequence', sc, n, { seed: SEED, samples: 1 }), /phase bulk: non-empty clip \/ tail: view 1 holds 10 rows/);
+            assert.equal(calls, 2, 'count pass (call 1) clean, sample 0 (call 2) refused');
+        } finally {
+            SumSequenceAdapter.createViews = orig;
+        }
+    });
+    test('the cell events = the events of its stream, not the build parameter (--quick: S2a 1,600, S2b 100, S7 2,000)', async () => {
+        for (const [id, want] of [['S2a', 1600], ['S2b', 100], ['S7', 2000]]) {
+            const r = await runScenario('SumSequence', selectScenario(id), 1024, { seed: SEED, quick: true, samples: 1 });
+            assert.equal(r.events, want, id + ' cell events');
+        }
+    });
+    test('runScenario throws when the adapter returns a view count other than s.views (2 of 3)', async () => {
+        const sc = scen(new Int32Array([7, n - 10, 1, 0, 8, 1, 0, 0]), 1);
+        const orig = SumSequenceAdapter.createViews;
+        SumSequenceAdapter.createViews = function (...args) { return orig.apply(this, args).slice(0, 2); };
+        try {
+            await assert.rejects(() => runScenario('SumSequence', sc, n, { seed: SEED, samples: 1 }), /S7\.views: the runner holds 3 views, main = views\[0\]/);
+        } finally {
+            SumSequenceAdapter.createViews = orig;
+        }
+    });
+});
+
+describe('g2b-2b B2: phasesFrom ev table (R-BA20) -- a continuation record keeps its event class', () => {
+    // records: SET SET (one reweight event), SEEK (one seek event); PHASES: seek 0, reweight 2, edit 3
+    const stream = new Int32Array([3, 0, 0, 5, 3, 0, 1, 6, 4, 0, 7, 0]);
+    test('control: a well-formed ev table counts whole events and keeps every record', () => {
+        const ph = phasesFrom(stream, ['seek', 'reweight', 'blend'], new Uint8Array([0x82, 0x02, 0x80]));
+        assert.deepEqual(ph.map((p) => [p.name, p.events, p.script.length / REC]), [['seek', 1, 1], ['reweight', 1, 2], ['blend', 2, 3]]);
+    });
+    const rows = [
+        ['a continuation record of a different class than its event', [0x82, 0x03, 0x80], /ev\[1\] continues an event of another class/],
+        ['a continuation record of class seek after a reweight event', [0x82, 0x00, 0x80], /ev\[1\] continues an event of another class/],
+        ['ev[0] without the first-record flag', [0x02, 0x02, 0x80], /ev\[0\] continues an event of another class \(or no event\)/],
+        ['a phase index past PHASES', [0x82, 0x02, 0x86], /ev\[2\] names no phase/],
+    ];
+    for (const [name, ev, re] of rows) {
+        test('phasesFrom rejects: ' + name, () => {
+            assert.throws(() => phasesFrom(stream, ['seek', 'reweight', 'blend'], new Uint8Array(ev)), re);
+        });
+    }
 });
 
 describe('A2: counts, length, planted imbalance, determinism (n 1024)', () => {
@@ -598,8 +652,8 @@ describe('A5: matrix + the R-BA15 scenario shape (every malformed field named)',
     test('A5: cells().length === 16 (2 members x 8 dimensions)', () => {
         assert.equal(cells().length, 16);
     });
-    test('A5: SCENARIOS ids are exactly S1a, S1b, S7, S7b; PHASES is the R-BA15 list and "splice" is retired', () => {
-        assert.deepEqual(SCENARIOS.map((s) => s.id), ['S1a', 'S1b', 'S7', 'S7b']);
+    test('A5: SCENARIOS ids are exactly S1a, S1b, S2, S2a, S2b, S7, S7b; PHASES is the R-BA15 list and "splice" is retired', () => {
+        assert.deepEqual(SCENARIOS.map((s) => s.id), ['S1a', 'S1b', 'S2', 'S2a', 'S2b', 'S7', 'S7b']);
         assert.deepEqual([...PHASES], ['seek', 'walk', 'reweight', 'edit', 'bulk', 'blend']);
         assert.ok(!PHASES.includes('splice'));
         assert.equal(selectScenario('S7b').id, 'S7b');

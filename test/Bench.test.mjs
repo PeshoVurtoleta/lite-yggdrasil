@@ -274,9 +274,9 @@ describe('Scenarios and adapters', () => {
         o.titel = 'x';
         assert.throws(() => validateScenario(o), /unknown key/);
     });
-    test('selectScenario(BOGUS) throws; SCENARIOS holds exactly S1a, S1b, S7 and S7b (g2b-2a, R-BA16 / R-BA18)', () => {
+    test('selectScenario(BOGUS) throws; SCENARIOS holds exactly S1a, S1b, S2, S2a, S2b, S7 and S7b (g2b-2b, R-BA16 / R-BA22 / R-BA18)', () => {
         assert.throws(() => selectScenario('BOGUS'), /unknown scenario BOGUS/);
-        assert.deepEqual(SCENARIOS.map((x) => x.id), ['S1a', 'S1b', 'S7', 'S7b']);
+        assert.deepEqual(SCENARIOS.map((x) => x.id), ['S1a', 'S1b', 'S2', 'S2a', 'S2b', 'S7', 'S7b']);
     });
 
     test('selectAdapter: unknown name throws; near miss gets a did-you-mean at the helper', () => {

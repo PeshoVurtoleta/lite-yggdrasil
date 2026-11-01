@@ -16,8 +16,8 @@
  *     sizes: non-empty int[] in [1, 2^20], build(adapter, n, seed, events?) }
  * build() returns { capacity, fill: Int32Array(n x dims), phases: [{ name, events, script }] }.
  * PHASES = seek | walk | reweight | edit | bulk | blend ('splice' is retired). A phase replays its
- * class's events (PHASE_CLASS) out of ONE stream of STREAM_EVENTS (20 blocks of 1,000) events, in
- * stream order; blend replays the whole stream and is last.
+ * class's events (PHASE_CLASS, or the R-BA20 ev table for S2) out of ONE stream of 20 blocks (a block is
+ * 1,000 events; S2a 800, S2b 50), in stream order; blend replays the whole stream and is last.
  *
  * A script is an Int32Array of REC = 4-slot records [op, a, b, c] (the OP table). build() runs
  * cold: a PRNG plus an exact model of the measure column (S7: a cold Fenwick tree) precomputes every
@@ -42,6 +42,10 @@
  * S1a / S1b (maintainer rulings R-BA16 "S1a + S1b" and R-BA19 "Seeded shuffle", 2026-11-01): a
  * virtualized feed at dims 1. buildFeed places each 1,000-event block by a seeded Fisher-Yates shuffle of
  * its exact class counts and precomputes every index against seqModel, a cold exact row model.
+ * S2 / S2a / S2b (maintainer rulings R-BA17 "Dims 2 + bulk", R-BA19..R-BA22 and R-BA23..R-BA27, 2026-11-01): a
+ * text editor at dims 2 (d0 = UTF-16 units, d1 = UTF-8 bytes per line). buildEditor is ONE generator; a mask keeps a
+ * subset of the S2 block (EDITOR_MASK): S2 = the full 1,000, S2a = no mid edits / bulk (800), S2b = bulk only (50).
+ * S2 and S2b run on 3 views (main, clip, tail) and are the only users of SPLIT / APPEND; S2a runs on 1 view.
  * ASCII only.
  */
 
@@ -77,6 +81,9 @@ export const REC = 4;
  *   SPLIT  [7, i, v, 0]   h.splitAt(i, views[v])   (views 3, v in {1, 2}: view v must be empty)
  *   APPEND [8, v, 0, 0]   h.append(views[v])       (views 3, v in {1, 2}: view v ends empty)
  * acc = (acc + r) | 0 for the ops that return a value. h = views[0] (R-BA21); a phase ends with views 1 and 2 empty.
+ * Users: S1a / S1b = WALK, SET, INSERT, REMOVE; S7 / S7b = SEEK, SET; S2 = SEEK, SUM, SET, INSERT, REMOVE, SPLIT,
+ * APPEND (cut = SPLIT(i + L, 2), SPLIT(i, 1), APPEND(2); paste = SPLIT(j, 2), APPEND(1), APPEND(2)); S2a = SEEK,
+ * SUM, SET, INSERT, REMOVE; S2b = SPLIT, APPEND.
  */
 export const OP = Object.freeze({ INSERT: 1, REMOVE: 2, SET: 3, SEEK: 4, SUM: 5, WALK: 6, SPLIT: 7, APPEND: 8 });
 const OP_MAX = 8;
@@ -438,7 +445,7 @@ export async function runScenario(label, scenario, n, opts = {}) {
     const partner = appendPartner(adapter, dims, tune);
     const views = s.views === 3 ? adapter.createViews(built.capacity, dims, 3, tune) : [adapter.create(built.capacity, dims, tune)];
     const h = views[0];
-    if (!Array.isArray(views) || views.length !== s.views || views[0] !== h) scFail(s.id + '.views', 'the runner holds ' + s.views + ' views, main = views[0]');
+    if (!Array.isArray(views) || views.length !== s.views) scFail(s.id + '.views', 'the runner holds ' + s.views + ' views, main = views[0]');
     // the chunkCap this run used (BlockedArray), read from the instance after create; else 'n/a'
     const chunkCap = h.instance !== undefined && typeof h.instance.chunkCap === 'number' ? h.instance.chunkCap : NA;
     const refill = () => {
@@ -483,9 +490,12 @@ export async function runScenario(label, scenario, n, opts = {}) {
     }
     for (const v of views) v.clear();
     if (partner !== null) partner.clear();
+    // the cell's events = the events of its stream (S2a 16,000, S2b 1,000), not the build parameter
+    let streamEvents = 0;
+    for (const p of built.phases) if (p.name !== 'blend') streamEvents += p.events;
     return {
         scenario: s.id, title: s.title, member: label, adapter: adapter.name, n, dims, views: s.views,
-        capacity: built.capacity, seed, events, tune: tune === undefined ? NA : tune, chunkCap, mix: s.mix,
+        capacity: built.capacity, seed, events: streamEvents, tune: tune === undefined ? NA : tune, chunkCap, mix: s.mix,
         unit: 'ns/event', phases: rows,
     };
 }
@@ -543,10 +553,14 @@ const SEQ_CHUNK = 1024;
  * length(), total(), measure(i), prefix(i) (sum of rows [0, i)), find(y) = the STRICT M-7 find
  * (smallest i with prefix(i) + m_i > y, else length()), set(i, m), insert(i, m) (i in [0, len]),
  * remove(i).
+ * S2 passes a second column fill1 (Int32Array(n), the d1 column; no sums): measure1(i), set1(i, m), insert(i, m,
+ * m1) and remove(i) keep it row-aligned, and move(i, L, j) moves rows [i, i + L) to row j of the remaining
+ * length - L rows (a cut and its paste, R-BA21). Without fill1 every S1 path runs unchanged.
  */
-function seqModel(fill, n) {
+function seqModel(fill, n, fill1) {
     const chunks = [];
     const sums = [];
+    const c1 = fill1 === undefined ? null : [];
     let len = 0;
     let total = 0;
     for (let base = 0; base < n; base += SEQ_CHUNK) {
@@ -555,10 +569,26 @@ function seqModel(fill, n) {
         for (const m of c) s += m;
         chunks.push(c);
         sums.push(s);
+        if (c1 !== null) c1.push(Array.from(fill1.subarray(base, Math.min(n, base + SEQ_CHUNK))));
         len += c.length;
         total += s;
     }
-    if (chunks.length === 0) { chunks.push([]); sums.push(0); }
+    if (chunks.length === 0) { chunks.push([]); sums.push(0); if (c1 !== null) c1.push([]); }
+    /** ensure a chunk starts at row i (0 <= i <= len); returns its index (chunks.length when none follows) */
+    function boundary(i) {
+        let c = 0;
+        let o = i;
+        while (c < chunks.length && o >= chunks[c].length) { o -= chunks[c].length; c++; }
+        if (c === chunks.length || o === 0) return c;
+        const right = chunks[c].splice(o);
+        let s = 0;
+        for (const x of right) s += x;
+        chunks.splice(c + 1, 0, right);
+        sums.splice(c + 1, 0, s);
+        sums[c] -= s;
+        if (c1 !== null) c1.splice(c + 1, 0, c1[c].splice(o));
+        return c + 1;
+    }
     /** chunk of row i (0 <= i <= len; i === len lands at the end of the last chunk); offset in locO */
     let locO = 0;
     function locate(i) {
@@ -604,14 +634,16 @@ function seqModel(fill, n) {
             sums[c] += d;
             total += d;
         },
-        insert(i, m) {
+        insert(i, m, m1) {
             const c = locate(i);
             const ch = chunks[c];
             ch.splice(locO, 0, m);
+            if (c1 !== null) c1[c].splice(locO, 0, m1);
             sums[c] += m;
             total += m;
             len++;
             if (ch.length > SEQ_CHUNK) {
+                if (c1 !== null) c1.splice(c + 1, 0, c1[c].splice(c1[c].length >> 1));
                 const right = ch.splice(ch.length >> 1);
                 let s = 0;
                 for (const x of right) s += x;
@@ -624,10 +656,50 @@ function seqModel(fill, n) {
             const c = locate(i);
             const m = chunks[c][locO];
             chunks[c].splice(locO, 1);
+            if (c1 !== null) c1[c].splice(locO, 1);
             sums[c] -= m;
             total -= m;
             len--;
-            if (chunks[c].length === 0 && chunks.length > 1) { chunks.splice(c, 1); sums.splice(c, 1); }
+            if (chunks[c].length === 0 && chunks.length > 1) {
+                chunks.splice(c, 1);
+                sums.splice(c, 1);
+                if (c1 !== null) c1.splice(c, 1);
+            }
+        },
+        measure1(i) {
+            const c = locate(i);
+            return c1[c][locO];
+        },
+        set1(i, m) {
+            const c = locate(i);
+            c1[c][locO] = m;
+        },
+        /** rows [i, i + L) (0 <= i, i + L <= len) move to row j of the remaining len - L rows (0 <= j <= len - L) */
+        move(i, L, j) {
+            const a = boundary(i);
+            const b = boundary(i + L);
+            const mc = chunks.splice(a, b - a);
+            const ms = sums.splice(a, b - a);
+            const m1 = c1 === null ? null : c1.splice(a, b - a);
+            len -= L;
+            if (chunks.length === 0) { chunks.push([]); sums.push(0); if (c1 !== null) c1.push([]); }
+            const d = boundary(j);
+            chunks.splice(d, 0, ...mc);
+            sums.splice(d, 0, ...ms);
+            if (c1 !== null) c1.splice(d, 0, ...m1);
+            len += L;
+            // coalesce: neighbours that fit one chunk merge (drops the empty chunks the cuts left)
+            for (let c = 0; c < chunks.length - 1;) {
+                if (chunks[c].length + chunks[c + 1].length <= SEQ_CHUNK) {
+                    chunks[c] = chunks[c].concat(chunks[c + 1]);
+                    sums[c] += sums[c + 1];
+                    chunks.splice(c + 1, 1);
+                    sums.splice(c + 1, 1);
+                    if (c1 !== null) { c1[c] = c1[c].concat(c1[c + 1]); c1.splice(c + 1, 1); }
+                } else {
+                    c++;
+                }
+            }
         },
     };
 }
@@ -646,12 +718,20 @@ const EV_FIRST = 0x80;
  * Assemble phases from one stream of [op, a, b, c] records, in the requested order (blend last). Without ev a
  * record's class is PHASE_CLASS[op] and every record is one event. With ev (a Uint8Array, one entry per record:
  * the PHASES index of its event's class, OR EV_FIRST on the event's first record) a record's class is
- * PHASES[ev & 0x7f] and events = the number of first-record flags among the selected records (R-BA20).
+ * PHASES[ev & 0x7f] and events = the number of first-record flags among the selected records (R-BA20); a
+ * continuation record (no EV_FIRST) must carry its event's class, and ev[0] must open an event. Exported for the
+ * throw rows.
  */
-function phasesFrom(stream, order, ev) {
+export function phasesFrom(stream, order, ev) {
     if (ev !== undefined) {
         if (!(ev instanceof Uint8Array) || ev.length !== stream.length / REC) scFail('phasesFrom', 'ev must be a Uint8Array, one entry per record');
-        for (let j = 0; j < ev.length; j++) if (!((ev[j] & 0x7f) < PHASES.length)) scFail('phasesFrom', 'ev[' + j + '] names no phase');
+        for (let j = 0; j < ev.length; j++) {
+            if (!((ev[j] & 0x7f) < PHASES.length)) scFail('phasesFrom', 'ev[' + j + '] names no phase');
+            // a continuation record belongs to the event of the record before it: same class (R-BA20)
+            if ((ev[j] & EV_FIRST) === 0 && (j === 0 || (ev[j] & 0x7f) !== (ev[j - 1] & 0x7f))) {
+                scFail('phasesFrom', 'ev[' + j + '] continues an event of another class (or no event)');
+            }
+        }
     }
     const out = [];
     for (const name of order) {
@@ -793,6 +873,175 @@ function buildFeed(id, mode) {
     };
 }
 
+/**
+ * S2 editor classes (R-BA17 per 1,000-event block): ED_UNITS = shuffled units per block, a BULK unit is a cut
+ * plus its paste (2 events in two adjacent slots, R-BA19), ED_RECS_MAX = records per unit at most (R-BA20: char 2,
+ * Enter / backspace 3, mid 2k with k <= 50, cut + paste 3 + 3, seek 1), ED_PHASE = the event class (R-BA20).
+ */
+const ED_CHAR = 0;
+const ED_STRUCT = 1;
+const ED_MID = 2;
+const ED_BULK = 3;
+const ED_IAS = 4;
+const ED_SUMB = 5;
+const ED_CLASSES = 6;
+const ED_UNITS = [600, 100, 150, 25, 50, 50];
+const ED_RECS_MAX = [2, 3, 100, 6, 1, 1];
+const ED_PHASE = ['reweight', 'edit', 'reweight', 'bulk', 'seek', 'seek'];
+/** R-BA22 masks over the S2 block: S2a drops mid edits and bulk, S2b keeps bulk only. */
+export const EDITOR_MASK = Object.freeze({
+    S2: 0x3f,
+    S2a: (1 << ED_CHAR) | (1 << ED_STRUCT) | (1 << ED_IAS) | (1 << ED_SUMB),
+    S2b: 1 << ED_BULK,
+});
+const ED_CHAR_UP_PCT = 60;
+const ED_MID_K_MIN = 10;
+const ED_MID_K_SPAN = 41;
+const ED_BULK_U_MIN = 2000;
+const ED_BULK_U_SPAN = 8001;
+const ED_BULK_N_REF = 100000;
+const ED_CARET_JUMP_PCT = 1;
+const ED_CARET_STEP = 3;
+const ED_SUM_WIN = 50;
+/** Smallest S2 n: a mid edit spans up to ED_MID_K_MIN + ED_MID_K_SPAN - 1 = 50 rows of [0, n). */
+const ED_MIN_N = 64;
+
+/** One S2 line's d0 (R-BA17): 1 for 10%, uniform [2, 81] for 85%, uniform [82, 255] for 5%. */
+function lineD0(r) {
+    const u = uni(r, 100);
+    if (u < 10) return 1;
+    if (u < 95) return 2 + uni(r, 80);
+    return 82 + uni(r, 174);
+}
+
+/** One S2 line's d1 from its d0 (R-BA17): d0 for 90%, else d0 + uniform [1, d0], capped at 255. */
+function lineD1(r, d0) {
+    if (uni(r, 100) < 90) return d0;
+    return Math.min(MEAS_MAX, d0 + 1 + uni(r, d0));
+}
+
+/**
+ * S2 / S2a / S2b stream (R-BA17 mix, R-BA19 order, R-BA20 events, R-BA21 opcodes, R-BA22 masks, R-BA23..R-BA27
+ * editor rules). One generator; mask keeps a subset of the S2 block's classes. Dims 2: fill row i = [d0, d1] by the
+ * line law. Every block is a seeded Fisher-Yates shuffle of the mask's units; the caret moves before every event
+ * (R-BA27). Rows are phase-safe (BA-26): a class phase replays its records at length n while blend runs at n or
+ * n + 1 (Enter / backspace alternate, Enter first; a cut + paste unit is length-neutral), so char / mid / seek rows
+ * and cut / paste positions come from [0, n) and sumBefore indices from [0, n]. capacity n + 1 (R-BA21).
+ */
+function buildEditor(id, mask, salt) {
+    if (!Number.isInteger(mask) || mask < 1 || mask >= 1 << ED_CLASSES) scFail(id + '.build', 'mask must be a non-empty subset of the ' + ED_CLASSES + ' editor classes');
+    let units = 0;
+    let recsMax = 0;
+    for (let c = 0; c < ED_CLASSES; c++) {
+        if ((mask & (1 << c)) !== 0) { units += ED_UNITS[c]; recsMax += ED_UNITS[c] * ED_RECS_MAX[c]; }
+    }
+    const order = ['seek', 'reweight', 'edit', 'bulk'].filter((name) => ED_PHASE.some((p, c) => p === name && (mask & (1 << c)) !== 0));
+    if (order.length > 1) order.push('blend');
+    const PH = ED_PHASE.map((p) => PHASES.indexOf(p));
+    return function build(adapter, n, seed, events = STREAM_EVENTS) {
+        checkBuildArgs(id, n, events);
+        if (n < ED_MIN_N) scFail(id + '.build', 'editor scenarios need n >= ' + ED_MIN_N + ' (one generator for S2 / S2a / S2b; an S2 mid edit spans up to 50 rows)');
+        const blocks = events / BLOCK_EVENTS;
+        const r = prng((seed ^ Math.imul(n, 0x9e3779b1) ^ salt) >>> 0);
+        const col0 = new Int32Array(n);
+        const col1 = new Int32Array(n);
+        const fill = new Int32Array(n * 2);
+        for (let i = 0; i < n; i++) {
+            const d0 = lineD0(r);
+            const d1 = lineD1(r, d0);
+            col0[i] = d0; col1[i] = d1;
+            fill[2 * i] = d0; fill[2 * i + 1] = d1;
+        }
+        const model = seqModel(col0, n, col1);
+        let caret = uni(r, n);
+        const cls = new Uint8Array(units);
+        const stream = new Int32Array(blocks * recsMax * REC);
+        const ev = new Uint8Array(blocks * recsMax);
+        let k = 0;
+        let first = 0;
+        const put = (op, a, b, c) => {
+            stream[k * REC] = op; stream[k * REC + 1] = a; stream[k * REC + 2] = b; stream[k * REC + 3] = c;
+            ev[k] = first;
+            first &= 0x7f;
+            k++;
+        };
+        const moveCaret = (length) => {
+            caret = uni(r, 100) < ED_CARET_JUMP_PCT ? uni(r, length)
+                : clampInt(caret + uni(r, 2 * ED_CARET_STEP + 1) - ED_CARET_STEP, 0, length - 1);
+        };
+        let enter = true;
+        for (let e = 0; e < blocks; e++) {
+            let o = 0;
+            for (let c = 0; c < ED_CLASSES; c++) {
+                if ((mask & (1 << c)) !== 0) { cls.fill(c, o, o + ED_UNITS[c]); o += ED_UNITS[c]; }
+            }
+            for (let j = units - 1; j > 0; j--) {
+                const q = uni(r, j + 1);
+                const t = cls[j]; cls[j] = cls[q]; cls[q] = t;
+            }
+            for (let j = 0; j < units; j++) {
+                const c = cls[j];
+                moveCaret(model.length());
+                first = PH[c] | EV_FIRST;
+                if (c === ED_CHAR) {
+                    const row = Math.min(caret, n - 1);
+                    const s = uni(r, 100) < ED_CHAR_UP_PCT ? 1 : -1;
+                    const d0 = clampInt(model.measure(row) + s, 1, MEAS_MAX);
+                    const d1 = clampInt(model.measure1(row) + s, d0, MEAS_MAX);
+                    put(OP.SET, row, 0, d0); put(OP.SET, row, 1, d1);
+                    model.set(row, d0); model.set1(row, d1);
+                } else if (c === ED_STRUCT && enter) {
+                    // Enter (R-BA23): the stream length is n here, so caret <= n - 1
+                    const row = caret;
+                    const m = model.measure(row);
+                    const col = uni(r, m);
+                    const d1a = lineD1(r, col + 1);
+                    const d1b = lineD1(r, m - col);
+                    put(OP.SET, row, 0, col + 1); put(OP.SET, row, 1, d1a); put(OP.INSERT, row + 1, m - col, d1b);
+                    model.set(row, col + 1); model.set1(row, d1a); model.insert(row + 1, m - col, d1b);
+                    caret = row + 1;
+                    enter = false;
+                } else if (c === ED_STRUCT) {
+                    // line-start backspace (R-BA24): the stream length is n + 1 here, so row <= n
+                    const row = Math.max(1, caret);
+                    const j0 = Math.min(MEAS_MAX, model.measure(row - 1) + model.measure(row) - 1);
+                    const j1 = Math.min(MEAS_MAX, model.measure1(row - 1) + model.measure1(row) - 1);
+                    put(OP.SET, row - 1, 0, j0); put(OP.SET, row - 1, 1, j1); put(OP.REMOVE, row, 0, 0);
+                    model.set(row - 1, j0); model.set1(row - 1, j1); model.remove(row);
+                    caret = row - 1;
+                    enter = true;
+                } else if (c === ED_MID) {
+                    // mid edit (R-BA25): fresh line law on rows [s, s + k), d0 then d1, rows in order
+                    const kk = ED_MID_K_MIN + uni(r, ED_MID_K_SPAN);
+                    const s = Math.min(caret, n - kk);
+                    for (let row = s; row < s + kk; row++) {
+                        const d0 = lineD0(r);
+                        const d1 = lineD1(r, d0);
+                        put(OP.SET, row, 0, d0); put(OP.SET, row, 1, d1);
+                        model.set(row, d0); model.set1(row, d1);
+                    }
+                } else if (c === ED_BULK) {
+                    // cut + paste (R-BA21, R-BA26): two events in adjacent slots; the caret moves before each
+                    const L = Math.max(2, Math.floor((ED_BULK_U_MIN + uni(r, ED_BULK_U_SPAN)) * Math.min(1, n / ED_BULK_N_REF)));
+                    const i = uni(r, n - L + 1);
+                    put(OP.SPLIT, i + L, 2, 0); put(OP.SPLIT, i, 1, 0); put(OP.APPEND, 2, 0, 0);
+                    moveCaret(model.length() - L);
+                    first = PH[c] | EV_FIRST;
+                    const at = uni(r, n - L + 1);
+                    put(OP.SPLIT, at, 2, 0); put(OP.APPEND, 1, 0, 0); put(OP.APPEND, 2, 0, 0);
+                    model.move(i, L, at);
+                } else if (c === ED_IAS) {
+                    const row = Math.min(caret, n - 1);
+                    put(OP.SEEK, 0, model.prefix(row) + uni(r, model.measure(row)), 0);
+                } else {
+                    put(OP.SUM, 0, clampInt(caret + uni(r, 2 * ED_SUM_WIN + 1) - ED_SUM_WIN, 0, n), 0);
+                }
+            }
+        }
+        return { capacity: n + 1, fill, phases: phasesFrom(stream.slice(0, k * REC), order, ev.slice(0, k)) };
+    };
+}
+
 const S7_ADAPTERS = ['SumSequence', 'BlockedArray', 'BlockedArray.plain', 'FenwickRebuild.suffix',
     'FenwickRebuild.full'];
 const S1_SIZES = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 100000, 131072, 262144, 524288, 1000000];
@@ -804,6 +1053,25 @@ const S1_ORDER = 'R-BA19: each 1,000-event block is a seeded Fisher-Yates shuffl
 const S1_Y = 'y starts uniform in [0, total); each frame moves y by a uniform delta in [-512, 512], clamped to ' +
     '[0, total - 1]; 2% of frames jump to a uniform y; top = indexAtSum(0, min(y, total - 1)); setMeasure i uniform ' +
     'in [top - 8, top + 38], clamped to [0, n - 1]';
+const S2_SIZES = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 100000, 131072];
+const S2_LINES = 'd0 = UTF-16 units incl. the newline: 1 for 10%, uniform [2, 81] for 85%, uniform [82, 255] for 5%; ' +
+    'd1 = UTF-8 bytes: d0 for 90%, else d0 + uniform [1, d0], capped at 255 (R-BA17); fill row i = [d0, d1]';
+const S2_CARET = 'starts uniform in [0, n); before every event: 1% jump to a uniform row in [0, length), else ' +
+    'clamp(caret + uniform [-3, 3], 0, length - 1) (R-BA27)';
+const S2_EDITS = "char edit: row min(caret, n - 1), s = +1 (60%) / -1 (40%), d0' = clamp(d0 + s, 1, 255), d1' = " +
+    "clamp(d1 + s, d0', 255) (R-BA24); Enter: row r = caret, column c uniform in [0, d0 - 1], setMeasure(r, 0, c + 1), " +
+    'setMeasure(r, 1, d1a), insertAt(r + 1, d0 - c, d1b), d1a / d1b re-drawn by the d1 rule, caret r + 1 (R-BA23); ' +
+    'backspace: r = max(1, caret) joins into r - 1, min(255, a + b - 1) per dim, removeAt(r), caret r - 1 (R-BA24); ' +
+    'mid edit: rows [s, s + k), k uniform in [10, 50], s = min(caret, n - k), fresh d0 / d1 per row, d0 then d1 (R-BA25)';
+const S2_BULK = 'L = max(2, floor(U x min(1, n / 100000))), U uniform in [2000, 10000]; cut rows [i, i + L), i uniform ' +
+    'in [0, n - L] = SPLIT(i + L, tail), SPLIT(i, clip), APPEND(tail); its paste at j uniform in [0, n - L] = ' +
+    'SPLIT(j, tail), APPEND(clip), APPEND(tail) (R-BA21, R-BA26)';
+const S2_SEEKS = 'indexAtSum(0, prefix(r) + uniform [0, d0(r))), r = min(caret, n - 1); sumBefore(0, i), i = ' +
+    'clamp(caret + uniform [-50, 50], 0, n) (R-BA17, R-BA27)';
+const S2_ORDER = 'R-BA19: each block is a seeded Fisher-Yates shuffle of its exact class counts; a cut and its paste ' +
+    'fill two adjacent slots (one unit); Enter / backspace alternate in stream order, Enter first';
+const S2_EVENT = 'R-BA20: an event is 1+ records of one class (char 2 setMeasure, Enter 2 setMeasure + insertAt, ' +
+    'backspace 2 setMeasure + removeAt, mid 2k setMeasure, cut 3, paste 3, seek 1); events counts events, ops records';
 const S7_RIVALS = "FenwickRebuild mode 'suffix' is the Fenwick rival (R-BA18); FenwickRebuild.full is the " +
     'LiteVirtual-today row';
 
@@ -842,6 +1110,55 @@ export const SCENARIOS = Object.freeze([
         adapters: S7_ADAPTERS,
         sizes: S1_SIZES,
         build: buildFeed('S1b', 'window'),
+    }),
+    Object.freeze({
+        id: 'S2',
+        title: 'Text editor: char edits, Enter / backspace, mid edits, cut + paste and caret seeks over 2 measures',
+        dims: 2,
+        views: 3,
+        mix: Object.freeze({
+            perBlock: '600 char edits + 50 Enter + 50 backspace + 150 mid edits + 25 cut + 25 paste + 50 indexAtSum + ' +
+                '50 sumBefore (1,000 events)',
+            lines: S2_LINES, caret: S2_CARET, edits: S2_EDITS, bulk: S2_BULK, seeks: S2_SEEKS, order: S2_ORDER, event: S2_EVENT,
+            views: '3 (main, clip, tail); capacity n + 1 is the arena total (R-BA21)',
+            events: STREAM_EVENTS,
+            phases: 'seek, reweight, edit, bulk, blend (blend last)',
+        }),
+        adapters: S7_ADAPTERS,
+        sizes: S2_SIZES,
+        build: buildEditor('S2', EDITOR_MASK.S2, 0x52),
+    }),
+    Object.freeze({
+        id: 'S2a',
+        title: 'Text editor, typing only: char edits, Enter / backspace and caret seeks over 2 measures (1 view)',
+        dims: 2,
+        views: 1,
+        mix: Object.freeze({
+            perBlock: '600 char edits + 50 Enter + 50 backspace + 50 indexAtSum + 50 sumBefore (800 events; the S2 block ' +
+                'without mid edits and bulk, R-BA22)',
+            lines: S2_LINES, caret: S2_CARET, edits: S2_EDITS, seeks: S2_SEEKS, order: S2_ORDER, event: S2_EVENT,
+            events: 16000,
+            phases: 'seek, reweight, edit, blend (blend last)',
+        }),
+        adapters: S7_ADAPTERS,
+        sizes: S2_SIZES,
+        build: buildEditor('S2a', EDITOR_MASK.S2a, 0x52a),
+    }),
+    Object.freeze({
+        id: 'S2b',
+        title: 'Text editor, bulk only: cut + paste of whole line ranges over 3 views',
+        dims: 2,
+        views: 3,
+        mix: Object.freeze({
+            perBlock: '25 cut + 25 paste (50 events; the S2 block bulk ops only, R-BA22)',
+            lines: S2_LINES, caret: S2_CARET, bulk: S2_BULK, order: S2_ORDER, event: S2_EVENT,
+            views: '3 (main, clip, tail); capacity n + 1 is the arena total (R-BA21)',
+            events: 1000,
+            phases: 'bulk',
+        }),
+        adapters: S7_ADAPTERS,
+        sizes: S2_SIZES,
+        build: buildEditor('S2b', EDITOR_MASK.S2b, 0x52b),
     }),
     Object.freeze({
         id: 'S7',

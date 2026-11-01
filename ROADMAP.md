@@ -16,8 +16,8 @@
 > release (maintainer 2026-10-31: "start
 > next, i will release 0.2.0, then signal"). Committed: the Bench v2 kit copy and the blocked-array and Fenwick
 > rivals (3c6ef73), adapters / dimensions D1-D8 / kernel lane (629f04b), runner / report / README generator / Bench
-> tests (7b4187b). Built and APPROVED, uncommitted at fb09e6f (burst 31-32): the rival fixes R-BA9 / R-BA10 / R-BA13,
-> test/Rivals.test.mjs, the rival B/op lanes, and group 2b-1 (the scenario runner, S7 / S7b, the cross-check).
+> tests (7b4187b). Committed (burst 31-32): the rival fixes R-BA9 / R-BA10 / R-BA13 (5b5f375),
+> test/Rivals.test.mjs, the rival B/op lanes, and group 2b-1 (the scenario runner, S7 / S7b, the cross-check) (bd7faf3).
 > Left: S1 and S2 (g2b-2; ruled R-BA16 / R-BA17, not built), then the chunkCap sweep, unroll A/B, loss rows, run of
 > record and results.json (g2b-3) and the pre-registered GO /
 > NO-GO (section 5). SumMap settle input: RESEARCH.md 13
@@ -211,7 +211,7 @@ What makes it public and honest:
   run 2026-10-31). At that commit not built: benchmark/results.json and report.html (no run of record yet; the README
   shows the PENDING form), the rival fixes, the rival tests and rival B/op lanes, and group 2b. The registry and
   RIVAL_LANES figures in this line are as of fb09e6f; the next line supersedes them.
-- AS BUILT (uncommitted at fb09e6f, burst 31-32; g2a + g2b-1; APPROVED by review): FenwickRebuild 'suffix' mode
+- AS BUILT (5b5f375 + bd7faf3, burst 31-32; g2a + g2b-1; APPROVED by review): FenwickRebuild 'suffix' mode
   (R-BA9, R-BA13); BlockedArray asymmetric split (R-BA10); test/Rivals.test.mjs (differential, 28 mutants, the
   --expose-gc B/op child, the edit lane); kernel-lane.mjs 63 lanes (9 laneSet calls x 7 kernels: SumSequence + 8
   RIVAL_LANES, R-BA14); Adapters.mjs (rivals BlockedArray, BlockedArray.plain, FenwickRebuild.suffix,
@@ -472,7 +472,7 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   measured; the crossover n comes only from this cycle's quiet-host run log.
 - Rival draft (2026-10-31, RESEARCH 12.3): researchNotes/BlockedArray.md (repo-local, not committed), 0
   mismatches against the Oracle over 500,083 fuzzed ops. Before it is the rival (in benchmark/, section 4.1):
-  add a cursor (seekIndex / seekSum / next) for S1 (DONE, 3c6ef73; RESEARCH 12.3); report space beside time (at most 4 x C + (2 x views + 5) x chunkCap element slots plus a directory per view); gate its B/op lanes like the engine's (DONE, uncommitted at fb09e6f; R-BA14); A/B its 4 x unrolled loops against plain
+  add a cursor (seekIndex / seekSum / next) for S1 (DONE, 3c6ef73; RESEARCH 12.3); report space beside time (at most 4 x C + (2 x views + 5) x chunkCap element slots plus a directory per view); gate its B/op lanes like the engine's (DONE, bd7faf3; R-BA14); A/B its 4 x unrolled loops against plain
   ones (LiteUtils/inlining-budget-diff.sh driver mode + a timed run); interleaved runs under the quiet lock
   with the LiteO1 benchmark harness; sweep chunkCap and leafSize; add a net-growth edit phase (its edit cells almost never split or merge).
 - Inlining gate for every member that edits a hot function: LiteUtils/inlining-budget-diff.sh, driver mode,
@@ -491,7 +491,7 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   reported value, printed in the header (RESEARCH 4.1 'chunk size tuned per n')."
 - Scenario rulings -- RULED (maintainer, AskUserQuestion; R-BA13 2026-10-31, R-BA14..R-BA18 2026-11-01; option text
   quoted verbatim from the maintainer-local, gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"). S7 / S7b
-  are built (uncommitted at fb09e6f); S1 / S2 (R-BA16, R-BA17) are ruled but not built (g2b-2):
+  are built (bd7faf3); S1 / S2 (R-BA16, R-BA17) are ruled but not built (g2b-2):
   R-BA13 "Suffix append too (Recommended)" (2026-10-31, maintainer, AskUserQuestion): "In mode 'suffix', append
   rebuilds only the tree nodes from the old length onward (O(k + log n)), because nodes 1..n already hold exact sums;
   mode 'full' keeps the full O(n + k) rebuild. "Keeping splitAt / append" in R-BA9 means the same operations, tokens

@@ -958,7 +958,7 @@ dims 1..2, chunkCap 8 / 16 / 32, capacity 32 / 200 / 2,000; insert, remove, setM
 clear, reads), 0 mismatches in entities, dim-0 measures, every dim's total, the dim-0 reads (entityAt / getMeasure / sumBefore / indexAtSum) and removeAt's return value (dim 1 is checked only through totals and the directory-sum invariant -- a getMeasure(i, 1) mutant survives; only valid arguments are drawn, so no error token or check order is compared), and its own invariants held after
 every op (no chunk at chunkCap, no underflowing chunk in a multi-chunk view, directory sums exact, no chunk
 leaked, no 'pool' throw). Big-lane measures ([2^30, 2^40]) were not fuzzed.
-CLOSED (uncommitted at fb09e6f, burst 31-32): the dim-1 getMeasure mutant gap -- test/Rivals.test.mjs mutant P1
+CLOSED (bd7faf3, burst 31-32): the dim-1 getMeasure mutant gap -- test/Rivals.test.mjs mutant P1
 (:824, getMeasure(i, 1) reads the dim-0 column; P1fw at :842 for FenwickRebuild) must fail its differential battery.
 STILL OPEN: the big-lane fuzz is not planned in g2a.
 
@@ -971,7 +971,7 @@ Gaps before it is a fair Bench-ADOPT rival:
   chunkCap slots, maxChunks = ceil(C / (chunkCap / 4)) + 2 x views + 4, i.e. 4 x C + (2 x views + 5) x chunkCap element
   slots at most (about 4 x C only when C >> chunkCap; C = 32 at chunkCap 32 gives 10 x C at 1 view, 14 x C at 3 views),
   and every view allocates a maxChunks-entry directory; report memory beside time.
-- CLOSED (uncommitted at fb09e6f, burst 31-32; R-BA14): rival B/op lanes. benchmark/kernel-lane.mjs RIVAL_LANES (:118)
+- CLOSED (bd7faf3, burst 31-32; R-BA14): rival B/op lanes. benchmark/kernel-lane.mjs RIVAL_LANES (:118)
   holds 8 rival entries (BlockedArray, FenwickRebuild full / suffix), 63 lanes in all (9 laneSet calls x 7 kernels);
   the lanes laneSet cannot run (getMeasure, entityAt, total, seekSum + 50 next), the edit lanes and their must-fail
   controls live in the --expose-gc child of test/Rivals.test.mjs. Was: "0 B/op on steady-state hot paths" unmeasured
@@ -1150,7 +1150,7 @@ GO / NO-GO meaningless, so both SumSequence rivals are made as strong as a compe
   peeling the low bits of i (`for (j = i; j > 0; j &= j - 1)`), which are exactly the nodes j <= i whose parent lies
   past i; then cascade j = i + 1..n. Cost: (n - i) copies + at most popcount(i) seeds + (n - i) cascade adds.
 - Probe (2026-10-31, a scratch script outside the repo; exact counts, not a gate -- the 'suffix' mode's oracle test
-  is now test/Rivals.test.mjs, uncommitted at fb09e6f): 20,000 random inserts / removes against brute prefix sums, 0
+  is now test/Rivals.test.mjs, bd7faf3): 20,000 random inserts / removes against brute prefix sums, 0
   mismatches; the naive cascade breaks within 4 ops. At n = 2^16: a middle insert costs 32,769 copies + 1 seed +
   32,767 cascade adds (a full rebuild is about 2n); a tail append costs 1 copy, 0 seeds, 0 cascade adds; a head insert
   costs the same as a full rebuild. So the rebuild part halves at the middle; with the n / 2 shifts the middle insert
@@ -1196,8 +1196,8 @@ from the table. "Wins" = the median of K interleaved runs on a QUIET host; a PRE
 ## 15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; RULED R-BA15..R-BA18, 2026-11-01)
 
 Status: RULED (maintainer, AskUserQuestion, 2026-11-01: R-BA15 shape, R-BA16 S1, R-BA17 S2, R-BA18 S7; option text
-quoted in ROADMAP section 6, "Scenario rulings -- RULED"). S7 / S7b are built in benchmark/Scenarios.mjs (uncommitted
-at fb09e6f, burst 31-32); S1 and S2 are ruled but NOT built (g2b-2). Where this section's original proposal differs
+quoted in ROADMAP section 6, "Scenario rulings -- RULED"). S7 / S7b are built in benchmark/Scenarios.mjs (bd7faf3,
+burst 31-32); S1 and S2 are ruled but NOT built (g2b-2). Where this section's original proposal differs
 from a ruling, the ruling wins. Every ratio below is a stated ASSUMPTION, not an observation: no op-mix telemetry from a
 production virtualiser or editor is cited. The architecture references (VS Code's piece tree, CodeMirror's tree of
 lines) are from recollection and say nothing about op frequencies. What makes a mix defendable is that its weights,

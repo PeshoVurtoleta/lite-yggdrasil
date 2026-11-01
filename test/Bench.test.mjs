@@ -274,9 +274,9 @@ describe('Scenarios and adapters', () => {
         o.titel = 'x';
         assert.throws(() => validateScenario(o), /unknown key/);
     });
-    test('selectScenario(BOGUS) throws; SCENARIOS holds exactly S7 and S7b (g2b-1, R-BA18)', () => {
+    test('selectScenario(BOGUS) throws; SCENARIOS holds exactly S1a, S1b, S7 and S7b (g2b-2a, R-BA16 / R-BA18)', () => {
         assert.throws(() => selectScenario('BOGUS'), /unknown scenario BOGUS/);
-        assert.deepEqual(SCENARIOS.map((x) => x.id), ['S7', 'S7b']);
+        assert.deepEqual(SCENARIOS.map((x) => x.id), ['S1a', 'S1b', 'S7', 'S7b']);
     });
 
     test('selectAdapter: unknown name throws; near miss gets a did-you-mean at the helper', () => {
@@ -596,7 +596,7 @@ describe('B3: Bench / Readme', () => {
         assert.equal(r.status, 2);
         assert.ok((r.stdout + r.stderr).includes('unknown scenario BOGUS'));
     });
-    test('A6: --scenario S1 exits 2 (not registered until group 2)', () => {
+    test('A6: --scenario S1 exits 2: S1 is the family; ids are S1a / S1b (R-BA15)', () => {
         const r = spawnSync(process.execPath, [PKG + 'benchmark/Bench.mjs', '--scenario', 'S1'], { encoding: 'utf8', timeout: 60000 });
         assert.equal(r.status, 2);
     });

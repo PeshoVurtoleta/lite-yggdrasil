@@ -68,8 +68,9 @@ function oracleWalk(o, d, y, k) {
     return sum;
 }
 
-// The oracle-side script interpreter (own opcode switch over the published table in the R-BA15 ruling text).
-function oracleRun(o, dims, script) {
+// The oracle-side script interpreter (own opcode switch over the published table in the R-BA15 ruling text, plus
+// SPLIT / APPEND from R-BA21: ov = [main, clip, tail] Oracle views, main = ov[0] = o).
+function oracleRun(o, dims, script, ov) {
     let acc = 0;
     for (let k = 0; k < script.length; k += REC) {
         const a = script[k + 1];
@@ -82,6 +83,8 @@ function oracleRun(o, dims, script) {
             case OP.SEEK: acc = (acc + o.indexAtSum(a, b)) | 0; break;
             case OP.SUM: acc = (acc + o.sumBefore(a, b)) | 0; break;
             case OP.WALK: acc = (acc + oracleWalk(o, a, b, c)) | 0; break;
+            case 7: o.splitAt(a, ov[b]); break;
+            case 8: o.append(ov[a]); break;
             default: throw new Error('test: unknown opcode ' + script[k]);
         }
     }
@@ -323,6 +326,164 @@ describe('A2: validateBuilt throw rows (one planted record or field per row, eac
     });
 });
 
+// ---- g2b-2b A2: SPLIT [7, i, v, 0] / APPEND [8, v, 0, 0] (R-BA21; PLAN-bench-adopt-g2b2b TASKS 1-3) ----------------
+// One cut / paste unit = 6 records over views [main, clip, tail]: tail <- [i + L, len), clip <- [i, i + L), main ++ tail,
+// tail <- [j, len - L), main ++ clip, main ++ tail. The length is n again after every unit; clip and tail end empty.
+function bulkUnits(n, units, jOf) {
+    const out = new Int32Array(units * 6 * REC);
+    for (let q = 0; q < units; q++) {
+        const L = 20 + ((37 * q) % 380);
+        const i = (977 * q) % (n - L);
+        const j = jOf(q, i, L);
+        out.set([7, i + L, 2, 0, 7, i, 1, 0, 8, 2, 0, 0, 7, j, 2, 0, 8, 1, 0, 0, 8, 2, 0, 0], q * 6 * REC);
+    }
+    return out;
+}
+// the bulk script with a SUM record after every unit, so the replay acc sees every intermediate order
+function withSums(script, n) {
+    const units = script.length / (6 * REC);
+    const out = new Int32Array(script.length + units * REC);
+    for (let q = 0; q < units; q++) {
+        out.set(script.subarray(q * 6 * REC, (q + 1) * 6 * REC), q * 7 * REC);
+        out.set([OP.SUM, 0, (q * 131) % (n + 1), 0], (q * 7 + 6) * REC);
+    }
+    return out;
+}
+const PASTE_J = (q, i, L) => (i * 7 + 13 * q + 1) % (1024 - L + 1);
+
+describe('g2b-2b A2: validateBuilt SPLIT / APPEND rows (views 3; each fails on the frozen tree)', () => {
+    const n = 64;
+    const good = () => S7.build(null, n, SEED, 1000);
+    const withRecs = (recs, mut) => {
+        const b = good();
+        const p = b.phases[0];
+        const sc = new Int32Array(p.script.length + recs.length * REC);
+        sc.set(p.script);
+        for (let j = 0; j < recs.length; j++) sc.set(recs[j], p.script.length + j * REC);
+        p.script = sc;
+        if (mut) mut(b);
+        return b;
+    };
+    test('control: views 3 accepts [7, i, 1, 0] + [8, 1, 0, 0], a 6-record cut / paste unit, and INSERT with clip rows inside capacity', () => {
+        assert.doesNotThrow(() => validateBuilt('S7', withRecs([[7, 10, 1, 0], [8, 1, 0, 0]]), n, 1, 3));
+        assert.doesNotThrow(() => validateBuilt('S7', withRecs([[7, 30, 2, 0], [7, 10, 1, 0], [8, 2, 0, 0], [7, 5, 2, 0], [8, 1, 0, 0], [8, 2, 0, 0]]), n, 1, 3));
+        assert.doesNotThrow(() => validateBuilt('S7', withRecs([[7, 10, 1, 0], [1, 10, 1, 0], [8, 1, 0, 0], [2, 0, 0, 0]], (b) => { b.capacity = n + 1; }), n, 1, 3));
+    });
+    const rows = [
+        ['SPLIT under views 1', () => withRecs([[7, 10, 1, 0], [8, 1, 0, 0]]), 1, /need views 3/],
+        ['APPEND under views 1', () => withRecs([[8, 1, 0, 0]]), 1, /need views 3/],
+        ['SPLIT into view 0', () => withRecs([[7, 10, 0, 0]]), 3, /SPLIT view 0 must be 1 or 2/],
+        ['SPLIT into view 3', () => withRecs([[7, 10, 3, 0]]), 3, /SPLIT view 3 must be 1 or 2/],
+        ['APPEND view 0', () => withRecs([[8, 0, 0, 0]]), 3, /APPEND view 0 must be 1 or 2/],
+        ['APPEND view 3', () => withRecs([[8, 3, 0, 0]]), 3, /APPEND view 3 must be 1 or 2/],
+        ['SPLIT index n + 1 (> lens0)', () => withRecs([[7, n + 1, 1, 0], [8, 1, 0, 0]]), 3, /SPLIT index 65 outside \[0, 64\]/],
+        ['SPLIT index past lens0 after a split', () => withRecs([[7, 10, 1, 0], [7, 11, 2, 0], [8, 2, 0, 0], [8, 1, 0, 0]]), 3, /SPLIT index 11 outside \[0, 10\]/],
+        ['SPLIT into a non-empty view', () => withRecs([[7, 10, 1, 0], [7, 5, 1, 0], [8, 1, 0, 0]]), 3, /view 1 holding 54 rows \(must be empty\)/],
+        ['SPLIT non-zero pad slot', () => withRecs([[7, 10, 1, 3], [8, 1, 0, 0]]), 3, /SPLIT pad slot 3 must be 0/],
+        ['APPEND non-zero pad slot b', () => withRecs([[8, 1, 1, 0]]), 3, /APPEND pad slots 1, 0 must be 0/],
+        ['APPEND non-zero pad slot c', () => withRecs([[8, 2, 0, 9]]), 3, /APPEND pad slots 0, 9 must be 0/],
+        ['a phase ending with 1 row in the clip', () => withRecs([[7, n - 1, 1, 0]]), 3, /non-empty clip \/ tail at phase end \(clip 1, tail 0\)/],
+        ['a phase ending with rows in the tail', () => withRecs([[7, 3, 2, 0]]), 3, /non-empty clip \/ tail at phase end \(clip 0, tail 61\)/],
+        ['SET indexes lens0 (not lens0 + clip)', () => withRecs([[7, 10, 1, 0], [3, 20, 0, 5], [8, 1, 0, 0]]), 3, /SET index 20 outside \[0, 10\)/],
+        ['INSERT capacity counts clip + tail rows', () => withRecs([[7, 10, 1, 0], [1, 10, 1, 0], [8, 1, 0, 0], [2, 0, 0, 0]]), 3, /INSERT past capacity 64/],
+        ['INSERT capacity counts tail rows', () => withRecs([[7, 10, 2, 0], [1, 10, 1, 0], [8, 2, 0, 0], [2, 0, 0, 0]]), 3, /INSERT past capacity 64/],
+        ['views 2', () => good(), 2, /views: must be 1 or 3/],
+    ];
+    for (const [name, mk, views, re] of rows) {
+        test('validateBuilt rejects: ' + name, () => {
+            assert.throws(() => validateBuilt('S7', mk(), n, 1, views), re);
+        });
+    }
+});
+
+describe('g2b-2b A2: runScript SPLIT / APPEND against the oracle; the runner checks clip / tail (n 1024)', () => {
+    const n = 1024;
+    const built = S7.build(null, n, SEED, 1000);
+    const bulk = withSums(bulkUnits(n, 120, PASTE_J), n);
+    const oracleReplay = (script) => {
+        const ov = [oracleFilled(built.fill, n, 1), new Oracle(1), new Oracle(1)];
+        const acc = oracleRun(ov[0], 1, script, ov);
+        const sums = [];
+        for (let i = 0; i <= n; i++) sums.push(ov[0].sumBefore(0, i));
+        return { acc, len: ov[0].length, sums, clip: ov[1].length, tail: ov[2].length };
+    };
+    const replay = async (label, script, run = runScript) => {
+        const ad = await resolveLabel(label);
+        const views = ad.createViews(n + 8, 1, 3);
+        fillHandle(views[0], built.fill, n, 1, appendPartner(ad, 1));
+        let acc;
+        try { acc = run(views[0], script, views); } catch (e) { return { threw: String(e && e.message) }; }
+        const sums = [];
+        for (let i = 0; i <= n; i++) sums.push(views[0].sumBefore(0, i));
+        return { acc, len: views[0].length(), sums, clip: views[1].length(), tail: views[2].length() };
+    };
+    test('every S7 label replays a 120-unit cut / paste script (+ SUM per unit) exactly as the oracle', async () => {
+        const want = oracleReplay(bulk);
+        assert.equal(want.len, n);
+        assert.ok(want.sums.some((x, i) => x !== oracleReplay(new Int32Array([OP.SUM, 0, 0, 0])).sums[i]), 'the oracle replay must move rows (the paste is not an identity)');
+        for (const label of S7.adapters) assert.deepEqual(await replay(label, bulk), want, label);
+    });
+    test('mutant: case 7 splitting into views[a] (not views[b]) changes the replay', async () => {
+        const src = runScript.toString();
+        assert.equal(src.split('h.splitAt(a, views[b])').length - 1, 1, 'case 7 text not found exactly once');
+        const mutant = new Function('return ' + src.replace('h.splitAt(a, views[b])', 'h.splitAt(a, views[a])'))();
+        // [7, 2, 1, 0] [7, 1, 2, 0] [8, 1] [8, 2]: right = r0, r2..r(n-1), r1; the mutant swaps clip / tail -> identity
+        const s4 = new Int32Array([7, 2, 1, 0, 7, 1, 2, 0, 8, 1, 0, 0, 8, 2, 0, 0, OP.SUM, 0, 2, 0]);
+        const want = oracleReplay(s4);
+        for (const label of S7.adapters) {
+            assert.deepEqual(await replay(label, s4), want, label + ' (unmutated)');
+            assert.notDeepEqual(await replay(label, s4, mutant), want, label + ' (mutant must differ)');
+        }
+    });
+    const scen = (script, events) => ({
+        id: 'S7', title: S7.title, dims: 1, views: 3, mix: S7.mix, adapters: S7.adapters.slice(), sizes: [n],
+        build(a, nn, seed, ev) {
+            const b = S7.build(a, nn, seed, ev);
+            return { capacity: nn + 8, fill: b.fill, phases: [{ name: 'bulk', events, script }] };
+        },
+    });
+    test('runScenario with views 3: every S7 label runs the bulk phase; checksum / endState / traceHash agree', async () => {
+        const sc = scen(bulk, 120);
+        validateScenario(sc);
+        const rows = [];
+        for (const label of S7.adapters) {
+            const r = await runScenario(label, sc, n, { seed: SEED, samples: 2 });
+            assert.equal(r.views, 3);
+            rows.push(r.phases.map((p) => [p.phase, p.events, p.ops, p.checksum, p.endState, p.traceHash]));
+        }
+        for (const r of rows) assert.deepEqual(r, rows[0]);
+        assert.deepEqual(rows[0][0].slice(0, 3), ['bulk', 120, 120 * 7]);
+        assert.equal(rows[0][0][3], oracleReplay(bulk).acc, 'checksum = the oracle acc');
+    });
+    test('a wrapped adapter whose append does nothing throws "non-empty clip / tail" (before the length check)', async () => {
+        const sc = scen(new Int32Array([7, n - 10, 1, 0, 8, 1, 0, 0]), 1);
+        const orig = SumSequenceAdapter.createViews;
+        SumSequenceAdapter.createViews = function (...args) {
+            const vs = orig.apply(this, args);
+            vs[0].append = () => {};
+            return vs;
+        };
+        try {
+            await assert.rejects(() => runScenario('SumSequence', sc, n, { seed: SEED, samples: 1 }), /non-empty clip \/ tail: view 1 holds 10 rows/);
+        } finally {
+            SumSequenceAdapter.createViews = orig;
+        }
+        const st = scen(new Int32Array([7, n - 10, 2, 0, 8, 2, 0, 0]), 1);
+        SumSequenceAdapter.createViews = function (...args) {
+            const vs = orig.apply(this, args);
+            vs[0].append = () => {};
+            return vs;
+        };
+        try {
+            await assert.rejects(() => runScenario('SumSequence', st, n, { seed: SEED, samples: 1 }), /non-empty clip \/ tail: view 2 holds 10 rows/);
+        } finally {
+            SumSequenceAdapter.createViews = orig;
+        }
+        // control: the unwrapped adapter runs the same scenario clean
+        await assert.doesNotReject(() => runScenario('SumSequence', sc, n, { seed: SEED, samples: 1 }));
+    });
+});
+
 describe('A2: counts, length, planted imbalance, determinism (n 1024)', () => {
     const EXPECT = { S7: { seek: 10000, reweight: 10000, blend: 20000 }, S7b: { seek: 19000, reweight: 1000, blend: 20000 } };
     for (const sc of [S7, S7B]) {
@@ -437,8 +598,8 @@ describe('A5: matrix + the R-BA15 scenario shape (every malformed field named)',
     test('A5: cells().length === 16 (2 members x 8 dimensions)', () => {
         assert.equal(cells().length, 16);
     });
-    test('A5: SCENARIOS ids are exactly S7, S7b; PHASES is the R-BA15 list and "splice" is retired', () => {
-        assert.deepEqual(SCENARIOS.map((s) => s.id), ['S7', 'S7b']);
+    test('A5: SCENARIOS ids are exactly S1a, S1b, S7, S7b; PHASES is the R-BA15 list and "splice" is retired', () => {
+        assert.deepEqual(SCENARIOS.map((s) => s.id), ['S1a', 'S1b', 'S7', 'S7b']);
         assert.deepEqual([...PHASES], ['seek', 'walk', 'reweight', 'edit', 'bulk', 'blend']);
         assert.ok(!PHASES.includes('splice'));
         assert.equal(selectScenario('S7b').id, 'S7b');
@@ -568,7 +729,7 @@ async function childMain(u) {
     const M = await import(u.meter);
     const L = await import(u.leak);
     const G = await import(u.prof);
-    const out = { semi: M.semiSpaceOk(), lanes: [], walk: [], controls: [], gc: null, leak: null, ctlRetain: null };
+    const out = { semi: M.semiSpaceOk(), lanes: [], walk: [], controls: [], bulkCtl: [], gc: null, leak: null, ctlRetain: null };
     if (!out.semi) return out;
     const tick = (ms) => new Promise((r) => setTimeout(r, ms));
     const settle = async () => { globalThis.gc(); await tick(20); globalThis.gc(); await tick(20); };
@@ -593,6 +754,34 @@ async function childMain(u) {
     scripts.push({ name: 'edit', script: mk(2000, (s, o, j) => {
         if ((j & 1) === 0) { s[o] = T.INSERT; s[o + 1] = N; s[o + 2] = 7; s[o + 3] = 0; } else { s[o] = T.REMOVE; s[o + 1] = 0; }
     }), fill: built.fill });
+    // g2b-2b A3 bulk lane: 300 cut / paste units, L = 20 + (37q mod 380), i = j = 977q mod (N - L) (a paste back at the
+    // cut point: the order after a call is the fill, so the lane needs no refill between calls). 6 records per unit.
+    const BULK_U = 300;
+    const bulk = new Int32Array(BULK_U * 6 * 4);
+    for (let q = 0; q < BULK_U; q++) {
+        const Lq = 20 + ((37 * q) % 380);
+        const iq = (977 * q) % (N - Lq);
+        bulk.set([T.SPLIT, iq + Lq, 2, 0, T.SPLIT, iq, 1, 0, T.APPEND, 2, 0, 0, T.SPLIT, iq, 2, 0, T.APPEND, 1, 0, 0, T.APPEND, 2, 0, 0], q * 24);
+    }
+    SC.validateBuilt('A3.bulk', { capacity: N + 8, fill: built.fill, phases: [{ name: 'bulk', events: BULK_U, script: bulk }] }, N, 1, 3);
+    const BULK_RECS = bulk.length / 4;
+    // BA-26 warm FLOOR, probed under --trace-opt --no-concurrent-recompilation (.handoff/evidence/bench-adopt/g2b2b/
+    // probe-bulk-*.log): BlockedArray splitAt / append / _merge / _equalize reach TurboFan by call 45; _split is not
+    // reached without a refill; _repairUnderflow stays Maglev through 300 calls.
+    const BULK_WARM = u.bulkWarm;
+    const BULK_K = 16; // calls per window: a 1-call window with a memoized base(1) drifts +-16 B (FAIL-OPEN)
+    const BOXH = [null, null];
+    // must-fail control: exactly ONE 16 B HeapNumber per call (a fractional double stored into a tagged array slot)
+    const boxScript = (h, script, views) => { const a = SC.runScript(h, script, views); BOXH[0] = a + 0.5; return a; };
+    // REPORTED only (field 'fresh', not gated): the bulk lanes read against a FRESH min of two K-call lanes of a
+    // non-allocating step of the lane's shape. The memoized empty base(16) reads up to 16 B per window above a 0 B lane
+    // (1 B per call at K = 16), so the gate is < 8 B per call and the one-box control must read >= 8 (a < 16 floor let
+    // the control's 15 B per call pass: FAIL-OPEN).
+    const bulkBase = () => {
+        const a = M.lane('bulk.base', () => { IOUT[2] = 0; }, BULK_K, WIN);
+        const b = M.lane('bulk.base', () => { IOUT[3] = 0; }, BULK_K, WIN);
+        return b.min < a.min || Number.isNaN(a.min) ? b : a;
+    };
     const IOUT = new Int32Array(4);
     const WALKY = new Int32Array(4096);
     for (let j = 0; j < 4096; j++) WALKY[j] = (Math.imul(j, 2246822519) >>> 0) % 400000;
@@ -623,6 +812,22 @@ async function childMain(u) {
             refill();
             const r = M.lane(label + '.v' + v + '.cursorWalkSum', (k) => { IOUT[1] = h.cursorWalkSum(0, WALKY[k & 4095], 30); }, 10000, WIN, undefined, gate);
             out.walk.push({ name: r.name, bop: M.bop(r, base(10000)), wins: M.winText(r, base(10000)) });
+        }
+        if (!u.only) {
+            const h = views[0];
+            views[1].clear(); views[2].clear();
+            SC.fillHandle(h, built.fill, N, 1, partner);
+            for (let w = 0; w < BULK_WARM; w++) IOUT[0] = SC.runScript(h, bulk, views);
+            const bb = bulkBase();
+            const r = M.lane(label + '.v0.bulk', () => { IOUT[0] = SC.runScript(h, bulk, views); }, BULK_K, WIN, undefined, gate);
+            if (h.length() !== N || views[1].length() !== 0 || views[2].length() !== 0) throw new Error(label + ' bulk lane left length ' + h.length());
+            const perCall = M.bop(r, base(BULK_K));
+            out.lanes.push({ name: r.name, perCall, bop: perCall / BULK_RECS, wins: M.winText(r, base(BULK_K)), calls: BULK_WARM,
+                warmRecords: BULK_WARM * BULK_RECS, k: BULK_K, fresh: M.bop(r, bb) });
+            for (let w = 0; w < BULK_WARM; w++) IOUT[0] = boxScript(h, bulk, views);
+            const cb = M.lane('ctl.box.' + label, () => { IOUT[0] = boxScript(h, bulk, views); }, BULK_K, WIN);
+            const cbb = bulkBase();
+            out.bulkCtl.push({ name: cb.name, perCall: M.bop(cb, base(BULK_K)), wins: M.winText(cb, base(BULK_K)), fresh: M.bop(cb, cbb) });
         }
         for (const v of views) v.clear();
         partner && partner.clear();
@@ -707,13 +912,14 @@ async function childMain(u) {
 
 let childResult = null;
 const A3_WARM = 60;
+const A3_BULK_WARM = 60;
 function runChild(over) {
     if (!over && childResult) return childResult;
     const u = {
         scn: new URL('../benchmark/Scenarios.mjs', import.meta.url).href,
         adp: new URL('../benchmark/Adapters.mjs', import.meta.url).href,
         meter: new URL('./torture-meter.mjs', import.meta.url).href,
-        seed: SEED, labels: S7.adapters, warm: A3_WARM, leak: import.meta.resolve('@zakkster/lite-leak'), prof: import.meta.resolve('@zakkster/lite-gc-profiler'),
+        seed: SEED, labels: S7.adapters, warm: A3_WARM, bulkWarm: A3_BULK_WARM, leak: import.meta.resolve('@zakkster/lite-leak'), prof: import.meta.resolve('@zakkster/lite-gc-profiler'),
     };
     Object.assign(u, over);
     const code = '(' + childMain.toString() + ')(' + JSON.stringify(u) + ').then((r) => { process.stdout.write("RESULT " + JSON.stringify(r) + "\\n"); },' +
@@ -735,8 +941,21 @@ describe('A3 / A4: the --expose-gc child (BA-7a precedent)', () => {
         assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
         for (const l of r.lanes) console.log('# lane ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
         for (const l of r.controls) console.log('# control ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
-        // 5 adapters x 3 views x 8 scripts (S7 seek / reweight / blend, S7b the same, walk, edit); 'bulk' has no opcode yet
-        assert.equal(r.lanes.length, 120);
+        // 5 adapters x 3 views x 8 scripts (S7 seek / reweight / blend, S7b the same, walk, edit) + 1 bulk lane per adapter
+        assert.equal(r.lanes.length, 125);
+        // g2b-2b bulk lane: one per label on views[0], 16 calls per window, warm >= 60 calls (108,000 records)
+        const bulk = r.lanes.filter((l) => l.name.endsWith('.v0.bulk'));
+        assert.deepEqual(bulk.map((l) => l.name), S7.adapters.map((x) => x + '.v0.bulk'));
+        for (const l of bulk) {
+            assert.equal(l.k, 16, l.name + ' calls per window');
+            assert.ok(l.calls >= 60 && l.warmRecords >= 108000, l.name + ' warmed ' + l.calls + ' calls / ' + l.warmRecords + ' records');
+            assert.ok(typeof l.perCall === 'number' && l.perCall > -2 && l.perCall < 8, l.name + ' perCall ' + l.perCall);
+        }
+        for (const l of bulk) console.log('# bulk ' + l.name + ' perCall=' + String(l.perCall) + ' fresh=' + String(l.fresh));
+        // must-fail control: one 16 B box per bulk call, every label, must FAIL the < 8 B per call floor
+        for (const c of r.bulkCtl) console.log('# control ' + c.name + ' perCall=' + String(c.perCall) + ' fresh=' + String(c.fresh) + ' [' + c.wins + ']');
+        assert.deepEqual(r.bulkCtl.map((c) => c.name), S7.adapters.map((x) => 'ctl.box.' + x));
+        for (const c of r.bulkCtl) assert.ok(typeof c.perCall === 'number' && !(c.perCall < 8), c.name + ' must FAIL perCall < 8, read ' + c.perCall);
         // JSON carries NaN (no gated window) as null: a non-number reading fails closed. Both floors: per call < 16 B
         // AND per event < 1 B (the division alone hid a ~900 B interpreted-boxing call behind 4000 events).
         for (const l of r.lanes) {

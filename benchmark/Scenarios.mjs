@@ -5,8 +5,8 @@
  *
  * Repo-only. Bench-ADOPT group 1 TASK 3 froze the first shape; group 2b-1 TASKS 4-5
  * (.handoff/PLAN-bench-adopt-g2b1.md; SPEC-bench-adopt BA-17 = maintainer ruling R-BA15, BA-20 =
- * R-BA18) set the shape below and register S7 / S7b. g2b-2 registers S1 (S1a / S1b) and S2
- * (S2 / S2a / S2b) against the same shape.
+ * R-BA18) set the shape below and register S7 / S7b. g2b-2a (.handoff/PLAN-bench-adopt-g2b2a.md) registers
+ * S1 as S1a / S1b (BA-18 = R-BA16, BA-21 = R-BA19); g2b-2b registers S2 (S2 / S2a / S2b) against the same shape.
  *
  * SCENARIO shape (validateScenario, fail closed, every error names the field): a plain object (own
  * keys only, no Symbol keys) with exactly the keys
@@ -25,8 +25,10 @@
  * validateBuilt (cold) owns the unknown-opcode and range throws.
  *
  * Runner (runScenario, cold around one hot runScript call per sample): it creates the handle
- * (create(), or createViews(C, dims, 3)[0] for 3 views), fills it untimed, refills it before the
- * count pass and before every timed sample of every phase, and checks length() === n after each.
+ * (create(), or createViews(C, dims, 3)[0] for 3 views), fills it untimed (one rule for 1 and 3 views:
+ * through an appendPartner when the adapter has one, FenwickRebuild only, else row by row), refills it before
+ * the count pass and before every timed sample of every phase, and checks after each that views 1 and 2
+ * are empty ("non-empty clip / tail") and length() === n.
  * The checksum of a phase is runScript's Smi acc; its endState is the cold phaseEndState digest
  * (length + sampled sumBefore, so a phase of void ops is checked too); its traceHash is
  * scenarioHash(fill, script). Every adapter of one (scenario, n) must agree on all three
@@ -37,6 +39,9 @@
  * FenwickFixed slot is RETIRED: R-BA18 "S7 / S7b run FenwickRebuild mode 'suffix'; no
  * fixed-length Fenwick counter-foil is built" (Adapters.mjs RETIRED_SLOTS; the reason is also in
  * each S7 mix and in meta.rivals).
+ * S1a / S1b (maintainer rulings R-BA16 "S1a + S1b" and R-BA19 "Seeded shuffle", 2026-11-01): a
+ * virtualized feed at dims 1. buildFeed places each 1,000-event block by a seeded Fisher-Yates shuffle of
+ * its exact class counts and precomputes every index against seqModel, a cold exact row model.
  * ASCII only.
  */
 
@@ -69,13 +74,16 @@ export const REC = 4;
  *   SEEK   [4, d, y, 0]   r = h.indexAtSum(d, y)
  *   SUM    [5, d, i, 0]   r = h.sumBefore(d, i)
  *   WALK   [6, d, y, k]   r = h.cursorWalkSum(d, y, k)
- * acc = (acc + r) | 0 for the ops that return a value.
+ *   SPLIT  [7, i, v, 0]   h.splitAt(i, views[v])   (views 3, v in {1, 2}: view v must be empty)
+ *   APPEND [8, v, 0, 0]   h.append(views[v])       (views 3, v in {1, 2}: view v ends empty)
+ * acc = (acc + r) | 0 for the ops that return a value. h = views[0] (R-BA21); a phase ends with views 1 and 2 empty.
  */
-export const OP = Object.freeze({ INSERT: 1, REMOVE: 2, SET: 3, SEEK: 4, SUM: 5, WALK: 6 });
-const OP_MAX = 6;
+export const OP = Object.freeze({ INSERT: 1, REMOVE: 2, SET: 3, SEEK: 4, SUM: 5, WALK: 6, SPLIT: 7, APPEND: 8 });
+const OP_MAX = 8;
 
 /** The phase class of each opcode (a class phase replays the stream's records of its class). */
-export const PHASE_CLASS = Object.freeze({ 1: 'edit', 2: 'edit', 3: 'reweight', 4: 'seek', 5: 'seek', 6: 'walk' });
+export const PHASE_CLASS = Object.freeze({ 1: 'edit', 2: 'edit', 3: 'reweight', 4: 'seek', 5: 'seek', 6: 'walk', 7: 'bulk',
+    8: 'bulk' });
 
 const WALK_K_MAX = 1024;
 const MEAS_MAX = 255;
@@ -190,15 +198,18 @@ export function validateScenario(s) {
 }
 
 /**
- * Fail-closed check of one build(adapter, n, seed) result against n and dims. Returns it. Range
- * checks run against a simulated length; the phase need not end at length n (the runner's
- * length() check owns that, so a planted unbalanced script fails there, "length n+1 != n").
+ * Fail-closed check of one build(adapter, n, seed) result against n, dims and views. Returns it. Range
+ * checks run against a simulated length per view (lens[0] = the main, lens[1] / lens[2] = clip / tail); the
+ * phase need not end at length n (the runner's length() check owns that, so a planted unbalanced script fails
+ * there, "length n+1 != n"), but it must end with clip and tail empty. SPLIT / APPEND need views 3; the
+ * INSERT capacity check runs against the sum of every view (one arena).
  */
-export function validateBuilt(id, built, n, dims) {
+export function validateBuilt(id, built, n, dims, views = 1) {
     if (!isPlain(built)) scFail(id + '.build()', 'must return a plain object { capacity, fill, phases }');
     for (const k of Object.keys(built)) if (!BUILT_KEYS.includes(k)) scFail(id + '.build().' + k, 'unknown key' + didYouMean(k, BUILT_KEYS));
     if (!Number.isInteger(n) || n < 1 || n > MAX_SIZE) scFail(id + '.n', 'must be an integer in [1, 2^20]');
     if (!Number.isInteger(dims) || dims < 1 || dims > 4) scFail(id + '.dims', 'must be an integer in 1..4');
+    if (views !== 1 && views !== 3) scFail(id + '.views', 'must be 1 or 3');
     const C = built.capacity;
     if (!Number.isInteger(C) || C < n || C > MAX_SIZE + 1024) scFail(id + '.capacity', 'must be an integer in [n, 2^20 + 1024]');
     const f = built.fill;
@@ -224,16 +235,30 @@ export function validateBuilt(id, built, n, dims) {
         if (!Number.isInteger(p.events) || p.events < 1 || p.events > S.length / REC) {
             scFail(w + '.events', 'must be an integer in [1, ops = ' + (S.length / REC) + ']');
         }
+        const lens = [n, 0, 0];
         let len = n;
         for (let k = 0; k < S.length; k += REC) {
             const op = S[k], a = S[k + 1], b = S[k + 2], c = S[k + 3];
             const r = w + '.script record ' + (k / REC);
             if (!(op >= 1 && op <= OP_MAX)) scFail(r, 'unknown opcode ' + op);
-            if (op === OP.INSERT) {
+            if ((op === OP.SPLIT || op === OP.APPEND) && views !== 3) scFail(r, 'SPLIT / APPEND (opcode ' + op + ') need views 3, got ' + views);
+            if (op === OP.SPLIT) {
+                if (!(b === 1 || b === 2)) scFail(r, 'SPLIT view ' + b + ' must be 1 or 2');
+                if (!(a >= 0 && a <= len)) scFail(r, 'SPLIT index ' + a + ' outside [0, ' + len + ']');
+                if (lens[b] !== 0) scFail(r, 'SPLIT into view ' + b + ' holding ' + lens[b] + ' rows (must be empty)');
+                if (c !== 0) scFail(r, 'SPLIT pad slot ' + c + ' must be 0');
+                lens[b] = len - a;
+                len = a;
+            } else if (op === OP.APPEND) {
+                if (!(a === 1 || a === 2)) scFail(r, 'APPEND view ' + a + ' must be 1 or 2');
+                if (b !== 0 || c !== 0) scFail(r, 'APPEND pad slots ' + b + ', ' + c + ' must be 0');
+                len += lens[a];
+                lens[a] = 0;
+            } else if (op === OP.INSERT) {
                 if (dims > 2) scFail(r, 'INSERT carries 2 measures: dims must be <= 2');
                 if (!(a >= 0 && a <= len)) scFail(r, 'INSERT index ' + a + ' outside [0, ' + len + ']');
                 if (!(b >= 0 && b <= MEAS_MAX && c >= 0 && c <= MEAS_MAX)) scFail(r, 'INSERT measure outside [0, 255]');
-                if (len + 1 > C) scFail(r, 'INSERT past capacity ' + C);
+                if (len + lens[1] + lens[2] + 1 > C) scFail(r, 'INSERT past capacity ' + C);
                 len++;
             } else if (op === OP.REMOVE) {
                 if (!(a >= 0 && a < len)) scFail(r, 'REMOVE index ' + a + ' outside [0, ' + len + ')');
@@ -252,6 +277,7 @@ export function validateBuilt(id, built, n, dims) {
                 if (op === OP.WALK && !(c >= 1 && c <= WALK_K_MAX)) scFail(r, 'WALK k ' + c + ' outside [1, ' + WALK_K_MAX + ']');
             }
         }
+        if (lens[1] !== 0 || lens[2] !== 0) scFail(w, 'non-empty clip / tail at phase end (clip ' + lens[1] + ', tail ' + lens[2] + ')');
     }
     const b = names.indexOf('blend');
     if (b !== -1 && b !== names.length - 1) scFail(id + '.phases', "'blend' must be the last phase");
@@ -285,7 +311,7 @@ export function scenarioEvents(quick) {
 // the cold gate; an opcode it did not admit cannot reach here). Returns the Smi acc.
 // ---------------------------------------------------------------------------
 
-export function runScript(h, script) {
+export function runScript(h, script, views) {
     let acc = 0;
     const L = script.length;
     for (let k = 0; k < L; k += 4) {
@@ -299,6 +325,8 @@ export function runScript(h, script) {
             case 4: acc = (acc + h.indexAtSum(a, b)) | 0; break;
             case 5: acc = (acc + h.sumBefore(a, b)) | 0; break;
             case 6: acc = (acc + h.cursorWalkSum(a, b, c)) | 0; break;
+            case 7: h.splitAt(a, views[b]); break;
+            case 8: h.append(views[a]); break;
             default: break;
         }
     }
@@ -331,6 +359,14 @@ export function phaseEndState(h, n, dims) {
         x = foldHash(x, h.sumBefore(d, n));
     }
     return x >>> 0;
+}
+
+/** Throws "non-empty clip / tail" unless every view past the main (views[1], views[2]) is empty. Cold. */
+export function checkViewsEmpty(views, where) {
+    for (let v = 1; v < views.length; v++) {
+        const len = views[v].length();
+        if (len !== 0) scFail(where, 'non-empty clip / tail: view ' + v + ' holds ' + len + ' rows');
+    }
 }
 
 /** Throws "length <len> != <n>" (A2) unless the handle holds exactly n rows. */
@@ -396,11 +432,13 @@ export async function runScenario(label, scenario, n, opts = {}) {
     const samples = opts.samples ?? (quick ? 3 : 5);
     if (!Number.isInteger(samples) || samples < 1 || samples > 99) scFail(s.id + '.samples', 'must be an integer in [1, 99]');
     const tune = opts.tune;
-    const built = validateBuilt(s.id, s.build(adapter, n, seed, events), n, s.dims);
+    const built = validateBuilt(s.id, s.build(adapter, n, seed, events), n, s.dims, s.views);
     const dims = s.dims;
-    const partner = s.views === 1 ? appendPartner(adapter, dims, tune) : null;
+    // one fill rule for 1 and 3 views: through an append partner (FenwickRebuild only), else row by row
+    const partner = appendPartner(adapter, dims, tune);
     const views = s.views === 3 ? adapter.createViews(built.capacity, dims, 3, tune) : [adapter.create(built.capacity, dims, tune)];
     const h = views[0];
+    if (!Array.isArray(views) || views.length !== s.views || views[0] !== h) scFail(s.id + '.views', 'the runner holds ' + s.views + ' views, main = views[0]');
     // the chunkCap this run used (BlockedArray), read from the instance after create; else 'n/a'
     const chunkCap = h.instance !== undefined && typeof h.instance.chunkCap === 'number' ? h.instance.chunkCap : NA;
     const refill = () => {
@@ -417,7 +455,8 @@ export async function runScenario(label, scenario, n, opts = {}) {
         refill();
         checkLength(h, n, where + ' (fill)');
         h.resetCounts();
-        const checksum = runScript(h, p.script);
+        const checksum = runScript(h, p.script, views);
+        checkViewsEmpty(views, where);
         checkLength(h, n, where);
         h.readCounts(cnt);
         if (ext.length > 0) h.readExtras(ext);
@@ -428,9 +467,10 @@ export async function runScenario(label, scenario, n, opts = {}) {
             refill();
             gcNow();
             const t0 = process.hrtime.bigint();
-            const r = runScript(h, p.script);
+            const r = runScript(h, p.script, views);
             const t1 = process.hrtime.bigint();
             if (r !== checksum) scFail(where, 'checksum drift: sample ' + j + ' read ' + r + ', count pass ' + checksum);
+            checkViewsEmpty(views, where);
             checkLength(h, n, where);
             ns[j] = Number(t1 - t0) / p.events;
         }
@@ -494,6 +534,104 @@ function fenwickModel(fill, n) {
     };
 }
 
+/** Rows per chunk of seqModel. */
+const SEQ_CHUNK = 1024;
+
+/**
+ * Cold exact row model of one measure column under inserts and removes (S1): the rows in chunks of
+ * <= SEQ_CHUNK with one sum per chunk. Independent of SumSequence (no import, no shared code).
+ * length(), total(), measure(i), prefix(i) (sum of rows [0, i)), find(y) = the STRICT M-7 find
+ * (smallest i with prefix(i) + m_i > y, else length()), set(i, m), insert(i, m) (i in [0, len]),
+ * remove(i).
+ */
+function seqModel(fill, n) {
+    const chunks = [];
+    const sums = [];
+    let len = 0;
+    let total = 0;
+    for (let base = 0; base < n; base += SEQ_CHUNK) {
+        const c = Array.from(fill.subarray(base, Math.min(n, base + SEQ_CHUNK)));
+        let s = 0;
+        for (const m of c) s += m;
+        chunks.push(c);
+        sums.push(s);
+        len += c.length;
+        total += s;
+    }
+    if (chunks.length === 0) { chunks.push([]); sums.push(0); }
+    /** chunk of row i (0 <= i <= len; i === len lands at the end of the last chunk); offset in locO */
+    let locO = 0;
+    function locate(i) {
+        let c = 0;
+        while (c < chunks.length - 1 && i >= chunks[c].length) { i -= chunks[c].length; c++; }
+        locO = i;
+        return c;
+    }
+    return {
+        length: () => len,
+        total: () => total,
+        measure(i) {
+            const c = locate(i);
+            return chunks[c][locO];
+        },
+        prefix(i) {
+            const c = locate(i);
+            let s = 0;
+            for (let j = 0; j < c; j++) s += sums[j];
+            for (let j = 0; j < locO; j++) s += chunks[c][j];
+            return s;
+        },
+        find(y) {
+            let acc = 0;
+            let idx = 0;
+            for (let c = 0; c < chunks.length; c++) {
+                const ch = chunks[c];
+                if (acc + sums[c] > y) {
+                    for (let o = 0; o < ch.length; o++) {
+                        if (acc + ch[o] > y) return idx + o;
+                        acc += ch[o];
+                    }
+                }
+                acc += sums[c];
+                idx += ch.length;
+            }
+            return len;
+        },
+        set(i, m) {
+            const c = locate(i);
+            const d = m - chunks[c][locO];
+            chunks[c][locO] = m;
+            sums[c] += d;
+            total += d;
+        },
+        insert(i, m) {
+            const c = locate(i);
+            const ch = chunks[c];
+            ch.splice(locO, 0, m);
+            sums[c] += m;
+            total += m;
+            len++;
+            if (ch.length > SEQ_CHUNK) {
+                const right = ch.splice(ch.length >> 1);
+                let s = 0;
+                for (const x of right) s += x;
+                chunks.splice(c + 1, 0, right);
+                sums.splice(c + 1, 0, s);
+                sums[c] -= s;
+            }
+        },
+        remove(i) {
+            const c = locate(i);
+            const m = chunks[c][locO];
+            chunks[c].splice(locO, 1);
+            sums[c] -= m;
+            total -= m;
+            len--;
+            if (chunks[c].length === 0 && chunks.length > 1) { chunks.splice(c, 1); sums.splice(c, 1); }
+        },
+    };
+}
+
 function checkBuildArgs(id, n, events) {
     if (!Number.isInteger(n) || n < 1 || n > MAX_SIZE) scFail(id + '.build', 'n must be an integer in [1, 2^20]');
     if (!Number.isInteger(events) || events < BLOCK_EVENTS || events % BLOCK_EVENTS !== 0) {
@@ -501,19 +639,37 @@ function checkBuildArgs(id, n, events) {
     }
 }
 
-/** Assemble phases from one stream of [op, a, b, c] records, in the requested order (blend last). */
-function phasesFrom(stream, order) {
+/** First-record flag of an event in phasesFrom's ev table (the low 7 bits = the PHASES index). */
+const EV_FIRST = 0x80;
+
+/**
+ * Assemble phases from one stream of [op, a, b, c] records, in the requested order (blend last). Without ev a
+ * record's class is PHASE_CLASS[op] and every record is one event. With ev (a Uint8Array, one entry per record:
+ * the PHASES index of its event's class, OR EV_FIRST on the event's first record) a record's class is
+ * PHASES[ev & 0x7f] and events = the number of first-record flags among the selected records (R-BA20).
+ */
+function phasesFrom(stream, order, ev) {
+    if (ev !== undefined) {
+        if (!(ev instanceof Uint8Array) || ev.length !== stream.length / REC) scFail('phasesFrom', 'ev must be a Uint8Array, one entry per record');
+        for (let j = 0; j < ev.length; j++) if (!((ev[j] & 0x7f) < PHASES.length)) scFail('phasesFrom', 'ev[' + j + '] names no phase');
+    }
     const out = [];
     for (const name of order) {
         const recs = [];
+        let events = 0;
         for (let k = 0; k < stream.length; k += REC) {
-            if (name === 'blend' || PHASE_CLASS[stream[k]] === name) recs.push(k);
+            if (ev === undefined) {
+                if (name === 'blend' || PHASE_CLASS[stream[k]] === name) recs.push(k);
+            } else if (name === 'blend' || PHASES[ev[k / REC] & 0x7f] === name) {
+                recs.push(k);
+                if ((ev[k / REC] & EV_FIRST) !== 0) events++;
+            }
         }
         const script = new Int32Array(recs.length * REC);
         for (let j = 0; j < recs.length; j++) {
             for (let q = 0; q < REC; q++) script[j * REC + q] = stream[recs[j] + q];
         }
-        out.push({ name, events: recs.length, script });
+        out.push({ name, events: ev === undefined ? recs.length : events, script });
     }
     return out;
 }
@@ -553,12 +709,140 @@ function buildWeighted(id, drawsPerSet) {
     };
 }
 
+/** S1 per-block class counts (R-BA16): frames, remeasures, structural ops. */
+const FEED_FRAMES = 920;
+const FEED_REMEASURES = 50;
+const FEED_WALK_K = 30;
+const FEED_STEP = 512;
+const FEED_JUMP_PCT = 2;
+/** The remeasure / S1b window [top - FEED_WIN_LO, top - FEED_WIN_LO + FEED_WIN). */
+const FEED_WIN_LO = 8;
+const FEED_WIN = 47;
+
+/** One S1 height (fill, remeasure, insert): 80% 32, 15% uniform in [20, 200], 5% 0. */
+function feedHeight(r) {
+    const u = uni(r, 100);
+    if (u < 80) return 32;
+    if (u < 95) return 20 + uni(r, 181);
+    return 0;
+}
+
+function clampInt(v, lo, hi) {
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+/**
+ * S1a / S1b stream (R-BA16, block order R-BA19). mode 'tail': S1a, insert at length, remove at 0;
+ * mode 'window': S1b, insert / remove in the remeasure window. Each block of BLOCK_EVENTS events
+ * is a seeded Fisher-Yates shuffle of its exact class counts (920 frames, 50 remeasures, 30
+ * structural); structural ops alternate insert / remove in stream order, insert first, so the
+ * length stays in [n, n + 1] and every class phase ends at length n. A remeasure index is clamped
+ * to [0, n - 1] (not length - 1): the reweight phase replays it at length n.
+ */
+function buildFeed(id, mode) {
+    if (mode !== 'tail' && mode !== 'window') scFail(id + '.build', "mode must be 'tail' or 'window'");
+    const win = mode === 'window';
+    return function build(adapter, n, seed, events = STREAM_EVENTS) {
+        checkBuildArgs(id, n, events);
+        const r = prng((seed ^ Math.imul(n, 0x9e3779b1) ^ (win ? 0x51b : 0x51a)) >>> 0);
+        const fill = new Int32Array(n);
+        for (let i = 0; i < n; i++) fill[i] = feedHeight(r);
+        const model = seqModel(fill, n);
+        let y = uni(r, model.total());
+        const cls = new Uint8Array(BLOCK_EVENTS);
+        const stream = new Int32Array(events * REC);
+        let k = 0;
+        let ins = true;
+        for (let e = 0; e < events; e += BLOCK_EVENTS) {
+            cls.fill(0, 0, FEED_FRAMES);
+            cls.fill(1, FEED_FRAMES, FEED_FRAMES + FEED_REMEASURES);
+            cls.fill(2, FEED_FRAMES + FEED_REMEASURES);
+            for (let j = BLOCK_EVENTS - 1; j > 0; j--) {
+                const q = uni(r, j + 1);
+                const t = cls[j]; cls[j] = cls[q]; cls[q] = t;
+            }
+            for (let j = 0; j < BLOCK_EVENTS; j++) {
+                const tot = model.total();
+                const len = model.length();
+                if (cls[j] === 0) {
+                    y = uni(r, 100) < FEED_JUMP_PCT ? uni(r, tot) : y + uni(r, 2 * FEED_STEP + 1) - FEED_STEP;
+                    y = clampInt(y, 0, Math.max(0, tot - 1));
+                    stream[k] = OP.WALK; stream[k + 1] = 0; stream[k + 2] = y; stream[k + 3] = FEED_WALK_K;
+                } else if (cls[j] === 1) {
+                    const top = model.find(Math.min(y, tot - 1));
+                    const i = clampInt(top - FEED_WIN_LO + uni(r, FEED_WIN), 0, n - 1);
+                    const h = feedHeight(r);
+                    model.set(i, h);
+                    stream[k] = OP.SET; stream[k + 1] = i; stream[k + 2] = 0; stream[k + 3] = h;
+                } else if (ins) {
+                    const i = win ? clampInt(model.find(Math.min(y, tot - 1)) - FEED_WIN_LO + uni(r, FEED_WIN), 0, len) : len;
+                    const h = feedHeight(r);
+                    model.insert(i, h);
+                    stream[k] = OP.INSERT; stream[k + 1] = i; stream[k + 2] = h; stream[k + 3] = 0;
+                    ins = false;
+                } else {
+                    const i = win ? clampInt(model.find(Math.min(y, tot - 1)) - FEED_WIN_LO + uni(r, FEED_WIN), 0, len - 1) : 0;
+                    model.remove(i);
+                    stream[k] = OP.REMOVE; stream[k + 1] = i; stream[k + 2] = 0; stream[k + 3] = 0;
+                    ins = true;
+                }
+                k += REC;
+            }
+        }
+        return { capacity: n + 1, fill, phases: phasesFrom(stream, ['walk', 'reweight', 'edit', 'blend']) };
+    };
+}
+
 const S7_ADAPTERS = ['SumSequence', 'BlockedArray', 'BlockedArray.plain', 'FenwickRebuild.suffix',
     'FenwickRebuild.full'];
+const S1_SIZES = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 100000, 131072, 262144, 524288, 1000000];
+const S1_PER_BLOCK = '920 cursorWalkSum(0, y, 30) + 50 setMeasure(i, 0, h) + 30 structural (15 insertAt + 15 ' +
+    'removeAt, alternating, insertAt first; length stays in [n, n + 1])';
+const S1_HEIGHTS = 'fill, remeasure and insert: 80% are 32, 15% uniform in [20, 200], 5% are 0';
+const S1_ORDER = 'R-BA19: each 1,000-event block is a seeded Fisher-Yates shuffle of its exact class counts ' +
+    '(920 / 50 / 30)';
+const S1_Y = 'y starts uniform in [0, total); each frame moves y by a uniform delta in [-512, 512], clamped to ' +
+    '[0, total - 1]; 2% of frames jump to a uniform y; top = indexAtSum(0, min(y, total - 1)); setMeasure i uniform ' +
+    'in [top - 8, top + 38], clamped to [0, n - 1]';
 const S7_RIVALS = "FenwickRebuild mode 'suffix' is the Fenwick rival (R-BA18); FenwickRebuild.full is the " +
     'LiteVirtual-today row';
 
 export const SCENARIOS = Object.freeze([
+    Object.freeze({
+        id: 'S1a',
+        title: 'Virtualized feed: scroll walks, remeasures near the viewport, append at the end + drop the head',
+        dims: 1,
+        views: 1,
+        mix: Object.freeze({
+            perBlock: S1_PER_BLOCK,
+            positions: S1_Y + '; insertAt at length, removeAt at 0',
+            heights: S1_HEIGHTS,
+            order: S1_ORDER,
+            events: STREAM_EVENTS,
+            phases: 'walk, reweight, edit, blend (blend last)',
+        }),
+        adapters: S7_ADAPTERS,
+        sizes: S1_SIZES,
+        build: buildFeed('S1a', 'tail'),
+    }),
+    Object.freeze({
+        id: 'S1b',
+        title: 'Virtualized feed: scroll walks, remeasures, inserts and removes in the viewport window',
+        dims: 1,
+        views: 1,
+        mix: Object.freeze({
+            perBlock: S1_PER_BLOCK,
+            positions: S1_Y + '; insertAt i in the same window clamped to [0, length], removeAt i clamped to ' +
+                '[0, length - 1]',
+            heights: S1_HEIGHTS,
+            order: S1_ORDER,
+            events: STREAM_EVENTS,
+            phases: 'walk, reweight, edit, blend (blend last)',
+        }),
+        adapters: S7_ADAPTERS,
+        sizes: S1_SIZES,
+        build: buildFeed('S1b', 'window'),
+    }),
     Object.freeze({
         id: 'S7',
         title: 'Weighted pick: draw by a uniform running total, then reweight the drawn row',

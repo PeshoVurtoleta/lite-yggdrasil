@@ -14,6 +14,10 @@
  *    (_locate, indexAtSum; sumBefore is a plain loop). benchmark/rivals/variant.mjs builds the
  *    'plain' variant from this file by count-checked text replacement.
  *  - Chunk-level hysteresis: split at B, merge/equalize below B/4 (never exhausts chunk pool).
+ *    Split point (SPEC bench-adopt BA-14 / R-BA10, SumSequence's 13|4 / 4|13 trigger, I-5
+ *    Table 3): an insertAt(length) that fills the last chunk splits it 3/4 : 1/4 (the old chunk
+ *    keeps B - B/4), an insertAt(0) that fills the first chunk splits it 1/4 : 3/4, every other
+ *    split is 1/2 : 1/2. Every piece holds >= B/4 = minOcc, so the pool bound is unchanged.
  *  - Shared-arena views (BlockedArray.arena) for fair O(n/B + B) splitAt / append on S2.
  *  - Fail-closed validation matching @zakkster/lite-yggdrasil v0.1.1 domains: every RangeError
  *    message starts with the engine's check token and a space; every throw goes through the one
@@ -620,7 +624,9 @@ export class BlockedArray {
     a.liveElements++;
 
     if (newSz === B) {
-      this._split(dirIdx);
+      // BA-14 split point (the old chunk keeps cut): append 3/4, prepend 1/4, else 1/2. B % 4 === 0.
+      const q = B >>> 2;
+      this._split(dirIdx, globalIndex === this._len - 1 ? B - q : (globalIndex === 0 ? q : B >>> 1));
     }
   }
 
@@ -870,18 +876,18 @@ export class BlockedArray {
 
   // -- Internal Structural Operations (Zero-GC copyWithin) --------------
 
-  _split(dirIdx) {
+  // The old chunk keeps [0, cut), the new chunk gets [cut, sz); 0 < cut < sz (insertAt picks cut).
+  _split(dirIdx, cut) {
     const oldCIdx = this.dir[dirIdx];
     const newCIdx = this._allocChunk();
     const sz = this.dirSize[dirIdx];
-    const half = sz >>> 1;
-    const keep = sz - half;
+    const keep = sz - cut;
     const B = this.chunkCap;
     const maxC = this.maxChunks;
     const dims = this.dims;
     const a = this._arena;
 
-    a.poolEntities.copyWithin(newCIdx * B, oldCIdx * B + half, oldCIdx * B + sz);
+    a.poolEntities.copyWithin(newCIdx * B, oldCIdx * B + cut, oldCIdx * B + sz);
 
     const dirTail = this.dirLen - (dirIdx + 1);
     if (dirTail > 0) {
@@ -897,7 +903,7 @@ export class BlockedArray {
       }
       const oldBase = (dOff + oldCIdx) * B;
       const newBase = (dOff + newCIdx) * B;
-      mArr.copyWithin(newBase, oldBase + half, oldBase + sz);
+      mArr.copyWithin(newBase, oldBase + cut, oldBase + sz);
 
       let sNew = 0;
       for (let i = 0; i < keep; i++) sNew += mArr[newBase + i];
@@ -906,7 +912,7 @@ export class BlockedArray {
     }
 
     this.dir[dirIdx + 1] = newCIdx;
-    this.dirSize[dirIdx] = half;
+    this.dirSize[dirIdx] = cut;
     this.dirSize[dirIdx + 1] = keep;
     this.dirLen++;
 

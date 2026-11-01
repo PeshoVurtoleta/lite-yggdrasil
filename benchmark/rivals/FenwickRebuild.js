@@ -21,25 +21,57 @@
  *    the largest pos with prefix(pos) <= y is the smallest i with
  *    prefix(i) + m_i > y, else length.
  *
+ * Modes (SPEC bench-adopt BA-13 / R-BA9, RESEARCH 14.1), options.mode:
+ *  - 'full' (the DEFAULT; the LiteVirtual-today baseline row): every
+ *    insertAt / removeAt / append rebuilds every dim's whole tree
+ *    (fenwickBuild, O(n)).
+ *  - 'suffix' (the strong rival): the bit-straddle suffix rebuild. In the
+ *    1-based tree node k covers [k - lsb(k) + 1, k], so an edit at 0-based i
+ *    leaves nodes 1..i exact. Copy the measures into nodes i+1..n, SEED
+ *    tree[j + lsb(j)] += tree[j] for j = i, i & (i - 1), ... > 0 while the
+ *    parent is <= n (exactly the nodes j <= i whose parent lies past i; the
+ *    parent never decreases along that chain, so the first parent > n ends
+ *    it), then CASCADE j = i+1..n (tree[j + lsb(j)] += tree[j] when the
+ *    parent is <= n). Cost: (n - i) copies + at most popcount(i) seeds +
+ *    < (n - i) cascade adds. removeAt at the last index needs no rebuild;
+ *    append rebuilds from the old length (the left nodes stay exact).
+ *  Any other mode value throws 'options' (fail closed).
+ *
  * Cost model: insertAt / removeAt shift every column with copyWithin, then
- * rebuild every dim's tree (O(n), 0 B). setMeasure is the O(log n) delta
- * update. getMeasure / entityAt / total are O(1); sumBefore / indexAtSum and
- * the seeks are O(log n). splitAt copies the tail and rebuilds out only (the
- * left tree stays exact); append copies, then rebuilds. Each instance
- * owns its own C (no shared arena): splitAt / append are O(moved).
+ * rebuild every dim's tree ('full': O(n); 'suffix': O(n - i); 0 B either
+ * way). setMeasure is the O(log n) delta update. getMeasure / entityAt /
+ * total are O(1); sumBefore / indexAtSum and the seeks are O(log n). splitAt
+ * copies the tail and rebuilds out only (the left tree stays exact; out's
+ * tree is all new, the same full pass in both modes); append copies, then
+ * rebuilds ('full': all of this; 'suffix': from the old length). Each
+ * instance owns its own C (no shared arena): splitAt / append are O(moved)
+ * plus the rebuild.
  *
  * Checks: the engine's RangeError tokens and C-10 order (index, entity, dim,
  * measure, extra, capacity, headroom, seek, operand), every check before the
- * first write, every throw through the one cold fwFail(). Operand rules this
- * rival adds (the engine's arena rule has no analogue): a FenwickRebuild of
- * the same dims ('operand'); the receiver must hold the moved elements
+ * first write, every throw through the one cold fwFail(). Constructor order:
+ * C -> options (shape, keys) -> dims -> mode -> cap -> byte cap. Operand
+ * rules this rival adds (the engine's arena rule has no analogue): a
+ * FenwickRebuild of the same dims ('operand'; the modes may differ, the tree
+ * contents are the same); the receiver must hold the moved elements
  * ('capacity'), checked after headroom.
  *
- * Counters (BA-8), a Float64Array(3) (exact past 2^31): elemMoves = elements
+ * Counters (BA-8), a Float64Array(6) (exact past 2^31): elemMoves = elements
  * shifted or copied (paired with the engine's moves), nodeVisits = Fenwick
  * nodes read or written by update / prefix / find (rebuild work excluded),
- * rebuilds = O(n) rebuild passes. Every other engine counter is 'n/a'
- * (COUNTER_MAP). Counters go to this view only (the engine's RS-1).
+ * rebuilds = rebuild passes (one per insertAt / removeAt / non-empty
+ * append / non-empty splitAt out, in both modes; a 'suffix' removeAt at the
+ * last index runs none). The rebuild work, counted once per tree node
+ * position (not per dim, like elemMoves):
+ *  - treeCopies = nodes written from a measure ('full': n per pass; 'suffix':
+ *    n - i per pass),
+ *  - seedAdds = straddle seeds performed ('full': always 0; 'suffix': the
+ *    adds whose parent is <= n),
+ *  - cascadeAdds = tree[j + lsb(j)] += tree[j] adds ('full': over j = 1..n;
+ *    'suffix': over j = i+1..n).
+ * Every other engine counter is 'n/a' (COUNTER_MAP); the three rebuild
+ * counters and nodeVisits / rebuilds print in native columns. Counters go
+ * to this view only (the engine's RS-1).
  *
  * The cursor is ONE preallocated object per instance; every successful
  * mutator invalidates it after its checks (the oracle's K-R1 / C-6).
@@ -52,7 +84,10 @@ const FW_BYTE_CAP = 4294967296; // 2^32 bytes of typed arrays per instance
 const FW_MOVES = 0;
 const FW_VISITS = 1;
 const FW_REBUILDS = 2;
-const FW_NC = 3;
+const FW_COPIES = 3;
+const FW_SEEDS = 4;
+const FW_CASCADES = 5;
+const FW_NC = 6;
 const FW_KEY = {};
 
 const fwTAProto = Object.getPrototypeOf(Int32Array.prototype);
@@ -71,12 +106,30 @@ function fwBytes(C, dims) {
   return 4 * C + 8 * dims * C + 8 * dims * (C + 1) + 8 * dims + 8 * 4 /* sx */ + 8 * FW_NC + 8 * dims;
 }
 
-// Check order: C -> options -> dims -> cap -> byte cap. Returns dims.
+// Cold did-you-mean for an unknown options key: the closer of 'dims' / 'mode' (edit distance).
+function fwDist(a, b) {
+  const row = [];
+  for (let j = 0; j <= b.length; j++) row.push(j);
+  for (let i = 1; i <= a.length; i++) {
+    let diag = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const up = row[j];
+      row[j] = Math.min(up + 1, row[j - 1] + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diag = up;
+    }
+  }
+  return row[b.length];
+}
+
+// Check order: C -> options -> dims -> mode -> cap -> byte cap. Returns (dims << 1) | suffix
+// (suffix = 1 for mode 'suffix', 0 for 'full', the default).
 function fwInit(C, o) {
   if (typeof C !== 'number' || !Number.isInteger(C) || C < 1) {
     fwFail('capacity', 'C must be an integer >= 1');
   }
   let dims = 1;
+  let mode = 'full';
   if (o !== undefined) {
     if (o === null || typeof o !== 'object') fwFail('options', 'must be undefined or a plain object');
     const proto = Object.getPrototypeOf(o);
@@ -85,19 +138,29 @@ function fwInit(C, o) {
     for (let j = 0; j < keys.length; j++) {
       const key = keys[j];
       if (typeof key !== 'string') fwFail('options', 'symbol keys are not options');
-      if (key !== 'dims') fwFail('options', "unknown key, did you mean 'dims'?");
+      if (key !== 'dims' && key !== 'mode') {
+        if (fwDist(key, 'mode') < fwDist(key, 'dims')) fwFail('options', "unknown key, did you mean 'mode'?");
+        fwFail('options', "unknown key, did you mean 'dims'?");
+      }
       const desc = Object.getOwnPropertyDescriptor(o, key);
-      if (desc === undefined || !('value' in desc)) fwFail('options', 'dims must be a data property, not an accessor');
-      if (desc.value === undefined) fwFail('options', 'dims is present but undefined');
-      dims = desc.value;
+      if (key === 'dims') {
+        if (desc === undefined || !('value' in desc)) fwFail('options', 'dims must be a data property, not an accessor');
+        if (desc.value === undefined) fwFail('options', 'dims is present but undefined');
+        dims = desc.value;
+      } else {
+        if (desc === undefined || !('value' in desc)) fwFail('options', 'mode must be a data property, not an accessor');
+        if (desc.value === undefined) fwFail('options', 'mode is present but undefined');
+        mode = desc.value;
+      }
     }
   }
   if (typeof dims !== 'number' || !Number.isInteger(dims) || dims < 1 || !(dims <= 4)) {
     fwFail('dims', 'must be an integer in 1..4');
   }
+  if (mode !== 'full' && mode !== 'suffix') fwFail('options', "mode must be 'full' or 'suffix'");
   if (!(C <= FW_CAP)) fwFail('capacity', 'C must be <= 2^28');
   if (!(fwBytes(C, dims) <= FW_BYTE_CAP)) fwFail('capacity', 'typed arrays must total <= 2^32 bytes');
-  return dims;
+  return (dims << 1) | (mode === 'suffix' ? 1 : 0);
 }
 
 // insertAt slots 1..dims-1 (staged in sx by insertAt, typeof already checked), then the extra slots.
@@ -123,24 +186,72 @@ function fwOperand(v, o) {
 
 // ---- Fenwick core (LiteVirtual Virtual.js:46-84) ----------------------------------
 
-// fenwickBuild (46-56), in place over the live prefix [1, n] of every dim.
+// fenwickBuild (46-56), in place over the live prefix [1, n] of every dim (mode 'full').
+// Counts per node position: treeCopies += n, cascadeAdds += the adds of one dim's pass.
 function fwRebuild(v) {
   const n = v._len;
   const C = v._C;
   const tree = v._tree;
   const meas = v._meas;
+  let c = 0;
   for (let d = 0; d < v._dims; d++) {
     const b = d * (C + 1);
     const mb = d * C;
+    c = 0;
     tree.fill(0, b + 1, b + n + 1);
     for (let i = 0; i < n; i++) {
       const j = i + 1;
       tree[b + j] += meas[mb + i];
       const up = j + (j & -j);
-      if (up <= n) tree[b + up] += tree[b + j];
+      if (up <= n) {
+        tree[b + up] += tree[b + j];
+        c++;
+      }
     }
   }
-  v._c[FW_REBUILDS] += 1;
+  const cn = v._c;
+  cn[FW_REBUILDS] += 1;
+  cn[FW_COPIES] += n;
+  cn[FW_CASCADES] += c;
+}
+
+// The bit-straddle suffix rebuild (mode 'suffix', RESEARCH 14.1) after an edit at 0-based i,
+// 0 <= i < n = the new length: nodes 1..i are exact and kept. Copy measures into nodes i+1..n,
+// seed the nodes j <= i whose parent lies past i (peel the low bits of i; the parent j + lsb(j)
+// never decreases along the chain, so the first parent > n ends it), then cascade j = i+1..n.
+// Counts per node position: treeCopies += n - i, seedAdds / cascadeAdds += one dim's adds.
+function fwSuffix(v, i) {
+  const n = v._len;
+  const C = v._C;
+  const tree = v._tree;
+  const meas = v._meas;
+  let s = 0;
+  let c = 0;
+  for (let d = 0; d < v._dims; d++) {
+    const b = d * (C + 1);
+    const mb = d * C;
+    s = 0;
+    c = 0;
+    for (let k = i; k < n; k++) tree[b + k + 1] = meas[mb + k];
+    for (let j = i; j > 0; j &= j - 1) {
+      const p = j + (j & -j);
+      if (p > n) break;
+      tree[b + p] += tree[b + j];
+      s++;
+    }
+    for (let j = i + 1; j <= n; j++) {
+      const p = j + (j & -j);
+      if (p <= n) {
+        tree[b + p] += tree[b + j];
+        c++;
+      }
+    }
+  }
+  const cn = v._c;
+  cn[FW_REBUILDS] += 1;
+  cn[FW_COPIES] += n - i;
+  cn[FW_SEEDS] += s;
+  cn[FW_CASCADES] += c;
 }
 
 // fenwickPrefix (62-67): sum of dim dd over [0, i) into sx[1] (a double never crosses the call).
@@ -184,7 +295,10 @@ function fwFind(v, dd) {
 
 export class FenwickRebuild {
   // Native counter slots (readCounters order).
-  static COUNTERS = Object.freeze({ elemMoves: FW_MOVES, nodeVisits: FW_VISITS, rebuilds: FW_REBUILDS });
+  static COUNTERS = Object.freeze({
+    elemMoves: FW_MOVES, nodeVisits: FW_VISITS, rebuilds: FW_REBUILDS,
+    treeCopies: FW_COPIES, seedAdds: FW_SEEDS, cascadeAdds: FW_CASCADES,
+  });
 
   // Engine counter name -> native counter name, or 'n/a' (BA-8: only moves pairs).
   static COUNTER_MAP = Object.freeze({
@@ -200,8 +314,10 @@ export class FenwickRebuild {
   }
 
   constructor(C, o) {
-    const dims = fwInit(C, o);
+    const dm = fwInit(C, o);
+    const dims = dm >> 1;
     // ---- allocation: no check below this line ----
+    this._sfx = (dm & 1) === 1; // mode 'suffix'
     this._len = 0;
     this._ci = -1; // cursor index, -1 = invalid
     this._C = C;
@@ -289,7 +405,8 @@ export class FenwickRebuild {
     }
     this._len = n + 1;
     this._c[FW_MOVES] += n - at;
-    fwRebuild(this);
+    if (this._sfx) fwSuffix(this, at);
+    else fwRebuild(this);
   }
 
   removeAt(i) {
@@ -312,7 +429,8 @@ export class FenwickRebuild {
     }
     this._len = n - 1;
     this._c[FW_MOVES] += n - 1 - at;
-    fwRebuild(this);
+    if (!this._sfx) fwRebuild(this);
+    else if (at < n - 1) fwSuffix(this, at); // the last index: nodes 1..n-1 are exact
     return e;
   }
 
@@ -422,7 +540,10 @@ export class FenwickRebuild {
     this._len = n + k;
     other._len = 0;
     this._c[FW_MOVES] += k;
-    if (k !== 0) fwRebuild(this);
+    if (k !== 0) {
+      if (this._sfx) fwSuffix(this, n); // nodes 1..n are exact
+      else fwRebuild(this);
+    }
     return this;
   }
 
@@ -479,17 +600,20 @@ export class FenwickRebuild {
 
   // ---- counters ------------------------------------------------------------------------
 
-  // out: a genuine Int32Array (wraps past 2^31, like the engine) or Float64Array (exact), length >= 3.
+  // out: a genuine Int32Array (wraps past 2^31, like the engine) or Float64Array (exact), length >= 6.
   readCounters(out) {
     const tag = fwTag(out);
     if (tag !== 'Int32Array' && tag !== 'Float64Array') {
       fwFail('counters', 'out must be an Int32Array or a Float64Array');
     }
-    if (!(fwLen(out) >= FW_NC)) fwFail('counters', 'out.length must be >= 3');
+    if (!(fwLen(out) >= FW_NC)) fwFail('counters', 'out.length must be >= 6');
     const c = this._c;
     out[0] = c[0];
     out[1] = c[1];
     out[2] = c[2];
+    out[3] = c[3];
+    out[4] = c[4];
+    out[5] = c[5];
   }
 
   resetCounters() {

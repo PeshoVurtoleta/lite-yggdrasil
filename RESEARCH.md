@@ -20,7 +20,7 @@ Contents
 12. Tier 2 / Tier 3 detail and the blocked-array rival (maintainer notes, 2026-10-31)
 13. SumMap 0.2.0 settle brief (maintainer research, checked 2026-10-31; PROPOSED)
 14. Competent rivals and the pre-registered GO / NO-GO (maintainer research, 2026-10-31)
-15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; PROPOSED)
+15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; RULED R-BA15..R-BA18, 2026-11-01)
 
 ---
 
@@ -204,7 +204,7 @@ A benchmark page with no loss rows is a red flag; the suite treats it as a faile
 - `benchmark/report.html` + `benchmark/results.json` committed; the README "Benchmarks" section is
   generated from results.json (never hand-typed numbers) with the provenance line: date, host, CPU,
   Node, load average at start and end, quiet-lock state, run count, commit + main-file sha.
-- `npm run bench` reproduces it on any machine; `npm run bench -- --scenario S1` runs one scenario.
+- `npm run bench` reproduces it on any machine; `npm run bench -- --scenario S7` runs one scenario.
 - Every number is REPORTED tier (D-host = none): a measurement, never a law; PRELIMINARY when the host
   was NOISY (quiet-lock exit 76), and labelled so in the report header.
 - Counts (touches, pulls, splits, finger hits) are printed beside every timing; counts are exact and
@@ -958,14 +958,27 @@ dims 1..2, chunkCap 8 / 16 / 32, capacity 32 / 200 / 2,000; insert, remove, setM
 clear, reads), 0 mismatches in entities, dim-0 measures, every dim's total, the dim-0 reads (entityAt / getMeasure / sumBefore / indexAtSum) and removeAt's return value (dim 1 is checked only through totals and the directory-sum invariant -- a getMeasure(i, 1) mutant survives; only valid arguments are drawn, so no error token or check order is compared), and its own invariants held after
 every op (no chunk at chunkCap, no underflowing chunk in a multi-chunk view, directory sums exact, no chunk
 leaked, no 'pool' throw). Big-lane measures ([2^30, 2^40]) were not fuzzed.
+CLOSED (uncommitted at fb09e6f, burst 31-32): the dim-1 getMeasure mutant gap -- test/Rivals.test.mjs mutant P1
+(:824, getMeasure(i, 1) reads the dim-0 column; P1fw at :842 for FenwickRebuild) must fail its differential battery.
+STILL OPEN: the big-lane fuzz is not planned in g2a.
 
 Gaps before it is a fair Bench-ADOPT rival:
-- No cursor: S1's seek + next() walks need seekIndex / seekSum / next (chunk index + local index, O(1) next).
-- Space: the pool holds maxChunks x chunkCap slots, maxChunks = ceil(C / (chunkCap / 4)) + 2 x views + 4,
-  i.e. 4 x C + (2 x views + 5) x chunkCap element slots at most (about 4 x C only when C >> chunkCap; C = 32 at chunkCap 32 gives 10 x C at 1 view, 14 x C at 3 views), and every view allocates a maxChunks-entry directory; report memory beside time.
-- "0 B/op on steady-state hot paths" is unmeasured: sumBefore returns a double, the same boxing lane as the
-  engine's; gate it with the torture meter like the engine's lanes.
-- The 4 x unrolled directory loops are a hypothesis (PracticeOfProgramming Correction 2: unrolling can cost
+- CLOSED at HEAD fb09e6f (benchmark/rivals/BlockedArray.js: seekIndex :1096, seekSum :1136, next :1202). Was: no cursor;
+  S1's seek + next() walks need seekIndex / seekSum / next (chunk index + local index, O(1) next).
+- CLOSED at HEAD fb09e6f for the formula (static spaceSlots(capacity, chunkCap, views),
+  benchmark/rivals/BlockedArray.js:120; its doc comment gives 320 / 448 for the two C = 32 cases below and 4,006,000
+  for spaceSlots(1e6, 0, 1)); whether the report prints it beside time is group 2b. Was: the pool holds maxChunks x
+  chunkCap slots, maxChunks = ceil(C / (chunkCap / 4)) + 2 x views + 4, i.e. 4 x C + (2 x views + 5) x chunkCap element
+  slots at most (about 4 x C only when C >> chunkCap; C = 32 at chunkCap 32 gives 10 x C at 1 view, 14 x C at 3 views),
+  and every view allocates a maxChunks-entry directory; report memory beside time.
+- CLOSED (uncommitted at fb09e6f, burst 31-32; R-BA14): rival B/op lanes. benchmark/kernel-lane.mjs RIVAL_LANES (:118)
+  holds 8 rival entries (BlockedArray, FenwickRebuild full / suffix), 63 lanes in all (9 laneSet calls x 7 kernels);
+  the lanes laneSet cannot run (getMeasure, entityAt, total, seekSum + 50 next), the edit lanes and their must-fail
+  controls live in the --expose-gc child of test/Rivals.test.mjs. Was: "0 B/op on steady-state hot paths" unmeasured
+  (sumBefore returns a double, the same boxing lane as the engine's).
+- The 4 x unrolled directory loops (only _locate and indexAtSum; the draft's sumBefore directory loop is already plain,
+  SPEC-bench-adopt A2-3 (maintainer-local); variant 'plain' in benchmark/rivals/variant.mjs rewrites those two and
+  count-checks a sumBefore identity anchor) are a hypothesis (PracticeOfProgramming Correction 2: unrolling can cost
   Maglev inlining at 100 bytecode bytes): compare against the plain loop with
   LiteUtils/inlining-budget-diff.sh (driver mode) and a timed A/B.
 - The harness is single-run, not interleaved, and not under the quiet lock: its numbers are PRELIMINARY /
@@ -1136,7 +1149,8 @@ GO / NO-GO meaningless, so both SumSequence rivals are made as strong as a compe
   every node p >= i + 1 whose child j <= i. The fix: first add tree[j] to tree[j + lsb(j)] for the nodes j reached by
   peeling the low bits of i (`for (j = i; j > 0; j &= j - 1)`), which are exactly the nodes j <= i whose parent lies
   past i; then cascade j = i + 1..n. Cost: (n - i) copies + at most popcount(i) seeds + (n - i) cascade adds.
-- Probe (2026-10-31, a scratch script outside the repo; exact counts, not a gate -- the 'suffix' mode's oracle test lands with R-BA9): 20,000 random inserts / removes against brute prefix sums, 0
+- Probe (2026-10-31, a scratch script outside the repo; exact counts, not a gate -- the 'suffix' mode's oracle test
+  is now test/Rivals.test.mjs, uncommitted at fb09e6f): 20,000 random inserts / removes against brute prefix sums, 0
   mismatches; the naive cascade breaks within 4 ops. At n = 2^16: a middle insert costs 32,769 copies + 1 seed +
   32,767 cascade adds (a full rebuild is about 2n); a tail append costs 1 copy, 0 seeds, 0 cascade adds; a head insert
   costs the same as a full rebuild. So the rebuild part halves at the middle; with the n / 2 shifts the middle insert
@@ -1150,9 +1164,10 @@ GO / NO-GO meaningless, so both SumSequence rivals are made as strong as a compe
 - Split (R-BA10): an insert at index == length into a full last chunk splits 3/4 : 1/4 (the old chunk keeps
   chunkCap - chunkCap / 4); an insert at index 0 into a full first chunk splits 1/4 : 3/4; every other split stays
   1/2 : 1/2. This is SumSequence's 13|4 / 4|13 trigger (I-5 Table 3): a mid-chunk insert into the last chunk is not
-  an append. Today's _split is always 1/2 : 1/2 (BlockedArray.js:873-878).
+  an append. _split takes the cut from insertAt (BlockedArray.js:626-630, :879-922): B - B/4 on
+  insertAt(length), B/4 on insertAt(0), B/2 otherwise.
 - chunkCap (R-BA11): the built default is already max(16, ceil(sqrt(C))) rounded up to a multiple of 4, and the
-  constructor already rejects a chunkCap that is not a multiple of 4 (BlockedArray.js:52, :69-71), so chunkCap / 2
+  constructor already rejects a chunkCap that is not a multiple of 4 (BlockedArray.js:56, :73-75), so chunkCap / 2
   and chunkCap / 4 never truncate. The drafted clamp to [64, 4096] in steps of 16 was not adopted; the group 2b sweep
   picks the fastest chunkCap per n and reports it (4.1 "tuned per n").
 
@@ -1178,10 +1193,12 @@ reweighting. PAUSE and evaluate R-7 (B+ fanout) if BlockedArray beats SumSequenc
 other outcome (for example an S1 crossover between 64k and 100k) has no automatic verdict: the maintainer decides
 from the table. "Wins" = the median of K interleaved runs on a QUIET host; a PRELIMINARY log decides nothing.
 
-## 15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; PROPOSED)
+## 15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; RULED R-BA15..R-BA18, 2026-11-01)
 
-Status: PROPOSED input for the group 2b planner (Bench-ADOPT); nothing here is ruled, and benchmark/Scenarios.mjs
-registers no scenario yet. Every ratio below is a stated ASSUMPTION, not an observation: no op-mix telemetry from a
+Status: RULED (maintainer, AskUserQuestion, 2026-11-01: R-BA15 shape, R-BA16 S1, R-BA17 S2, R-BA18 S7; option text
+quoted in ROADMAP section 6, "Scenario rulings -- RULED"). S7 / S7b are built in benchmark/Scenarios.mjs (uncommitted
+at fb09e6f, burst 31-32); S1 and S2 are ruled but NOT built (g2b-2). Where this section's original proposal differs
+from a ruling, the ruling wins. Every ratio below is a stated ASSUMPTION, not an observation: no op-mix telemetry from a
 production virtualiser or editor is cited. The architecture references (VS Code's piece tree, CodeMirror's tree of
 lines) are from recollection and say nothing about op frequencies. What makes a mix defendable is that its weights,
 positions and sizes are printed in the report header and every op class is also reported on its own, so a reader can
@@ -1193,14 +1210,14 @@ re-weight it.
   crossover at an n that drifted during the run is meaningless.
 - Parameter set per scenario, all printed: op ratios, how each event decomposes into engine calls, the position
   distribution (uniform, near the viewport / caret, tail), the measure distribution, n, seed.
-- Bench law: measures are integers in [0, 255] (benchmark/Adapters.mjs:434), so S1 heights and S2 line lengths are
+- Bench law: measures are integers in [0, 255] (benchmark/Adapters.mjs:531-533), so S1 heights and S2 line lengths are
   capped at 255; a long-line variant would need that law revisited.
 - Report each op class (seek, walk, reweight, small edit, bulk move) and the blend separately (ROADMAP Bench-ADOPT
-  planner notes: seek and splice apart, plus the blend). Counts beside every time. Scenarios.mjs PHASES is frozen to
-  seek | splice | blend (validateBuilt); rows beyond those three need a shape change that the g2b planner must raise.
+  planner notes: seek and splice apart, plus the blend). Counts beside every time. R-BA15 supersedes the old frozen
+  PHASES (seek | splice | blend): Scenarios.mjs PHASES is now seek | walk | reweight | edit | bulk | blend.
 - Locality is real and stays in: scrolling and typing are local, which helps SumSequence's finger and every cursor.
   The report says which rivals have a finger (none) and which have a cursor (BlockedArray and FenwickRebuild; the
-  SpliceFoil has none, Adapters.mjs:563, so its S1 walk is index access).
+  SpliceFoil has none, Adapters.mjs:660-661, and runs no scenario, R-BA15).
 - A mix chosen so that the engine wins fails the honesty review (4.3), so each scenario has a variant where a rival
   is expected to win, and that variant feeds the loss table.
 

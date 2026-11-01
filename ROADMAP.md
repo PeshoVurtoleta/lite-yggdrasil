@@ -16,10 +16,12 @@
 > release (maintainer 2026-10-31: "start
 > next, i will release 0.2.0, then signal"). Committed: the Bench v2 kit copy and the blocked-array and Fenwick
 > rivals (3c6ef73), adapters / dimensions D1-D8 / kernel lane (629f04b), runner / report / README generator / Bench
-> tests (7b4187b). Left: the rival fixes R-BA9 / R-BA10, the rival tests and rival B/op lanes (g2a TASKS 5-6), the
-> docs batch, then group 2b (scenarios, sweep, unroll A/B, loss rows, quiet-host run) and the pre-registered GO /
+> tests (7b4187b). Built and APPROVED, uncommitted at fb09e6f (burst 31-32): the rival fixes R-BA9 / R-BA10 / R-BA13,
+> test/Rivals.test.mjs, the rival B/op lanes, and group 2b-1 (the scenario runner, S7 / S7b, the cross-check).
+> Left: S1 and S2 (g2b-2; ruled R-BA16 / R-BA17, not built), then the chunkCap sweep, unroll A/B, loss rows, run of
+> record and results.json (g2b-3) and the pre-registered GO /
 > NO-GO (section 5). SumMap settle input: RESEARCH.md 13
-> (PROPOSED); rivals and GO / NO-GO: RESEARCH.md 14; scenario mixes: RESEARCH.md 15 (PROPOSED).**
+> (PROPOSED); rivals and GO / NO-GO: RESEARCH.md 14; scenario mixes: RESEARCH.md 15 (RULED, R-BA15..R-BA18).**
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -117,7 +119,9 @@ Mirror `LiteLogN/` (package.json scripts, test layout, decisions/, benchmark/ co
 AS BUILT (2026-10-27): the scripts are `test`, `test:types`, `test:lanes`, `torture` and `verify`, and
 `verify` = test -> test:types -> test:lanes -> torture (`test:perf` and `bench` do not exist; no statistical
 tier, Y-13).
-Ruled 2026-10-25 (R-SC): S0 ships `npm test`, `test:types`, `verify` only; `torture` / `test:perf` arrive with SumSequence and `bench` with Bench-ADOPT, so no script is ever green on nothing. (`test:lanes` and `torture` arrived with SumSequence; `test:perf` and `bench` have not.)
+AS BUILT (2026-10-31, HEAD fb09e6f): the scripts `bench` (node benchmark/Bench.mjs), `bench:report` (Report.mjs),
+`bench:readme` (Readme.mjs --check) and `kernel-lane` exist, and `verify` ends with `npm run kernel-lane`.
+Ruled 2026-10-25 (R-SC): S0 ships `npm test`, `test:types`, `verify` only; `torture` / `test:perf` arrive with SumSequence and `bench` with Bench-ADOPT, so no script is ever green on nothing. (`test:lanes` and `torture` arrived with SumSequence; `bench` arrived with Bench-ADOPT, 7b4187b; `test:perf` has not.)
 
 ### 3.2 Oracle gate (DETERMINISTIC)
 Fuzz vs an INDEPENDENT oracle written from the spec, not from the engine: a plain JS array of
@@ -168,10 +172,54 @@ What makes it public and honest:
 - **Provenance on every table**: date, host, CPU, Node, load average start / end, quiet-lock state
   (QUIET / NOISY = PRELIMINARY), run count, commit + main-file sha. Numbers enter README / llms.txt /
   CHANGELOG only from a run log of THIS cycle, after the final gate run (suite law).
+- Benchmark rulings R-BA1..R-BA8 -- RULED (maintainer, AskUserQuestion, 2026-10-31; cited by benchmark/METHODOLOGY.md;
+  option text quoted verbatim from the maintainer-local, gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings";
+  R-BA9..R-BA11 are quoted in section 6 (Bench-ADOPT notes, "Competent rivals -- RULED"), R-BA12 in section 5,
+  R-BA13..R-BA18 in section 6 ("Scenario rulings -- RULED")):
+  R-BA1 "Commit run of record (Recommended)": "results.json and report.html are committed, but only the run of record
+  writes them. `npm run bench` writes to benchmark/out/ (gitignored); `npm run bench -- --publish`, run under
+  quiet-lock, writes benchmark/results.json and benchmark/report.html. The README pin reads the committed results.json,
+  so a local bench run never turns npm test red."
+  R-BA2 "Raw + gzip, no dep (Recommended)": "D5 reports the raw and node:zlib gzip size of Yggdrasil.js, with no
+  minifier and no new devDependency; the tree-shaking column is 'n/a' (single-file, single-member package)."
+  R-BA3 "Counts, then REPORTED fit (Recommended)": "D1 shows the deterministic splice-witness counts first (touches per
+  op against the G-11 bound, the foil's moves per op), then the REPORTED ns/op vs log2 n fit with lite-logn's r2 0.958
+  printed as a reference only; neither gates anything."
+  R-BA4 "Hand-written (Recommended)": "The Fenwick + rebuild rival is hand-written in benchmark/rivals/FenwickRebuild.js
+  from LiteVirtual Virtual.js:46-84 under the fair-rival rules; its rebuild runs in place into preallocated arrays, and
+  the report header names its source as file:line @ sha. No new devDependency (lite-logn arrives as a devDependency with
+  SumMap)."
+  R-BA5 "QUIET run only (Recommended)": "README carries numbers only from a QUIET run of record; a PRELIMINARY
+  results.json renders the R-B1 PENDING form in README, and report.html shows the numbers labelled PRELIMINARY."
+  R-BA6 "Current text, byte-exact (Recommended)": "The generator's PENDING form reproduces the current README Benchmarks
+  paragraph byte-for-byte with <version> from package.json, so this repo-only unit changes no shipped file."
+  R-BA7 "In npm run verify (Recommended)": "The rival B/op lanes are chained into npm run verify (folded into
+  benchmark/kernel-lane.mjs with the engine adapter lanes); a rival that allocates fails verify."
+  R-BA8 "moves only (Recommended)": "Fenwick pairs only moves (elements shifted) with the engine; node visits and
+  rebuilds print in native columns; touches = n/a."
 - **Generated, not typed.** The README "Benchmarks" section and `benchmark/report.html` are generated
-  from `benchmark/results.json`; a test pins that the README table equals the generator output.
-- **Reproduce**: `npm run bench` (all), `npm run bench -- --scenario S1` (one); the report header
+  from `benchmark/results.json`; test/Bench.test.mjs pins it ("A4: render(null) == README section == README.HEAD
+  section", with a 1-byte-mutation control;
+  "A4: README pin survives a committed results.json"): the README Benchmarks section equals the generator's
+  PENDING form, byte for byte (R-BA6).
+- **Reproduce**: `npm run bench` (all), `npm run bench -- --scenario S7` (one); the report header
   prints the exact command.
+- AS BUILT (2026-10-31, HEAD fb09e6f; commits 3c6ef73, 629f04b, 7b4187b; group 1 B1-B4): benchmark/Bench.mjs (runner),
+  Report.mjs, Readme.mjs (README generator, `--check`), Dimensions.mjs (D1-D8), Adapters.mjs, Scenarios.mjs (registry,
+  EMPTY: S1 / S2 / S7 arrive in group 2b), Matrix.mjs, kernel-lane.mjs (engine adapter B/op lanes; RIVAL_LANES = []),
+  METHODOLOGY.md, and test/Bench.test.mjs (76 tests in 6 suites, 76 pass,
+  run 2026-10-31). At that commit not built: benchmark/results.json and report.html (no run of record yet; the README
+  shows the PENDING form), the rival fixes, the rival tests and rival B/op lanes, and group 2b. The registry and
+  RIVAL_LANES figures in this line are as of fb09e6f; the next line supersedes them.
+- AS BUILT (uncommitted at fb09e6f, burst 31-32; g2a + g2b-1; APPROVED by review): FenwickRebuild 'suffix' mode
+  (R-BA9, R-BA13); BlockedArray asymmetric split (R-BA10); test/Rivals.test.mjs (differential, 28 mutants, the
+  --expose-gc B/op child, the edit lane); kernel-lane.mjs 63 lanes (9 laneSet calls x 7 kernels: SumSequence + 8
+  RIVAL_LANES, R-BA14); Adapters.mjs (rivals BlockedArray, BlockedArray.plain, FenwickRebuild.suffix,
+  FenwickRebuild.full; FenwickFixed RETIRED, R-BA18; cursorWalkSum, createViews); Scenarios.mjs (R-BA15 shape,
+  runScript, S7 / S7b, phaseEndState); Bench.mjs (scenario child, keys <label>/<Sid>@<n>, crossCheck of checksum +
+  endState + traceHash, exit 1 on a mismatch, exit 2 on a duplicate key); test/Scenarios.test.mjs. Not built: S1 and
+  S2 (g2b-2), the chunkCap sweep, the unroll A/B, the run of record and results.json (g2b-3), the bulk and
+  view-indexed opcodes.
 - **Rivals at a pinned version** (`sorted-btree`, `@flatten-js/interval-tree`, lite-logn) as
   devDependencies, their versions printed in the header; a rival that cannot answer a query gets
   `n/a` with the reason.
@@ -424,7 +472,7 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   measured; the crossover n comes only from this cycle's quiet-host run log.
 - Rival draft (2026-10-31, RESEARCH 12.3): researchNotes/BlockedArray.md (repo-local, not committed), 0
   mismatches against the Oracle over 500,083 fuzzed ops. Before it is the rival (in benchmark/, section 4.1):
-  add a cursor (seekIndex / seekSum / next) for S1; report space beside time (at most 4 x C + (2 x views + 5) x chunkCap element slots plus a directory per view); gate its B/op lanes like the engine's; A/B its 4 x unrolled loops against plain
+  add a cursor (seekIndex / seekSum / next) for S1 (DONE, 3c6ef73; RESEARCH 12.3); report space beside time (at most 4 x C + (2 x views + 5) x chunkCap element slots plus a directory per view); gate its B/op lanes like the engine's (DONE, uncommitted at fb09e6f; R-BA14); A/B its 4 x unrolled loops against plain
   ones (LiteUtils/inlining-budget-diff.sh driver mode + a timed run); interleaved runs under the quiet lock
   with the LiteO1 benchmark harness; sweep chunkCap and leafSize; add a net-growth edit phase (its edit cells almost never split or merge).
 - Inlining gate for every member that edits a hot function: LiteUtils/inlining-budget-diff.sh, driver mode,
@@ -441,12 +489,55 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   R-BA11 "Sweep picks per n (Recommended)": "The default stays max(16, ceil(sqrt(C))) rounded up to a multiple of 4
   (as built); the group 2b sweep runs each n over a chunkCap grid and the fastest chunkCap per n is the rival's
   reported value, printed in the header (RESEARCH 4.1 'chunk size tuned per n')."
-- Scenario mixes (PROPOSED, not ruled; RESEARCH 15): fixed n with balanced structural ops; every mix's ratios,
-  positions, measure distribution, n and seed printed; each op class reported apart from the blend; S1 = local scroll
-  + visible-window next() walk, near-viewport remeasures, S1a tail-feed / S1b list-edit structural variants; S2 =
+- Scenario rulings -- RULED (maintainer, AskUserQuestion; R-BA13 2026-10-31, R-BA14..R-BA18 2026-11-01; option text
+  quoted verbatim from the maintainer-local, gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"). S7 / S7b
+  are built (uncommitted at fb09e6f); S1 / S2 (R-BA16, R-BA17) are ruled but not built (g2b-2):
+  R-BA13 "Suffix append too (Recommended)" (2026-10-31, maintainer, AskUserQuestion): "In mode 'suffix', append
+  rebuilds only the tree nodes from the old length onward (O(k + log n)), because nodes 1..n already hold exact sums;
+  mode 'full' keeps the full O(n + k) rebuild. "Keeping splitAt / append" in R-BA9 means the same operations, tokens
+  and check order, not the same rebuild cost. The suffix-vs-full differential covers append."
+  R-BA14 "Accept split (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "Rival B/op lanes that kernel-lane's
+  laneSet runs (insert / remove / setMeasure / indexAtSum / sumBefore / cursor walk) stay in
+  benchmark/kernel-lane.mjs; the read and cursor lanes it cannot run (getMeasure, entityAt, total, seekSum + 50 next)
+  and their must-fail controls live in the --expose-gc child of test/Rivals.test.mjs. Both run in npm run verify, so a
+  rival that allocates still fails verify; R-BA7's "folded into kernel-lane" is read as "in verify, kernel-lane where
+  laneSet can run it"."
+  R-BA15 "New phases (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "The SCENARIO shape gains id
+  /^S\d+[a-z]?$/, so S1a, S1b, S2a, S2b and S7b are their own ids, plus the required keys dims (1..4), views (1 or 3)
+  and mix (a plain object of ratios, positions, measure distribution and events, printed in the report header).
+  build(adapter, n, seed) returns { capacity, fill: Int32Array(n x dims), phases }. The runner creates the handle
+  (create, or createViews for 3 views), fills it untimed and refills it before every phase. PHASES becomes seek | walk |
+  reweight | edit | bulk | blend ('splice' is retired). A phase replays its class's events out of one 20-block
+  (20,000-event) stream, with blend last. The adapter contract gains the optional cursorWalkSum(d, y, k) (seekSum,
+  then up to k - 1 next(), returning the sum of measure(d) over the visited rows) and createViews(capacity, dims, k <=
+  3). D-rows stay SumSequence + SpliceFoil; the foil runs no scenario."
+  R-BA16 "S1a + S1b (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "S1 runs at dims 1, with sizes
+  2^10..2^19, 100000 and 1000000. Per 1,000 events: 920 frames cursorWalkSum(0, y, 30). y moves by a uniform delta in
+  [-512, 512], clamped to [0, total - 1]; 2% of frames jump to a uniform y. 50 setMeasure(i, 0, h), with i uniform in
+  [top - 8, top + 38], clamped. 30 structural ops: 15 insertAt + 15 removeAt, alternating, so the length stays in [n -
+  1, n + 1]. S1a inserts at length and removes at 0; S1b inserts and removes in [top - 8, top + 38]. Heights (fill,
+  remeasure and insert): 80% are 32, 15% are uniform in [20, 200], 5% are 0. Phases: walk, reweight, edit, blend."
+  R-BA17 "Dims 2 + bulk (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "S2 runs at dims 2: d0 = UTF-16
+  units including the newline, d1 = UTF-8 bytes (d0 for 90% of lines, else d0 + uniform [1, d0], capped at 255). d0 is
+  1 for 10% of lines, uniform [2, 81] for 85%, uniform [82, 255] for 5%. Sizes are 2^10..2^17 and 100000. The caret
+  moves by a uniform [-3, 3] lines, with a 1% jump. Per 1,000 events: 600 char edits: setMeasure on both dims, +1
+  (60%) or -1 (40%), never below 1. 50 Enter (setMeasure + insertAt) and 50 line-start backspace (setMeasure +
+  removeAt), alternating. 150 mid edits: k in [10, 50] consecutive lines, setMeasure on both dims. 50 bulk ops: 25 cut +
+  25 paste of L = uniform [2000, 10000] x min(1, n / 100000) lines (at least 2), over 3 views (main, clip, tail). 100
+  seeks: 50 indexAtSum(0, caret offset + [0, len)) and 50 sumBefore(0, caret +- [0, 50]). S2a = character edits,
+  splits / joins and seeks; S2b = bulk only."
+  R-BA18 "Suffix, no FenwickFixed (Recommended)" (2026-11-01, maintainer, AskUserQuestion): "S7 runs at dims 1 and n
+  in {10000, 100000, 1000000}. Weights fill uniform in [1, 255]. Per 1,000 events: 500 indexAtSum(0, y), y uniform in
+  [0, total), each followed by setMeasure(i, 0, w) on the drawn i, w uniform in [0, 255]. S7b = 950 draws + 50
+  setMeasure at uniform i. The Fenwick rival is FenwickRebuild mode 'suffix'. The FenwickFixed slot is retired, and
+  its reason is printed in the header. Phases: seek, reweight, blend."
+- Scenario mixes (the original proposal, superseded by R-BA15..R-BA18 above; RESEARCH 15): fixed n with balanced
+  structural ops; every mix's ratios, positions, measure distribution, n and seed printed; each op class
+  reported apart from the blend; S1 = local scroll +
+  visible-window next() walk, near-viewport remeasures, S1a tail-feed / S1b list-edit structural variants; S2 =
   caret-local typing, Enter / backspace as insertAt / removeAt, balanced bulk cut / paste, S2a typing-only and S2b
   bulk-only variants; S7 = 1:1 draw + reweight and S7b draw-heavy. The ratios are assumptions until a real host is
-  instrumented (RESEARCH 15.5). The g2b planner turns them into scenario specs and asks the maintainer to rule them.
+  instrumented (RESEARCH 15.5). The maintainer ruled the specs (R-BA15..R-BA18, 2026-11-01).
 
 ### Queued -- SumMap 0.2.0, IntervalMap 0.3.0, Yggdrasil pool 0.4.0 (one full brief each at greenlight)
 

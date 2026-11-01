@@ -4,24 +4,31 @@
  * MIT (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
  * Repo-only (never in package.json files[], never imported by Yggdrasil.js). Bench-ADOPT
- * group 1 TASK 3 (.handoff/PLAN-bench-adopt-g1.md SPEC "ADAPTER"); B3 freezes this contract,
- * group 2b fills RIVAL_SLOTS through rivalAdapter() below without changing it.
+ * group 1 TASK 3 (.handoff/PLAN-bench-adopt-g1.md SPEC "ADAPTER"); B3 froze this contract;
+ * group 2b-1 (.handoff/PLAN-bench-adopt-g2b1.md TASKS 1-2, SPEC BA-17 / BA-20) adds the optional
+ * ops cursorWalkSum / createViews and registers the rivals through rivalAdapter() below.
  *
  * ADAPTER (validateAdapter, fail closed, every error names the bad field):
  *   { name, role: 'subject'|'primary'|'rival'|'counter', version: 'hand-written'|semver,
  *     params: plain object (printed in the report header), counterMap: bool[12] in
  *     SumSequence.COUNTERS order, extraCounts: string[] (native counters with no engine
- *     pair), na: { op: reason } for every optional op the handle lacks,
- *     create(capacity, dims, tune?) -> handle, createPair?(capacity, dims, tune?) -> [a, b] }
+ *     pair), na: { op: reason } for every optional op the handle (or adapter) lacks,
+ *     create(capacity, dims, tune?) -> handle, createPair?(capacity, dims, tune?) -> [a, b],
+ *     createViews?(capacity, dims, k, tune?) -> k handles (k an integer in 1..3; R-BA15). capacity
+ *     is the arena TOTAL shared by the k views for SumSequence / BlockedArray (one arena), and
+ *     PER INSTANCE for FenwickRebuild (k independent instances, no arena) }
  *   handle: insertAt(i, e, m0, m1?, m2?, m3?) (slots past dims are ignored, never forwarded:
  *     the engine rejects a defined slot beyond dims), removeAt(i), setMeasure(i, d, m),
  *     indexAtSum(d, y), sumBefore(d, i), length(), clear(), readCounts(Int32Array(12)),
  *     resetCounts(), readExtras(Float64Array(extraCounts.length)) when extraCounts is non-empty;
  *     optional: splitAt(i, out), append(other) (out / other from createPair), cursorWalk(i, k)
- *     (seek to i, then up to k - 1 next(); returns the elements visited), bytes() (typed-array
- *     bytes held). A missing optional op is legal only with its na[op] reason; a present op
- *     with an na reason is a contradiction (throws).
- *   tune: adapter-specific knobs (SumSequence: { leafSize }), validated by the adapter.
+ *     (seek to i, then up to k - 1 next(); returns the elements visited), cursorWalkSum(d, y, k)
+ *     (seekSum(d, y), then up to k - 1 next(); returns the sum of measure(d) over the visited
+ *     rows, 0 when the seek lands on no row; R-BA15), bytes() (typed-array bytes held). A
+ *     missing optional op (handle op, or the adapter's createViews) is legal only with its
+ *     na[op] reason; a present op with an na reason is a contradiction (throws).
+ *   tune: adapter-specific knobs (SumSequence: { leafSize }; BlockedArray: { chunkCap, variant };
+ *     SpliceFoil / FenwickRebuild take none), validated by the adapter.
  *
  * COUNTS record (countsRecord): 12 keys touches..seamRepairs in COUNTERS order; an integer
  * where counterMap is true, the STRING 'n/a' where it is false (never 0); extras = named
@@ -36,6 +43,9 @@
  */
 
 import { SumSequence, VERSION } from '../Yggdrasil.js';
+import { BlockedArray } from './rivals/BlockedArray.js';
+import { FenwickRebuild } from './rivals/FenwickRebuild.js';
+import { VARIANTS, loadVariant } from './rivals/variant.mjs';
 
 export const NA = 'n/a';
 export const NC = 12;
@@ -47,9 +57,14 @@ export const COUNTER_NAMES = Object.freeze(Object.keys(SumSequence.COUNTERS)
 export const ROLES = Object.freeze(['subject', 'primary', 'rival', 'counter']);
 export const REQUIRED_OPS = Object.freeze(['insertAt', 'removeAt', 'setMeasure', 'indexAtSum', 'sumBefore',
     'length', 'clear', 'readCounts', 'resetCounts']);
-export const OPTIONAL_OPS = Object.freeze(['splitAt', 'append', 'cursorWalk', 'bytes']);
+/** Every optional op an na reason may name: the handle ops, then the adapter-level createViews. */
+export const OPTIONAL_OPS = Object.freeze(['splitAt', 'append', 'cursorWalk', 'cursorWalkSum', 'bytes',
+    'createViews']);
+const HANDLE_OPTIONAL_OPS = OPTIONAL_OPS.filter((op) => op !== 'createViews');
 const ADAPTER_KEYS = ['name', 'role', 'version', 'params', 'counterMap', 'extraCounts', 'na', 'create',
-    'createPair'];
+    'createPair', 'createViews'];
+/** createViews(capacity, dims, k): k is an integer in [1, VIEWS_MAX] (R-BA15: 1 or 3 views). */
+export const VIEWS_MAX = 3;
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 // ---- cold helpers --------------------------------------------------------------------------
@@ -73,6 +88,13 @@ function lev(a, b) {
         const t = prev; prev = cur; cur = t;
     }
     return prev[n];
+}
+
+/** Cold: createViews' k must be an integer in [1, VIEWS_MAX]; throws naming the adapter. */
+function checkViews(name, k) {
+    if (!Number.isInteger(k) || k < 1 || k > VIEWS_MAX) {
+        adFail(name + '.createViews', 'k must be an integer in 1..' + VIEWS_MAX + ', got ' + String(k));
+    }
 }
 
 /** Did-you-mean hint for an unknown key (cold). */
@@ -137,11 +159,40 @@ export function validateAdapter(a) {
     for (const op of REQUIRED_OPS) {
         if (typeof h[op] !== 'function') adFail('handle.' + op, 'must be a function');
     }
-    for (const op of OPTIONAL_OPS) {
+    for (const op of HANDLE_OPTIONAL_OPS) {
         const live = typeof h[op] === 'function';
         const reason = typeof a.na[op] === 'string';
         if (live && reason) adFail('na.' + op, 'the handle implements ' + op + ' (drop the n/a reason)');
         if (!live && !reason) adFail('handle.' + op, 'missing: implement it or give na.' + op + ' a reason');
+    }
+    if (a.createViews !== undefined && typeof a.createViews !== 'function') adFail('createViews', 'must be a function');
+    const cvLive = typeof a.createViews === 'function';
+    const cvReason = typeof a.na.createViews === 'string';
+    if (cvLive && cvReason) adFail('na.createViews', 'the adapter implements createViews (drop the n/a reason)');
+    if (!cvLive && !cvReason) adFail('createViews', 'missing: implement it or give na.createViews a reason');
+    if (cvLive) {
+        // every k in 1..VIEWS_MAX: exactly k distinct empty views, each with the required ops and every
+        // optional handle op the adapter declares live (no na reason), the same surface as create()'s handle
+        for (let k = 1; k <= VIEWS_MAX; k++) {
+            const vs = a.createViews(8 * k, 1, k);
+            if (!Array.isArray(vs) || vs.length !== k) adFail('createViews', 'k = ' + k + ' must return an array of exactly k handles');
+            for (const v of vs) {
+                if (v === null || typeof v !== 'object') adFail('createViews', 'must return handle objects');
+                for (const op of REQUIRED_OPS) if (typeof v[op] !== 'function') adFail('createViews.handle.' + op, 'must be a function');
+                for (const op of HANDLE_OPTIONAL_OPS) {
+                    if (typeof a.na[op] !== 'string' && typeof v[op] !== 'function') {
+                        adFail('createViews.handle.' + op, 'declared live (no na reason) but missing on a view');
+                    }
+                }
+                if (v.length() !== 0) adFail('createViews', 'a new view must be empty');
+            }
+            if (new Set(vs).size !== k) adFail('createViews', 'k = ' + k + ' must return k distinct handles');
+        }
+        for (const k of [0, VIEWS_MAX + 1, 1.5]) {
+            let threw = false;
+            try { a.createViews(8, 1, k); } catch (e) { threw = true; }
+            if (!threw) adFail('createViews', 'k = ' + k + ' must throw (k is an integer in 1..' + VIEWS_MAX + ')');
+        }
     }
     if (ex.length > 0 && typeof h.readExtras !== 'function') adFail('handle.readExtras', 'required when extraCounts is non-empty');
     if (h.length() !== 0) adFail('create', 'a new handle must be empty');
@@ -255,14 +306,20 @@ export function translateCounterMap(counterMap, nativeCounters) {
 /**
  * Build (do NOT register) an adapter for a rival class with static COUNTERS + COUNTER_MAP and
  * readCounters(out: Int32Array) / resetCounters(). spec: { name, role, version, params, Class,
- * make(capacity, dims, tune) -> instance, makePair?(capacity, dims, tune) -> [a, b], na }.
+ * make(capacity, dims, tune) -> instance, makePair?(capacity, dims, tune) -> [a, b],
+ * makeViews?(capacity, dims, k, tune) -> k instances, na }.
  * The instance supplies insertAt / removeAt / setMeasure / indexAtSum / sumBefore / clear /
- * length; splitAt / append / cursor() / bytes() become live ops when present and not in na.
+ * length; splitAt / append / cursor() / bytes() become live ops when present and not in na
+ * (cursor() gives both cursorWalk and cursorWalkSum). createViews is live when makeViews is
+ * given and na.createViews is not; a spec without makeViews (the group 2a form) gets the
+ * na.createViews reason below unless it names its own, so an older spec still validates.
  */
 export function rivalAdapter(spec) {
     const tr = translateCounterMap(spec.Class.COUNTER_MAP, spec.Class.COUNTERS);
     tr.f64 = acceptsF64(spec, Math.max(tr.nativeN, 8));
     const na = Object.assign({}, spec.na || {});
+    const views = typeof spec.makeViews === 'function' && !na.createViews;
+    if (!views && !na.createViews) na.createViews = 'rival spec gives no makeViews (one view per create)';
     const wrap = (inst, dims) => rivalHandle(inst, dims, tr, na);
     const a = {
         name: spec.name, role: spec.role, version: spec.version, params: spec.params,
@@ -271,6 +328,12 @@ export function rivalAdapter(spec) {
     };
     if (typeof spec.makePair === 'function') {
         a.createPair = (C, dims, tune) => spec.makePair(C, dims, tune).map((x) => wrap(x, dims));
+    }
+    if (views) {
+        a.createViews = (C, dims, k, tune) => {
+            checkViews(spec.name, k);
+            return spec.makeViews(C, dims, k, tune).map((x) => wrap(x, dims));
+        };
     }
     return a;
 }
@@ -288,9 +351,17 @@ function acceptsF64(spec, n) {
     }
 }
 
-/** Cold thrower: a paired counter that does not fit the Int32Array(12) COUNTS read (never wrap). */
+/**
+ * Cold thrower: a paired counter that does not fit the Int32Array(12) COUNTS read (never wrap): >= 2^31, or
+ * negative (a rival's Int32 counter that already wrapped).
+ */
 function adOverflow(name, j, v) {
-    adFail(name + '.readCounts', COUNTER_NAMES[j] + ' = ' + v + ' does not fit an Int32Array slot (>= 2^31)');
+    adFail(name + '.readCounts', COUNTER_NAMES[j] + ' = ' + v + ' is negative (an Int32 wrap) or >= 2^31');
+}
+
+/** Cold thrower: a native extra counter read negative (an Int32 wrap): never reported. */
+function adExtraBad(name, j, v) {
+    adFail(name + '.readExtras', 'extra slot ' + j + ' = ' + v + ' is negative (an Int32 wrap)');
 }
 
 function rivalHandle(inst, dims, tr, na) {
@@ -314,14 +385,18 @@ function rivalHandle(inst, dims, tr, na) {
                 const p = pair[j];
                 if (p < 0) { out[j] = 0; continue; }
                 const v = scratch[p];
-                if (!(v < 2147483648)) adOverflow(name, j, v);
+                if (!(v >= 0 && v < 2147483648)) adOverflow(name, j, v);
                 out[j] = v;
             }
         },
         resetCounts() { inst.resetCounters(); },
         readExtras(out) {
             inst.readCounters(scratch);
-            for (let j = 0; j < xs.length; j++) out[j] = scratch[xs[j]];
+            for (let j = 0; j < xs.length; j++) {
+                const v = scratch[xs[j]];
+                if (!(v >= 0)) adExtraBad(name, j, v);
+                out[j] = v;
+            }
         },
     };
     if (typeof inst.splitAt === 'function' && !na.splitAt) h.splitAt = (i, out) => { inst.splitAt(i, out.instance); };
@@ -333,6 +408,16 @@ function rivalHandle(inst, dims, tr, na) {
             let s = 1;
             while (s < k && cur.next()) s++;
             return s;
+        };
+    }
+    if (typeof inst.cursor === 'function' && !na.cursorWalkSum) {
+        const cur = inst.cursor();
+        h.cursorWalkSum = (d, y, k) => {
+            if (!cur.seekSum(d, y)) return 0;
+            let sum = cur.measure(d);
+            let s = 1;
+            while (s < k && cur.next()) { sum += cur.measure(d); s++; }
+            return sum;
         };
     }
     if (typeof inst.bytes === 'function' && !na.bytes) h.bytes = () => inst.bytes();
@@ -392,6 +477,13 @@ function ssHandle(seq, dims) {
             while (s < k && cur.next()) s++;
             return s;
         },
+        cursorWalkSum(d, y, k) {
+            if (!cur.seekSum(d, y)) return 0;
+            let sum = cur.measure(d);
+            let s = 1;
+            while (s < k && cur.next()) { sum += cur.measure(d); s++; }
+            return sum;
+        },
         bytes() { return ssBytes(seq); },
     };
 }
@@ -411,6 +503,11 @@ export const SumSequenceAdapter = {
     createPair(capacity, dims, tune) {
         const B = ssTune(tune);
         return SumSequence.arena(capacity, { dims, leafSize: B }, 2).map((v) => ssHandle(v, dims));
+    },
+    createViews(capacity, dims, k, tune) {
+        checkViews('SumSequence', k);
+        const B = ssTune(tune);
+        return SumSequence.arena(capacity, { dims, leafSize: B }, k).map((v) => ssHandle(v, dims));
     },
 };
 
@@ -561,7 +658,9 @@ export const SpliceFoilAdapter = {
         splitAt: 'foil: the splice witness covers insert / remove / seek only',
         append: 'foil: the splice witness covers insert / remove / seek only',
         cursorWalk: 'foil: no cursor (index access is O(1) on a JS Array)',
+        cursorWalkSum: 'foil: no cursor (index access is O(1) on a JS Array)',
         bytes: 'foil: JS Array columns have no typed-array byte count',
+        createViews: 'foil: runs no scenario, D-rows only (R-BA15); one view per create',
     },
     create(capacity, dims, tune) {
         if (tune !== undefined) adFail('SpliceFoil.tune', 'takes no tune object');
@@ -569,36 +668,167 @@ export const SpliceFoilAdapter = {
     },
 };
 
+// ---- BlockedArray (rival, RESEARCH 4.1 / 12.3; SPEC BA-14 / BA-15) --------------------------
+// tune { chunkCap, variant }: chunkCap an integer multiple of 4 in [8, 2^16] (the class rule, plus
+// a cap so a tune value can never size a huge pool; omitted = the class default
+// max(16, ceil(sqrt(C))) rounded up to a multiple of 4, BA-15); variant 'unrolled' | 'plain'
+// (benchmark/rivals/variant.mjs). One adapter per variant: the registered BlockedArray is
+// 'unrolled' (the file as written); `await blockedArrayAdapter('plain')` builds the other from a
+// data: URL (async, cold) and names it 'BlockedArray.plain'. A tune naming another variant than the
+// adapter's throws (fail closed). params.chunkCap is the printed default rule, never a measured
+// value: the chunkCap a cell actually used is per-cell data, read from h.instance.chunkCap.
+
+const BA_TUNE_KEYS = ['chunkCap', 'variant'];
+const BA_CC_MAX = 1 << 16;
+const BA_CC_DEFAULT = 'default: max(16, ceil(sqrt(C))) rounded up to a multiple of 4';
+
+/** Cold: the chunkCap a tune asks for (0 = the class default for C). */
+function baTune(tune, variant) {
+    if (tune === undefined) return 0;
+    if (!isPlain(tune)) adFail('BlockedArray.tune', 'must be a plain object');
+    for (const k of Object.keys(tune)) {
+        if (!BA_TUNE_KEYS.includes(k)) adFail('BlockedArray.tune.' + k, 'unknown key' + didYouMean(k, BA_TUNE_KEYS));
+    }
+    if (tune.variant !== undefined) {
+        if (typeof tune.variant !== 'string' || !Object.prototype.hasOwnProperty.call(VARIANTS, tune.variant)) {
+            adFail('BlockedArray.tune.variant', 'must be one of ' + Object.keys(VARIANTS).join(' | '));
+        }
+        if (tune.variant !== variant) {
+            adFail('BlockedArray.tune.variant', "'" + tune.variant + "' is not this adapter's variant ('" + variant +
+                "'): build it with await blockedArrayAdapter('" + tune.variant + "')");
+        }
+    }
+    const cc = tune.chunkCap;
+    if (cc === undefined) return 0;
+    if (!Number.isInteger(cc) || cc < 8 || cc > BA_CC_MAX || (cc & 3) !== 0) {
+        adFail('BlockedArray.tune.chunkCap', 'must be an integer multiple of 4 in [8, ' + BA_CC_MAX + ']');
+    }
+    return cc;
+}
+
+const baName = (variant) => 'BlockedArray' + (variant === 'unrolled' ? '' : '.' + variant);
+
+function baAdapterFor(Class, variant) {
+    const params = Object.freeze({ chunkCap: BA_CC_DEFAULT, variant,
+        arenaViews: 'createPair 2 / createViews k (1..3), one arena' });
+    return rivalAdapter({
+        name: baName(variant), role: 'rival', version: 'hand-written', params, Class,
+        make: (C, dims, tune) => new Class(C, { dims, chunkCap: baTune(tune, variant) }),
+        makePair: (C, dims, tune) => Class.arena(C, { dims, chunkCap: baTune(tune, variant) }, 2),
+        makeViews: (C, dims, k, tune) => Class.arena(C, { dims, chunkCap: baTune(tune, variant) }, k),
+        na: {},
+    });
+}
+
+export const BlockedArrayAdapter = baAdapterFor(BlockedArray, 'unrolled');
+
+// variant -> Promise<adapter> (two concurrent first calls share one load); variant -> adapter once loaded
+// (selectAdapter's synchronous lookup). A failed load is dropped from the promise cache and rethrown.
+const BA_VARIANT_PENDING = new Map();
+const BA_VARIANT_LOADED = new Map();
+
+/**
+ * Async variant factory (cold): the BlockedArray adapter of one variant of
+ * benchmark/rivals/variant.mjs, validated. 'unrolled' is the registered BlockedArrayAdapter (the
+ * identity variant, the file as written); any other variant is imported once from a data: URL,
+ * named 'BlockedArray.<variant>', and cached (the promise). An unknown variant throws.
+ */
+export function blockedArrayAdapter(variant = 'unrolled') {
+    if (typeof variant !== 'string' || !Object.prototype.hasOwnProperty.call(VARIANTS, variant)) {
+        return Promise.reject(new Error('[bench] adapter BlockedArray.variant: must be one of ' +
+            Object.keys(VARIANTS).join(' | ')));
+    }
+    if (variant === 'unrolled') return Promise.resolve(BlockedArrayAdapter);
+    let p = BA_VARIANT_PENDING.get(variant);
+    if (p === undefined) {
+        p = loadVariant(variant).then((mod) => {
+            const a = validateAdapter(baAdapterFor(mod.BlockedArray, variant));
+            BA_VARIANT_LOADED.set(a.name, a);
+            return a;
+        }, (e) => {
+            BA_VARIANT_PENDING.delete(variant);
+            throw e;
+        });
+        BA_VARIANT_PENDING.set(variant, p);
+    }
+    return p;
+}
+
+// ---- FenwickRebuild (rival, SPEC BA-4 / BA-8 / BA-13 / BA-13a) -------------------------------
+// One adapter per mode: 'suffix' (the strong rival, S7 / S7b per R-BA18) and 'full' (the
+// LiteVirtual-today baseline row). No shared arena: createPair / createViews build independent
+// instances. Takes no tune object.
+
+const FW_SOURCE = 'LiteVirtual Virtual.js:46-84 @ sha256 331cca9f';
+
+function fwAdapter(mode) {
+    const name = 'FenwickRebuild.' + mode;
+    const make = (C, dims, tune) => {
+        if (tune !== undefined) adFail(name + '.tune', 'takes no tune object');
+        return new FenwickRebuild(C, { dims, mode });
+    };
+    return rivalAdapter({
+        name, role: 'rival', version: 'hand-written',
+        params: { mode, source: FW_SOURCE, views: 'independent instances (no arena)' },
+        Class: FenwickRebuild,
+        make,
+        makePair: (C, dims, tune) => [make(C, dims, tune), make(C, dims, tune)],
+        makeViews: (C, dims, k, tune) => {
+            const out = [];
+            for (let j = 0; j < k; j++) out.push(make(C, dims, tune));
+            return out;
+        },
+        na: {},
+    });
+}
+
+export const FenwickSuffixAdapter = fwAdapter('suffix');
+export const FenwickFullAdapter = fwAdapter('full');
+
 // ---- registry ------------------------------------------------------------------------------
 
-/** Live adapters, validated at module load (fail closed). */
-export const ADAPTERS = Object.freeze([SumSequenceAdapter, SpliceFoilAdapter]);
+/**
+ * Live adapters, validated at module load (fail closed). D-rows never reach the rivals: the
+ * D1..D8 members are Matrix.mjs SUBJECTS + FOIL only (Dimensions.mjs MEMBERS, Bench.mjs runCell).
+ */
+export const ADAPTERS = Object.freeze([SumSequenceAdapter, SpliceFoilAdapter, BlockedArrayAdapter,
+    FenwickSuffixAdapter, FenwickFullAdapter]);
 for (const a of ADAPTERS) validateAdapter(a);
 
 /**
- * Rival slots not yet registered: each renders 'n/a' with its reason. Group 2b replaces a
- * slot with a live adapter built by rivalAdapter() (and moves it into ADAPTERS).
+ * Rival slots not yet registered: each renders 'n/a' with its reason (Bench.mjs meta.rivals).
+ * Group 2b-1 registered BlockedArray and FenwickRebuild (.suffix / .full), so none is pending.
  */
-export const RIVAL_SLOTS = {
-    BlockedArray: {
-        status: 'PENDING', role: 'rival',
-        reason: 'rival class landed (benchmark/rivals/BlockedArray.js); adapter registration is group 2b',
-    },
-    FenwickRebuild: {
-        status: 'PENDING', role: 'rival',
-        reason: 'rival class landed (benchmark/rivals/FenwickRebuild.js); adapter registration is group 2b',
-    },
-    FenwickFixed: {
-        status: 'PENDING', role: 'counter',
-        reason: 'counter-foil (Fenwick on a fixed-length, resize-only workload, S7): not built; group 2b',
-    },
-};
+export const RIVAL_SLOTS = {};
 
-/** The live adapter by name; an unknown name throws (a PENDING rival slot names its reason). */
+/**
+ * Retired slots (never built; selectAdapter throws with the reason). FenwickFixed: R-BA18.
+ */
+export const RETIRED_SLOTS = Object.freeze({
+    FenwickFixed: Object.freeze({
+        status: 'RETIRED', role: 'counter',
+        reason: 'retired by maintainer ruling R-BA18 (2026-11-01, "Suffix, no FenwickFixed"): S7 / S7b run ' +
+            "FenwickRebuild mode 'suffix'; no fixed-length Fenwick counter-foil is built",
+    }),
+});
+
+/**
+ * The live adapter by name; an unknown name throws (a pending or retired slot names its reason). A
+ * BlockedArray variant ('BlockedArray.plain') RESOLVES once `await blockedArrayAdapter('plain')` has
+ * completed in this process; before that it throws naming that call (it is never loaded synchronously).
+ */
 export function selectAdapter(name) {
     for (const a of ADAPTERS) if (a.name === name) return a;
-    if (Object.prototype.hasOwnProperty.call(RIVAL_SLOTS, name)) {
-        throw new Error('[bench] adapter ' + name + ' is ' + RIVAL_SLOTS[name].status + ': ' + RIVAL_SLOTS[name].reason);
+    if (BA_VARIANT_LOADED.has(name)) return BA_VARIANT_LOADED.get(name);
+    for (const v of Object.keys(VARIANTS)) {
+        if (v !== 'unrolled' && name === baName(v)) {
+            throw new Error('[bench] adapter ' + name + " is not loaded: call await blockedArrayAdapter('" + v + "') first");
+        }
+    }
+    for (const slots of [RIVAL_SLOTS, RETIRED_SLOTS]) {
+        if (Object.prototype.hasOwnProperty.call(slots, name)) {
+            throw new Error('[bench] adapter ' + name + ' is ' + slots[name].status + ': ' + slots[name].reason);
+        }
     }
     throw new Error('[bench] unknown adapter ' + String(name));
 }

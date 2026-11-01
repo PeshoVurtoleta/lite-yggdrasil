@@ -15,7 +15,7 @@
  * ASCII only.
  */
 
-import { selectScenario } from './Scenarios.mjs';
+import { selectScenario, scenarioSizes } from './Scenarios.mjs';
 
 /** Sentinel for a cell that does not apply. NEVER 0. */
 export const NA = 'n/a';
@@ -66,17 +66,21 @@ export function baselineFor(member, dim) {
 /**
  * Every cell the orchestrator runs, one child process per cell. No argument: (SUBJECTS + FOIL)
  * x DIMENSIONS (results.json keys '<adapter>/<Dk>'; the foil row's baseline is NA, it IS the
- * baseline, and a dimension that does not apply to it returns its n/a reason). A scenario id: that scenario's adapters x sizes (selectScenario throws
- * "unknown scenario <id>" on an id the registry does not hold).
+ * baseline, and a dimension that does not apply to it returns its n/a reason). A scenario id: that
+ * scenario's adapter labels x sizes, sizes capped at QUICK_SIZE and deduped when opts.quick
+ * (results.json keys '<label>/<Sid>@<n>'; selectScenario throws "unknown scenario <id>" on an id
+ * the registry does not hold).
  * @param {string} [scenarioId]
+ * @param {{quick?: boolean}} [opts]
  * @returns {{member:string, dim:string, baseline:string, n?:number, scenario?:string}[]}
  */
-export function cells(scenarioId) {
+export function cells(scenarioId, opts = {}) {
     const out = [];
     if (scenarioId !== undefined) {
         const s = selectScenario(scenarioId);
-        for (const member of s.adapters) {
-            for (const n of s.sizes) out.push({ member, dim: s.id, baseline: NA, n, scenario: s.id });
+        const sizes = scenarioSizes(s, opts.quick === true);
+        for (const n of sizes) {
+            for (const member of s.adapters) out.push({ member, dim: s.id, baseline: NA, n, scenario: s.id });
         }
         return out;
     }

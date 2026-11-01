@@ -15,7 +15,7 @@ import { readFileSync, existsSync } from 'node:fs';
 
 import { SumSequence } from '../Yggdrasil.js';
 import {
-    NA, NC, COUNTER_NAMES, ADAPTERS, RIVAL_SLOTS, SumSequenceAdapter, SpliceFoilAdapter,
+    NA, NC, COUNTER_NAMES, ADAPTERS, RIVAL_SLOTS, RETIRED_SLOTS, SumSequenceAdapter, SpliceFoilAdapter,
     validateAdapter, validateCounts, countsRecord, selectAdapter, didYouMean,
 } from '../benchmark/Adapters.mjs';
 import { SCENARIOS, validateScenario, selectScenario } from '../benchmark/Scenarios.mjs';
@@ -253,7 +253,9 @@ describe('A3: D1', () => {
 // ============================================================================================
 
 describe('Scenarios and adapters', () => {
-    const good = () => ({ id: 'S1', title: 'splice', adapters: ['SumSequence'], sizes: [1024], build() { return null; } });
+    // the R-BA15 shape (BA-17): id, title, dims, views, mix, adapters, sizes, build
+    const good = () => ({ id: 'S1', title: 'splice', dims: 1, views: 1, mix: { events: 20000 }, adapters: ['SumSequence'],
+        sizes: [1024], build() { return null; } });
 
     test('validateScenario: a plain valid object passes (control baseline)', () => {
         assert.equal(validateScenario(good()).id, 'S1');
@@ -272,17 +274,19 @@ describe('Scenarios and adapters', () => {
         o.titel = 'x';
         assert.throws(() => validateScenario(o), /unknown key/);
     });
-    test('selectScenario(BOGUS) throws; SCENARIOS is empty (group 2 registers them)', () => {
+    test('selectScenario(BOGUS) throws; SCENARIOS holds exactly S7 and S7b (g2b-1, R-BA18)', () => {
         assert.throws(() => selectScenario('BOGUS'), /unknown scenario BOGUS/);
-        assert.equal(SCENARIOS.length, 0);
+        assert.deepEqual(SCENARIOS.map((x) => x.id), ['S7', 'S7b']);
     });
 
     test('selectAdapter: unknown name throws; near miss gets a did-you-mean at the helper', () => {
         assert.throws(() => selectAdapter('BOGUS'), /unknown adapter BOGUS/);
         assert.ok(ADAPTERS.length >= 2);
         assert.equal(selectAdapter('SumSequence'), SumSequenceAdapter);
-        // pending rival slots fail closed with their status, never a silent stub
-        for (const name of Object.keys(RIVAL_SLOTS)) assert.throws(() => selectAdapter(name), /PENDING/);
+        // g2b-1 registered every pending rival; the retired FenwickFixed slot fails closed naming R-BA18
+        assert.equal(Object.keys(RIVAL_SLOTS).length, 0);
+        assert.ok(Object.prototype.hasOwnProperty.call(RETIRED_SLOTS, 'FenwickFixed'));
+        assert.throws(() => selectAdapter('FenwickFixed'), /RETIRED.*R-BA18/);
         assert.match(didYouMean('SumSequnce', ['SumSequence', 'SpliceFoil']), /did you mean 'SumSequence'/);
         assert.equal(didYouMean('zzzzzzzzzzzzzz', ['SumSequence']), '');
     });
@@ -418,6 +422,40 @@ describe('B3: Bench / Readme', () => {
     });
     const LOSS = [{ scenario: 'S1', winner: 'SumSequence', loser: 'SpliceFoil', crossoverN: 1024, reason: 'fixture' }];
 
+    test('B2 MUST 1: meta.rivals carries FenwickFixed RETIRED with its R-BA18 reason, and validates', () => {
+        const rv = B.rivalsMeta();
+        assert.equal(rv.FenwickFixed.status, 'RETIRED');
+        assert.equal(rv.FenwickFixed.version, NA);
+        assert.equal(rv.FenwickFixed.params, NA);
+        assert.match(rv.FenwickFixed.reason, /R-BA18/);
+        const r = results();
+        r.meta.rivals = rv;
+        assert.doesNotThrow(() => B.validateResults(r));
+        r.meta.rivals = { ...rv, FenwickFixed: { ...rv.FenwickFixed, status: 'GONE' } };
+        assert.throws(() => B.validateResults(r), /meta\.rivals\.FenwickFixed\.status/);
+    });
+    test('TASK 6: crossCheck agrees on equal rows and throws "checksum mismatch" / "traceHash mismatch"', () => {
+        const cell = (checksum, traceHash) => ({ phases: [{ phase: 'seek', checksum, traceHash }] });
+        assert.equal(B.crossCheck({ 'SumSequence/S7@1024': cell(5, 9), 'BlockedArray.plain/S7@1024': cell(5, 9),
+            'SumSequence/D1': {} }), 1);
+        assert.throws(() => B.crossCheck({ 'SumSequence/S7@1024': cell(5, 9), 'FenwickRebuild.full/S7@1024': cell(6, 9) }),
+            /checksum mismatch S7@1024 phase seek/);
+        assert.throws(() => B.crossCheck({ 'SumSequence/S7@1024': cell(5, 9), 'FenwickRebuild.full/S7@1024': cell(5, 8) }),
+            /traceHash mismatch/);
+    });
+    test('TASK 6 r1 BLOCKER 1: crossCheck throws "endState mismatch" on a planted end state (reweight checksum 0)', () => {
+        const cell = (endState) => ({ phases: [{ phase: 'reweight', checksum: 0, endState, traceHash: 9 }] });
+        assert.equal(B.crossCheck({ 'SumSequence/S7@1024': cell(7), 'FenwickRebuild.suffix/S7@1024': cell(7) }), 1);
+        assert.throws(() => B.crossCheck({ 'SumSequence/S7@1024': cell(7), 'FenwickRebuild.suffix/S7@1024': cell(8) }),
+            /endState mismatch S7@1024 phase reweight/);
+    });
+    test('TASK 6 r1 BLOCKER 3: 3 labels x 2 phases, only label 3 blend differs -> "checksum mismatch ... phase blend"', () => {
+        const cell = (blend) => ({ phases: [{ phase: 'seek', checksum: 11, endState: 1, traceHash: 2 },
+            { phase: 'blend', checksum: blend, endState: 3, traceHash: 4 }] });
+        const ok = { 'SumSequence/S7@8': cell(21), 'BlockedArray/S7@8': cell(21), 'FenwickRebuild.full/S7@8': cell(21) };
+        assert.equal(B.crossCheck(ok), 1);
+        assert.throws(() => B.crossCheck({ ...ok, 'FenwickRebuild.full/S7@8': cell(22) }), /checksum mismatch S7@8 phase blend/);
+    });
     test('A1: META_FIELDS is the 17 BA-11 names in order', () => {
         assert.deepEqual([...B.META_FIELDS], META17);
     });

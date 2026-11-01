@@ -209,6 +209,11 @@ function mixedPeak(S, count) {
 const D1_KINDS = ['insertAt.mid', 'insertAt.random', 'insertAt.grow', 'removeAt.mid', 'removeAt.random',
     'removeAt.shrink', 'setMeasure', 'indexAtSum', 'sumBefore'];
 
+// The D1 position rule, folded into traceHash with n, ops and D1_KINDS.length (the P / V / Y tables alone do not
+// carry them): '.mid' / '.grow' at n >>> 1, '.shrink' at (length - 1) >>> 1, '.random' / setMeasure / sumBefore at
+// P[k]. Bump it when the rule changes, so a changed op stream cannot keep its old hash.
+const D1_POS_RULE = 1;
+
 /** D1 quick-form ops per kind and size; the coverage floors below hold at this count too. */
 export const D1_QUICK_OPS = 64;
 
@@ -373,8 +378,9 @@ export function D1(member, opts = {}) {
             check.push(row.movesPerOp);
             if (!row.exact) violations++;
         } else if (adapter.role === 'subject') {
-            const r = d1SubjectCounts(adapter, n, opts.ops ?? (quick ? D1_QUICK_OPS : 1024), seed, boundDelta);
-            sh = foldHash(sh, r.scriptHash);
+            const ops = opts.ops ?? (quick ? D1_QUICK_OPS : 1024);
+            const r = d1SubjectCounts(adapter, n, ops, seed, boundDelta);
+            sh = foldHash(foldHash(foldHash(foldHash(foldHash(sh, r.scriptHash), n), ops), D1_KINDS.length), D1_POS_RULE);
             for (const row of r.rows) { counts.push(row); check.push(row.ops); violations += row.violations; }
         } else {
             throw new Error('[bench] D1 has no count lane for role ' + String(adapter.role) + ' (' + member + ')');

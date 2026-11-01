@@ -5,7 +5,7 @@
  *
  *     npm run bench                         # every (adapter x dimension) cell -> benchmark/out/
  *     npm run bench -- --quick              # the same, small sizes (a smoke, never a run of record)
- *     npm run bench -- --scenario S1        # one scenario's cells (exit 2 on an unknown id)
+ *     npm run bench -- --scenario S7        # one scenario's (label x size) cells (exit 2 on an unknown id)
  *     npm run bench -- --runs 3             # every cell 3 times, interleaved by pass
  *     npm run bench -- --publish            # the run of record: benchmark/results.json + report.html
  *
@@ -25,7 +25,16 @@
  * (BA-5). Every timing is REPORTED (ADR 0003 G-1); counts are DETERMINISTIC.
  *
  * Each child runs with --expose-gc; D6 children also get --no-concurrent-recompilation
- * (benchmark/METHODOLOGY.md). The parent needs no special flags. ASCII only.
+ * (benchmark/METHODOLOGY.md). The parent needs no special flags.
+ *
+ * Scenario cells (group 2b-1 TASK 6, SPEC BA-17 / BA-20): the child runs
+ * `--cell --scenario <Sid> --member <label> --n <n> [--tune <json>]` through Scenarios.mjs runScenario
+ * (create / createViews, untimed fill, refill before every phase sample, length() === n checks)
+ * and prints one row per phase {phase, unit 'ns/event', events, ops, nsPerOp, p50, p90, counts,
+ * extras, checksum, traceHash}. Keys are '<label>/<Sid>@<n>'. The orchestrator cross-checks
+ * checksum + endState + traceHash per (Sid, n) across every label (crossCheck) and exits 1 on
+ * "checksum mismatch" / "endState mismatch" / "traceHash mismatch" before anything is written. --quick caps sizes at
+ * 4096 and the event stream at 1/10. ASCII only.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -36,8 +45,9 @@ import os from 'node:os';
 import { runDimension, vacuityCheck } from './Dimensions.mjs';
 import { SUBJECTS, FOIL, DIMENSIONS, DIMENSION_TITLES, baselineFor, cells, OP_CLASS } from './Matrix.mjs';
 import { DEFAULT_SEED } from './Harness.mjs';
-import { ADAPTERS, RIVAL_SLOTS, selectAdapter, validateCounts, isPlain, didYouMean, NA } from './Adapters.mjs';
-import { SCENARIOS, selectScenario } from './Scenarios.mjs';
+import { ADAPTERS, RIVAL_SLOTS, RETIRED_SLOTS, selectAdapter, validateCounts, isPlain, didYouMean, NA }
+    from './Adapters.mjs';
+import { SCENARIOS, MAX_SIZE, selectScenario, scenarioSizes, labelBase, resolveLabel, runScenario } from './Scenarios.mjs';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const PKG_DIR = fileURLToPath(new URL('..', import.meta.url));
@@ -134,7 +144,9 @@ function validateRivals(r) {
         if (v.role !== 'rival' && v.role !== 'counter') rvFail(w + '.role', "must be 'rival' or 'counter'");
         if (v.version === NA) {
             if (v.params !== NA) rvFail(w + '.params', "must be 'n/a' when version is 'n/a'");
-            if (v.status !== 'PENDING') rvFail(w + '.status', "must be 'PENDING' when version is 'n/a'");
+            if (v.status !== 'PENDING' && v.status !== 'RETIRED') {
+                rvFail(w + '.status', "must be 'PENDING' or 'RETIRED' when version is 'n/a'");
+            }
             if (!nonEmptyString(v.reason)) rvFail(w + '.reason', "must be a non-empty string when version is 'n/a'");
         } else {
             if (!nonEmptyString(v.version)) rvFail(w + '.version', "must be 'hand-written', a semver or 'n/a'");
@@ -227,6 +239,55 @@ function validateLossRow(l, i) {
     if (!ok) rvFail(w + '.crossoverN', "must be an integer >= 1, 'none up to <n>' or 'n/a', got " + JSON.stringify(c));
 }
 
+/** '<adapter>/<Dk>' (D-rows) or '<label>/<Sid>@<n>' (scenario cells; a label may carry one '.<tag>'). */
+const RESULT_KEY = /^([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)?)\/(?:(D[1-8])|(S\d+[a-z]?)@([1-9]\d*))$/;
+
+/**
+ * Cross-check of the scenario cells (A1): every label of one (Sid, n) must read the same phase
+ * list, and per phase the same checksum and traceHash. Throws "[bench] checksum mismatch ..." /
+ * "[bench] endState mismatch ..." (the cold end-of-phase digest, Scenarios.mjs phaseEndState) /
+ * "[bench] traceHash mismatch ..." / "[bench] phase mismatch ..." naming both labels. Returns the
+ * number of (Sid, n) groups checked. D-row keys are ignored. Pure.
+ * @param {object} results  the results map ('<label>/<Sid>@<n>' -> cell result)
+ * @returns {number}
+ */
+export function crossCheck(results) {
+    const groups = new Map();
+    for (const key of Object.keys(results)) {
+        const m = RESULT_KEY.exec(key);
+        if (!m || m[3] === undefined) continue;
+        const g = m[3] + '@' + m[4];
+        if (!groups.has(g)) groups.set(g, []);
+        groups.get(g).push([m[1], results[key]]);
+    }
+    for (const [g, list] of groups) {
+        const [refName, ref] = list[0];
+        for (let j = 1; j < list.length; j++) {
+            const [name, row] = list[j];
+            const a = ref.phases.map((p) => p.phase).join(',');
+            const b = row.phases.map((p) => p.phase).join(',');
+            if (a !== b) throw new Error('[bench] phase mismatch ' + g + ': ' + refName + ' [' + a + '] vs ' + name + ' [' + b + ']');
+            for (let k = 0; k < ref.phases.length; k++) {
+                const p = ref.phases[k];
+                const q = row.phases[k];
+                if (p.checksum !== q.checksum) {
+                    throw new Error('[bench] checksum mismatch ' + g + ' phase ' + p.phase + ': ' + refName + ' ' + p.checksum +
+                        ' vs ' + name + ' ' + q.checksum);
+                }
+                if (p.endState !== q.endState) {
+                    throw new Error('[bench] endState mismatch ' + g + ' phase ' + p.phase + ': ' + refName + ' 0x' +
+                        (p.endState >>> 0).toString(16) + ' vs ' + name + ' 0x' + (q.endState >>> 0).toString(16));
+                }
+                if (p.traceHash !== q.traceHash) {
+                    throw new Error('[bench] traceHash mismatch ' + g + ' phase ' + p.phase + ': ' + refName + ' 0x' +
+                        (p.traceHash >>> 0).toString(16) + ' vs ' + name + ' 0x' + (q.traceHash >>> 0).toString(16));
+                }
+            }
+        }
+    }
+    return groups.size;
+}
+
 /**
  * Fail-closed check of a results.json payload (the frozen group 1 -> group 2 contract).
  * Throws an Error whose message names the missing or invalid field (e.g. "meta.mainFileSha").
@@ -251,14 +312,17 @@ export function validateResults(results) {
     const keys = Object.keys(results.results);
     if (results.status === 'MEASURED' && keys.length === 0) rvFail('results', 'must hold >= 1 cell when MEASURED');
     for (const key of keys) {
-        const m = /^([A-Za-z][A-Za-z0-9]*)\/(D[1-8]|S\d+)$/.exec(key);
-        if (!m) rvFail('results.' + key, "key must be '<adapter>/<Dk|Sid>'");
+        const m = RESULT_KEY.exec(key);
+        if (!m) rvFail('results.' + key, "key must be '<adapter>/<Dk>' or '<label>/<Sid>@<n>'");
         const row = results.results[key];
         if (!isPlain(row)) rvFail('results.' + key, 'must be a plain object');
         if (row.member !== undefined && row.member !== m[1]) rvFail('results.' + key + '.member', 'must be ' + m[1]);
+        if (m[3] !== undefined && (row.scenario !== m[3] || row.n !== Number(m[4]))) {
+            rvFail('results.' + key + '.scenario', 'must be ' + m[3] + ' at n ' + m[4]);
+        }
         let adapter;
         try {
-            adapter = selectAdapter(m[1]);
+            adapter = selectAdapter(labelBase(m[1]));
         } catch (e) {
             rvFail('results.' + key, 'names no live adapter: ' + e.message);
         }
@@ -276,8 +340,8 @@ export function validateResults(results) {
 // CLI argument parsing (fail closed: an unknown flag or a bad value exits 2).
 // ---------------------------------------------------------------------------
 
-const VALUE_FLAGS = ['--scenario', '--runs', '--seed', '--member', '--dim'];
-const CELL_ONLY_FLAGS = ['--member', '--dim'];
+const VALUE_FLAGS = ['--scenario', '--runs', '--seed', '--member', '--dim', '--n', '--tune'];
+const CELL_ONLY_FLAGS = ['--member', '--dim', '--n', '--tune'];
 const BOOL_FLAGS = ['--quick', '--publish', '--cell'];
 
 function usageExit(msg) {
@@ -287,7 +351,7 @@ function usageExit(msg) {
 
 function parseArgs(argv) {
     const o = { scenario: null, runs: 1, seed: DEFAULT_SEED, quick: false, publish: false, cell: false,
-        member: null, dim: null };
+        member: null, dim: null, n: null, tune: undefined };
     const all = VALUE_FLAGS.concat(BOOL_FLAGS);
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
@@ -301,6 +365,14 @@ function parseArgs(argv) {
         } else if (a === '--seed') {
             if (!/^\d{1,10}$/.test(v) || Number(v) > 0xFFFFFFFF) usageExit('[bench] ' + a + ' must be a uint32, got ' + v);
             o[a.slice(2)] = Number(v);
+        } else if (a === '--n') {
+            if (!/^[1-9]\d{0,6}$/.test(v) || Number(v) > MAX_SIZE) usageExit('[bench] --n must be an integer in [1, 2^20], got ' + v);
+            o.n = Number(v);
+        } else if (a === '--tune') {
+            let t;
+            try { t = JSON.parse(v); } catch (e) { usageExit('[bench] --tune must be a JSON object: ' + e.message); }
+            if (!isPlain(t)) usageExit('[bench] --tune must be a JSON object, got ' + v);
+            o.tune = t;
         } else {
             o[a.slice(2)] = v;
         }
@@ -316,9 +388,25 @@ function parseArgs(argv) {
 // ---------------------------------------------------------------------------
 async function runCell(o) {
     if (o.scenario !== null) {
-        selectScenario(o.scenario); // unknown -> throws "unknown scenario <id>"
-        throw new Error('[bench] scenario ' + o.scenario + ': no cell runner yet (group 2b lands it with the first scenario)');
+        let s;
+        try {
+            s = selectScenario(o.scenario);
+        } catch (e) {
+            usageExit(e.message); // "unknown scenario <id>" -> exit 2
+        }
+        if (!s.adapters.includes(o.member)) {
+            usageExit('[bench] bad scenario cell: --member ' + o.member + ' is not a label of ' + s.id + ' (' + s.adapters.join(', ') + ')');
+        }
+        if (!scenarioSizes(s, o.quick).includes(o.n)) {
+            usageExit('[bench] bad scenario cell: --n ' + o.n + ' is not a size of ' + s.id + (o.quick ? ' --quick' : '') +
+                ' (' + scenarioSizes(s, o.quick).join(', ') + ')');
+        }
+        const result = await runScenario(o.member, s, o.n, { seed: o.seed, quick: o.quick, tune: o.tune });
+        if (result.phases.length === 0) throw new Error('[bench] vacuous: ' + s.id + '/' + o.member + ' returned no phase');
+        process.stdout.write(JSON.stringify(result));
+        return;
     }
+    if (o.n !== null || o.tune !== undefined) usageExit('[bench] --n / --tune are scenario-cell flags: they need --scenario');
     const member = o.member;
     const dim = o.dim;
     if (!(SUBJECTS.includes(member) || member === FOIL) || !DIMENSIONS.includes(dim)) {
@@ -341,10 +429,14 @@ async function runCell(o) {
 // Orchestrator mode: spawn a child per cell, collect, summarize, validate, persist.
 // ---------------------------------------------------------------------------
 
-function spawnCell(member, dim, o) {
+function spawnCell(member, dim, o, c = null) {
     const flags = ['--expose-gc'];
     if (dim === 'D6') flags.push('--no-concurrent-recompilation');
-    const args = flags.concat([THIS_FILE, '--cell', '--member', member, '--dim', dim, '--seed', String(o.seed)]);
+    const args = c !== null && c.scenario !== undefined
+        ? flags.concat([THIS_FILE, '--cell', '--scenario', c.scenario, '--member', member, '--n', String(c.n),
+            '--seed', String(o.seed)])
+        : flags.concat([THIS_FILE, '--cell', '--member', member, '--dim', dim, '--seed', String(o.seed)]);
+    if (c !== null && c.tune !== undefined) args.push('--tune', JSON.stringify(c.tune));
     if (o.quick) args.push('--quick');
     const r = spawnSync(process.execPath, args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
     if (r.status !== 0) {
@@ -379,16 +471,26 @@ function mainFileSha() {
     return createHash('sha256').update(readFileSync(MAIN_FILE)).digest('hex').slice(0, 8);
 }
 
-/** meta.rivals: live rival / counter adapters, then every RIVAL_SLOTS entry still PENDING ('n/a' + reason). */
-function rivalsMeta() {
+/**
+ * meta.rivals: live rival / counter adapters (then the extra [label, adapter] pairs a scenario run
+ * resolved, e.g. 'BlockedArray.plain'), then every RIVAL_SLOTS entry still PENDING and every
+ * RETIRED_SLOTS entry, each as 'n/a' + its reason (FenwickFixed: R-BA18).
+ * @param {[string, object][]} [extra]
+ */
+export function rivalsMeta(extra = []) {
     const out = {};
     for (const a of ADAPTERS) {
         if (a.role === 'rival' || a.role === 'counter') out[a.name] = { role: a.role, status: 'LIVE', version: a.version, params: a.params };
     }
-    for (const name of Object.keys(RIVAL_SLOTS)) {
-        if (Object.prototype.hasOwnProperty.call(out, name)) continue;
-        const s = RIVAL_SLOTS[name];
-        out[name] = { role: s.role, status: s.status, version: NA, params: NA, reason: s.reason };
+    for (const [label, a] of extra) {
+        if (!Object.prototype.hasOwnProperty.call(out, label)) out[label] = { role: a.role, status: 'LIVE', version: a.version, params: a.params };
+    }
+    for (const slots of [RIVAL_SLOTS, RETIRED_SLOTS]) {
+        for (const name of Object.keys(slots)) {
+            if (Object.prototype.hasOwnProperty.call(out, name)) continue;
+            const s = slots[name];
+            out[name] = { role: s.role, status: s.status, version: NA, params: NA, reason: s.reason };
+        }
     }
     return out;
 }
@@ -414,7 +516,7 @@ function cpuInfo() {
     };
 }
 
-function printHeader(o, meta0, nCells) {
+function printHeader(o, meta0, nCells, extra = []) {
     const cpu = cpuInfo();
     console.log('===========================================================================');
     console.log('@zakkster/lite-yggdrasil -- benchmark suite (' + nCells + ' cells' +
@@ -434,8 +536,14 @@ function printHeader(o, meta0, nCells) {
     console.log('  gc:      children spawned with --expose-gc; D6 children + --no-concurrent-recompilation');
     console.log('  NOTE:    counts are DETERMINISTIC; every timing is REPORTED (gates nothing).');
     console.log('  NOTE:    D4 is a PORTABLE PROXY (no native perf counters).');
-    for (const [name, v] of Object.entries(rivalsMeta())) {
-        console.log('  rival:   ' + name + ' (' + v.role + ') ' + (v.version === NA ? 'n/a -- ' + v.reason : v.version));
+    for (const [name, v] of Object.entries(rivalsMeta(extra))) {
+        console.log('  rival:   ' + name + ' (' + v.role + ') ' + (v.version === NA ? v.status + ' n/a -- ' + v.reason : v.version));
+    }
+    if (o.scenario) {
+        const s = selectScenario(o.scenario);
+        console.log('  scenario ' + s.id + ': ' + s.title + ' | dims ' + s.dims + ' | views ' + s.views + ' | sizes ' +
+            scenarioSizes(s, o.quick).join(', ') + (o.quick ? ' (--quick: capped at 4096, events / 10)' : ''));
+        for (const k of Object.keys(s.mix)) console.log('  mix.' + k + ': ' + (typeof s.mix[k] === 'object' ? JSON.stringify(s.mix[k]) : s.mix[k]));
     }
     console.log('');
 }
@@ -567,6 +675,17 @@ function summarize(results) {
         }
         console.log('');
     }
+    const sKeys = Object.keys(results).filter((k) => /@\d+$/.test(k));
+    if (sKeys.length > 0) {
+        line('Scenario cells (ns/event REPORTED; checksum + endState + traceHash cross-checked per (Sid, n))');
+        for (const k of sKeys) {
+            for (const p of results[k].phases) {
+                console.log('  ' + (k + ' ' + p.phase).padEnd(40) + ' ' + fmt(p.nsPerOp).padStart(9) + ' ns/event  events ' +
+                    String(p.events).padStart(6) + '  checksum ' + p.checksum + '  endState 0x' + (p.endState >>> 0).toString(16) + '  traceHash 0x' + (p.traceHash >>> 0).toString(16));
+            }
+        }
+        console.log('');
+    }
     if (members.some((m) => get(m, 'D8'))) {
         line('D8 op-row workloads (ns/op | touches/op | moves/op)');
         for (const m of members) {
@@ -590,9 +709,16 @@ async function orchestrate(o) {
     }
     let all;
     try {
-        all = o.scenario !== null ? cells(o.scenario) : cells();
+        all = o.scenario !== null ? cells(o.scenario, { quick: o.quick }) : cells();
     } catch (e) {
         usageExit(e.message); // "unknown scenario <id>" -> exit 2
+    }
+    // labels that are not registered adapter names (BlockedArray variants) print in meta.rivals too
+    const extra = [];
+    for (const c of all) {
+        if (c.scenario === undefined || labelBase(c.member) === c.member || extra.some((x) => x[0] === c.member)) continue;
+        const a = await resolveLabel(c.member);
+        if (!ADAPTERS.includes(a)) extra.push([c.member, a]);
     }
     const P = o.publish ? PUBLISH_PATHS : OUT_PATHS;
     const meta0 = {
@@ -603,17 +729,24 @@ async function orchestrate(o) {
         commit: commitId(),
         mainFileSha: mainFileSha(),
     };
-    printHeader(o, meta0, all.length);
+    printHeader(o, meta0, all.length, extra);
 
+    // fail closed: no two cells may share a result key (variant labels; a g2b-3 tune sweep must tag its keys)
+    const seenKeys = new Set();
+    for (const c of all) {
+        const key = c.member + '/' + c.dim + (c.scenario !== undefined ? '@' + c.n : '');
+        if (seenKeys.has(key)) usageExit('[bench] duplicate result key ' + key + ' (one cell per label x scenario x n)');
+        seenKeys.add(key);
+    }
     const results = {};
     let failures = 0;
     for (let pass = 0; pass < o.runs; pass++) {
         for (const c of all) {
-            const key = c.member + '/' + c.dim;
+            const key = c.member + '/' + c.dim + (c.scenario !== undefined ? '@' + c.n : '');
             process.stderr.write('  running ' + key + (o.runs > 1 ? ' pass ' + (pass + 1) + '/' + o.runs : '') + ' (' +
                 (DIMENSION_TITLES[c.dim] || c.dim) + ') ...\n');
             try {
-                const r = spawnCell(c.member, c.dim, o);
+                const r = spawnCell(c.member, c.dim, o, c);
                 if (pass === 0) results[key] = r;
                 else if (results[key]) (results[key].repeats ||= []).push(r);
             } catch (e) {
@@ -624,6 +757,14 @@ async function orchestrate(o) {
     }
     if (failures > 0) {
         process.stderr.write('[bench] ' + failures + ' cell(s) failed\n');
+        process.exit(1);
+    }
+
+    try {
+        const g = crossCheck(results);
+        if (g > 0) console.log('[bench] cross-check: checksum + endState + traceHash agree across every label in ' + g + ' (Sid, n) group(s)');
+    } catch (e) {
+        process.stderr.write(e.message + '\n[bench] nothing written\n');
         process.exit(1);
     }
 
@@ -653,7 +794,7 @@ async function orchestrate(o) {
         hostState: meta0.hostState, quietLockWhy: meta0.quietLockWhy,
         commit: meta0.commit, mainFileSha: meta0.mainFileSha,
         runCount: o.runs, command: ['node', 'benchmark/Bench.mjs', ...process.argv.slice(2)].join(' '),
-        rivals: rivalsMeta(),
+        rivals: rivalsMeta(extra),
     };
     const adapters = {};
     for (const a of ADAPTERS) adapters[a.name] = { role: a.role, version: a.version, params: a.params };

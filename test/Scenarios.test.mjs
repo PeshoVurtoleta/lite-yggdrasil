@@ -1,0 +1,780 @@
+/**
+ * @zakkster/lite-yggdrasil -- scenario contract gate (node:test), Bench-ADOPT group 2b-1 TASK 8.
+ *
+ * Written FROM the PLAN ASSERTIONS A1-A5 (.handoff/PLAN-bench-adopt-g2b1.md) and the maintainer
+ * rulings R-BA15 (scenario shape) / R-BA18 (S7 / S7b mix). Every expected value comes from the
+ * ruling text, hand arithmetic or test/oracle.mjs driven by an interpreter written in THIS file --
+ * never from the runner's own output. Mix arithmetic (R-BA18, 20 blocks of 1,000 events = 20,000):
+ *   S7  : 500 draws + 500 reweights per block -> seek 10,000, reweight 10,000, blend 20,000.
+ *   S7b : 950 draws +  50 reweights per block -> seek 19,000, reweight  1,000, blend 20,000.
+ * Deterministic: pinned seeds, no timing in any assertion. Test harness only, never shipped.
+ * ASCII only. MIT (c) 2026 Zahary Shinikchiev <shinikchiev@yahoo.com>
+ */
+
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { mkdtempSync, cpSync, symlinkSync, readFileSync, writeFileSync, rmSync, realpathSync, mkdirSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { Oracle } from './oracle.mjs';
+import {
+    validateBuilt, SCENARIOS, PHASES, OP, REC, validateScenario, selectScenario, runScript, runScenario, resolveLabel,
+    fillHandle, appendPartner, scenarioEvents,
+} from '../benchmark/Scenarios.mjs';
+import {
+    ADAPTERS, SumSequenceAdapter, BlockedArrayAdapter, FenwickSuffixAdapter, FenwickFullAdapter,
+    validateAdapter, blockedArrayAdapter, selectAdapter, countsRecord, NC,
+} from '../benchmark/Adapters.mjs';
+import { cells } from '../benchmark/Matrix.mjs';
+import { DEFAULT_SEED } from '../benchmark/Harness.mjs';
+
+const PKG = fileURLToPath(new URL('..', import.meta.url));
+const S7 = SCENARIOS.find((s) => s.id === 'S7');
+const S7B = SCENARIOS.find((s) => s.id === 'S7b');
+const SEED = DEFAULT_SEED;
+
+// ---- independent helpers (nothing below calls the runner) -------------------------------------------------
+
+// FNV-1a over the fill then the script, 32-bit exact (the published algorithm, not the runner's foldHash).
+function fnv(fill, script) {
+    let h = 0x811c9dc5;
+    for (const arr of [fill, script]) {
+        for (let j = 0; j < arr.length; j++) {
+            h = (h ^ (arr[j] | 0)) >>> 0;
+            h = Math.imul(h, 16777619) >>> 0;
+        }
+    }
+    return h >>> 0;
+}
+
+function oracleFilled(fill, n, dims) {
+    const o = new Oracle(dims);
+    for (let i = 0; i < n; i++) {
+        if (dims === 1) o.insertAt(i, i, fill[i]);
+        else o.insertAt(i, i, fill[i * dims], fill[i * dims + 1]);
+    }
+    return o;
+}
+
+// Brute-force cursorWalkSum: seekSum(d, y), then up to k - 1 next(), the sum of measure(d) over the visited rows.
+function oracleWalk(o, d, y, k) {
+    const c = o.cursor();
+    if (!c.seekSum(d, y)) return 0;
+    let sum = c.measure(d);
+    for (let s = 1; s < k && c.next(); s++) sum += c.measure(d);
+    return sum;
+}
+
+// The oracle-side script interpreter (own opcode switch over the published table in the R-BA15 ruling text).
+function oracleRun(o, dims, script) {
+    let acc = 0;
+    for (let k = 0; k < script.length; k += REC) {
+        const a = script[k + 1];
+        const b = script[k + 2];
+        const c = script[k + 3];
+        switch (script[k]) {
+            case OP.INSERT: if (dims === 1) o.insertAt(a, a, b); else o.insertAt(a, a, b, c); break;
+            case OP.REMOVE: o.removeAt(a); break;
+            case OP.SET: o.setMeasure(a, b, c); break;
+            case OP.SEEK: acc = (acc + o.indexAtSum(a, b)) | 0; break;
+            case OP.SUM: acc = (acc + o.sumBefore(a, b)) | 0; break;
+            case OP.WALK: acc = (acc + oracleWalk(o, a, b, c)) | 0; break;
+            default: throw new Error('test: unknown opcode ' + script[k]);
+        }
+    }
+    return acc;
+}
+
+function build(sc, n, events) {
+    return sc.build(null, n, SEED, events);
+}
+
+async function handleFor(label, built, n, dims, views = 1) {
+    const ad = await resolveLabel(label);
+    const h = views === 1 ? ad.create(built.capacity, dims) : ad.createViews(built.capacity, dims, views)[views - 1];
+    fillHandle(h, built.fill, n, dims, views === 1 ? appendPartner(ad, dims) : null);
+    return { ad, h };
+}
+
+// ---- A1 ----------------------------------------------------------------------------------------------------
+
+describe('A1: every adapter and the oracle agree per phase (S7, S7b at n 1024 and 4096)', () => {
+    test('A1: S7 / S7b list exactly the five R-BA18 adapters (BlockedArray unrolled + plain, Fenwick suffix + full)', () => {
+        for (const sc of [S7, S7B]) {
+            assert.equal(sc.adapters.length, 5);
+            assert.ok(sc.adapters.includes('SumSequence'));
+            assert.ok(sc.adapters.includes('BlockedArray.plain'));
+            assert.ok(sc.adapters.includes('FenwickRebuild.suffix'));
+            assert.ok(sc.adapters.includes('FenwickRebuild.full'));
+            assert.equal(sc.adapters.filter((a) => a.startsWith('BlockedArray')).length, 2);
+            assert.ok(!sc.adapters.includes('SpliceFoil'));
+            assert.ok(!sc.adapters.includes('FenwickFixed'));
+        }
+    });
+
+    for (const sc of [S7, S7B]) {
+        for (const n of [1024, 4096]) {
+            test('A1: ' + sc.id + ' @ ' + n + ': checksum + traceHash identical across adapters and equal to the oracle', async () => {
+                const built = build(sc, n);
+                const rows = new Map();
+                for (const label of sc.adapters) rows.set(label, await runScenario(label, sc, n, { seed: SEED, samples: 1 }));
+                assert.equal(built.phases.map((p) => p.name).join(','), 'seek,reweight,blend');
+                for (const p of built.phases) {
+                    const o = oracleFilled(built.fill, n, 1);
+                    const want = oracleRun(o, 1, p.script);
+                    const wantHash = fnv(built.fill, p.script);
+                    for (const [label, r] of rows) {
+                        const row = r.phases.find((x) => x.phase === p.name);
+                        assert.equal(row.checksum, want, label + ' ' + p.name + ' checksum vs oracle');
+                        assert.equal(row.traceHash, wantHash, label + ' ' + p.name + ' traceHash vs independent FNV-1a');
+                    }
+                    // end state, not only the returned sums: direct run of the script on every adapter
+                    const total = o.total(0);
+                    for (const label of sc.adapters) {
+                        const { h } = await handleFor(label, built, n, 1);
+                        assert.equal(runScript(h, p.script), want, label + ' ' + p.name + ' direct checksum');
+                        assert.equal(h.length(), n, label + ' ' + p.name + ' length');
+                        assert.equal(h.sumBefore(0, n), total, label + ' ' + p.name + ' end-state total');
+                        for (const i of [0, 1, n >> 1, n - 1]) assert.equal(h.sumBefore(0, i), o.sumBefore(0, i), label + ' sumBefore ' + i);
+                    }
+                }
+            });
+        }
+    }
+
+    test('A1: S7 draws are the oracle indexAtSum and each set lands on the drawn row (R-BA18 "on the drawn i")', () => {
+        const n = 1024;
+        const built = build(S7, n);
+        const blend = built.phases.find((p) => p.name === 'blend').script;
+        const o = oracleFilled(built.fill, n, 1);
+        let drawn = -1;
+        let sets = 0;
+        for (let k = 0; k < blend.length; k += REC) {
+            if (blend[k] === OP.SEEK) {
+                drawn = o.indexAtSum(0, blend[k + 2]);
+                assert.ok(blend[k + 2] >= 0 && blend[k + 2] < o.total(0), 'y uniform in [0, total)');
+            } else {
+                assert.equal(blend[k], OP.SET);
+                assert.equal(blend[k + 1], drawn, 'set at record ' + k / REC);
+                assert.ok(blend[k + 3] >= 0 && blend[k + 3] <= 255, 'w in [0, 255]');
+                o.setMeasure(blend[k + 1], blend[k + 2], blend[k + 3]);
+                sets++;
+            }
+        }
+        assert.equal(sets, 10000);
+        for (let i = 0; i < n; i++) assert.ok(built.fill[i] >= 1 && built.fill[i] <= 255, 'fill in [1, 255]');
+    });
+
+    // A test-local Fenwick (1-based tree) answering indexAtSum / setMeasure; strict = `<=` (the M-7 seek), mutant = `<`.
+    function localFenwick(fill, n, mutant) {
+        const t = new Float64Array(n + 1);
+        const m = Float64Array.from(fill);
+        for (let i = 1; i <= n; i++) t[i] = fill[i - 1];
+        for (let i = 1; i <= n; i++) { const p = i + (i & -i); if (p <= n) t[p] += t[i]; }
+        let top = 1;
+        while (top * 2 <= n) top *= 2;
+        return {
+            setMeasure(i, d, w) { const dl = w - m[i]; m[i] = w; for (let j = i + 1; j <= n; j += j & -j) t[j] += dl; },
+            indexAtSum(d, y) {
+                let pos = 0;
+                let rem = y;
+                for (let s = top; s > 0; s >>= 1) {
+                    const nx = pos + s;
+                    if (nx <= n && (mutant ? t[nx] < rem : t[nx] <= rem)) { pos = nx; rem -= t[nx]; }
+                }
+                return pos;
+            },
+        };
+    }
+
+    test('A1 must-fail: a Fenwick find with `<` in place of `<=` changes >= 1 checksum; the `<=` one changes none', () => {
+        const n = 1024;
+        const built = build(S7, n);
+        let bit = 0;
+        for (const p of built.phases) {
+            const want = oracleRun(oracleFilled(built.fill, n, 1), 1, p.script);
+            assert.equal(runScript(localFenwick(built.fill, n, false), p.script), want, 'control: <= agrees with the oracle (' + p.name + ')');
+            if (runScript(localFenwick(built.fill, n, true), p.script) !== want) bit++;
+        }
+        assert.ok(bit >= 1, 'the < mutant survived in every phase');
+    });
+
+    test('A1 must-fail: the orchestrator cross-check exits 1 "checksum mismatch" on a planted rival mutant (scratch copy)', () => {
+        // realpath: Bench.mjs runs its CLI only when process.argv[1] equals its resolved URL (macOS /var -> /private/var)
+        const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ygg-scn-')));
+        try {
+            cpSync(join(PKG, 'benchmark'), join(dir, 'benchmark'), { recursive: true, filter: (s) => !/benchmark\/out(\/|$)/.test(s) });
+            cpSync(join(PKG, 'Yggdrasil.js'), join(dir, 'Yggdrasil.js'));
+            cpSync(join(PKG, 'package.json'), join(dir, 'package.json'));
+            cpSync(join(PKG, 'test'), join(dir, 'test'), { recursive: true, filter: (s) => !/test\/types(\/|$)/.test(s) });
+            symlinkSync(join(PKG, 'node_modules'), join(dir, 'node_modules'));
+            const fw = join(dir, 'benchmark', 'rivals', 'FenwickRebuild.js');
+            const src = readFileSync(fw, 'utf8');
+            assert.equal(src.split('if (t <= rem) {').length, 2, 'the mutation site must be unique');
+            writeFileSync(fw, src.replace('if (t <= rem) {', 'if (t < rem) {')); // the M-7 tie rule broken: `<` for `<=`
+            // the scratch copy is no git repo: a read-only `git` shim answers the meta.commit probes (no history is touched)
+            mkdirSync(join(dir, 'bin'));
+            writeFileSync(join(dir, 'bin', 'git'), '#!/bin/sh\ncase "$1" in rev-parse) echo abc1234;; esac\nexit 0\n');
+            chmodSync(join(dir, 'bin', 'git'), 0o755);
+            const env = Object.assign({}, process.env, { PATH: join(dir, 'bin') + ':' + process.env.PATH });
+            const r = spawnSync(process.execPath, [join(dir, 'benchmark', 'Bench.mjs'), '--scenario', 'S7', '--quick'],
+                { cwd: dir, env, encoding: 'utf8', timeout: 120000 });
+            assert.equal(r.status, 1, 'exit ' + r.status + ' ' + r.stderr.slice(-400));
+            assert.match(r.stderr, /checksum mismatch/);
+            // control: the unmutated copy passes the same cross-check
+            writeFileSync(fw, src);
+            const ok = spawnSync(process.execPath, [join(dir, 'benchmark', 'Bench.mjs'), '--scenario', 'S7', '--quick'],
+                { cwd: dir, env, encoding: 'utf8', timeout: 120000 });
+            assert.equal(ok.status, 0, 'unmutated copy: exit ' + ok.status + ' ' + ok.stderr.slice(-400));
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+
+describe('A1: cursorWalkSum against the brute-force oracle definition (dims 1 and 2)', () => {
+    const LABELS = S7.adapters;
+    for (const dims of [1, 2]) {
+        test('A1: cursorWalkSum dims ' + dims + ': y = 0 / mid / total - 1 / total / beyond, k = 1 / 30 / past the end', async () => {
+            const n = 200;
+            const fill = new Int32Array(n * dims);
+            let s = 12345; // own LCG, 32-bit exact
+            for (let j = 0; j < fill.length; j++) {
+                s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+                fill[j] = 1 + (s >>> 8) % 255;
+            }
+            const o = oracleFilled(fill, n, dims);
+            for (const label of LABELS) {
+                const ad = await resolveLabel(label);
+                for (const views of [1, 3]) {
+                    const hs = views === 1 ? [ad.create(n, dims)] : ad.createViews(3 * n, dims, 3);
+                    for (let v = 0; v < hs.length; v++) {
+                        const h = hs[v];
+                        fillHandle(h, fill, n, dims, null);
+                        for (let d = 0; d < dims; d++) {
+                            const total = o.total(d);
+                            for (const y of [0, 1, total >> 1, total - 1, total, total + 5]) {
+                                for (const k of [1, 2, 30, n, n + 50]) {
+                                    assert.equal(h.cursorWalkSum(d, y, k), oracleWalk(o, d, y, k),
+                                        label + ' v' + v + ' d' + d + ' y ' + y + ' k ' + k);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // by hand: y = total is past the last row -> 0; k = 1 -> exactly the drawn row's measure
+            const h = (await resolveLabel('SumSequence')).create(n, dims);
+            fillHandle(h, fill, n, dims, null);
+            assert.equal(h.cursorWalkSum(0, o.total(0), 30), 0);
+            assert.equal(h.cursorWalkSum(0, 0, 1), fill[0]);
+            assert.equal(h.cursorWalkSum(0, o.total(0) - 1, 30), fill[(n - 1) * dims]);
+        });
+    }
+});
+
+// ---- A2 ----------------------------------------------------------------------------------------------------
+
+describe('A2: validateBuilt throw rows (one planted record or field per row, each names its check)', () => {
+    const n = 64;
+    const good = () => S7.build(null, n, SEED, 1000);
+    const withRec = (rec, mut) => {
+        const b = good();
+        const p = b.phases[0];
+        const sc = new Int32Array(p.script.length + REC);
+        sc.set(p.script);
+        sc.set(rec, p.script.length);
+        p.script = sc;
+        if (mut) mut(b);
+        return b;
+    };
+    const rows = [
+        ['SEEK y = -1', () => withRec([OP.SEEK, 0, -1, 0]), /seek y/],
+        ['SEEK on dim 1', () => withRec([OP.SEEK, 1, 5, 0]), /dim 1 outside/],
+        ['REMOVE at n', () => withRec([OP.REMOVE, n, 0, 0]), /REMOVE index/],
+        ['SET at index n', () => withRec([OP.SET, n, 0, 5]), /SET index/],
+        ['SET on dim 1', () => withRec([OP.SET, 0, 1, 5]), /SET dim/],
+        ['SET measure 256', () => withRec([OP.SET, 0, 0, 256]), /SET measure/],
+        ['SUM at n + 1', () => withRec([OP.SUM, 0, n + 1, 0]), /SUM index/],
+        ['WALK k = 0', () => withRec([OP.WALK, 0, 5, 0]), /WALK k/],
+        ['WALK k = 1025', () => withRec([OP.WALK, 0, 5, 1025]), /WALK k/],
+        ['INSERT at n + 1', () => withRec([OP.INSERT, n + 1, 1, 0]), /INSERT index/],
+        ['INSERT past capacity (capacity n, insert at n)', () => withRec([OP.INSERT, n, 1, 0]), /past capacity/],
+        ['fill entry 256', () => { const b = good(); b.fill[5] = 256; return b; }, /fill\[/],
+        ['capacity n - 1', () => { const b = good(); b.capacity = n - 1; return b; }, /capacity/],
+    ];
+    test('control: the unplanted S7 built validates (dims 1), and a valid INSERT with capacity n + 1 does too', () => {
+        assert.doesNotThrow(() => validateBuilt('S7', good(), n, 1));
+        assert.doesNotThrow(() => validateBuilt('S7', withRec([OP.INSERT, n, 1, 0], (b) => { b.capacity = n + 1; }), n, 1));
+    });
+    for (const [name, mk, re] of rows) {
+        test('validateBuilt rejects: ' + name, () => {
+            assert.throws(() => validateBuilt('S7', mk(), n, 1), re);
+        });
+    }
+    test('validateBuilt rejects: INSERT with dims 3', () => {
+        const b = withRec([OP.INSERT, 0, 1, 0]);
+        b.fill = new Int32Array(n * 3).fill(1);
+        b.capacity = n + 1;
+        assert.throws(() => validateBuilt('S7', b, n, 3), /dims must be <= 2/);
+    });
+});
+
+describe('A2: counts, length, planted imbalance, determinism (n 1024)', () => {
+    const EXPECT = { S7: { seek: 10000, reweight: 10000, blend: 20000 }, S7b: { seek: 19000, reweight: 1000, blend: 20000 } };
+    for (const sc of [S7, S7B]) {
+        test('A2: ' + sc.id + ' @ 1024: events / ops per phase from the R-BA18 ratios; length() === n after every phase', async () => {
+            const built = build(sc, 1024);
+            for (const p of built.phases) {
+                assert.equal(p.events, EXPECT[sc.id][p.name], sc.id + ' ' + p.name + ' events');
+                assert.equal(p.script.length / REC, EXPECT[sc.id][p.name], sc.id + ' ' + p.name + ' ops');
+            }
+            assert.equal(built.phases[built.phases.length - 1].name, 'blend', 'blend last');
+            for (const label of sc.adapters) {
+                const r = await runScenario(label, sc, 1024, { seed: SEED, samples: 1 });
+                for (const row of r.phases) {
+                    assert.equal(row.events, EXPECT[sc.id][row.phase]);
+                    assert.equal(row.ops, EXPECT[sc.id][row.phase]);
+                }
+                for (const p of built.phases) {
+                    const { h } = await handleFor(label, built, 1024, 1);
+                    runScript(h, p.script);
+                    assert.equal(h.length(), 1024, label + ' ' + p.name);
+                }
+            }
+        });
+    }
+
+    test('A2: a planted unbalanced insert throws "length 1025 != 1024"', async () => {
+        const bad = {
+            id: 'S7', title: S7.title, dims: S7.dims, views: S7.views, mix: S7.mix, adapters: ['SumSequence'], sizes: [1024],
+            build(a, n, seed, events) {
+                const b = S7.build(a, n, seed, events);
+                for (const p of b.phases) {
+                    const s = new Int32Array(p.script.length + REC);
+                    s.set(p.script);
+                    s.set([OP.INSERT, 0, 7, 0], p.script.length);
+                    p.script = s;
+                    p.events += 1;
+                }
+                b.capacity = n + 8;
+                return b;
+            },
+        };
+        validateScenario(bad);
+        await assert.rejects(() => runScenario('SumSequence', bad, 1024, { seed: SEED, samples: 1 }), /length 1025 != 1024/);
+    });
+
+    test('A2: the scenario validators reject a script with an unknown opcode (cold gate)', async () => {
+        const bad = {
+            id: 'S7', title: S7.title, dims: 1, views: 1, mix: S7.mix, adapters: ['SumSequence'], sizes: [1024],
+            build(a, n, seed, events) {
+                const b = S7.build(a, n, seed, events);
+                b.phases[0].script[0] = 99;
+                return b;
+            },
+        };
+        await assert.rejects(() => runScenario('SumSequence', bad, 1024, { seed: SEED, samples: 1 }), /opcode/);
+    });
+
+    test('A2: two children on one seed give identical counts, checksum, traceHash', () => {
+        const code = 'import { runScenario, SCENARIOS } from ' + JSON.stringify(new URL('../benchmark/Scenarios.mjs', import.meta.url).href) + ';' +
+            'const out = [];' +
+            'for (const [id, label] of [["S7", "SumSequence"], ["S7b", "BlockedArray.plain"], ["S7", "FenwickRebuild.suffix"]]) {' +
+            ' const r = await runScenario(label, SCENARIOS.find((s) => s.id === id), 1024, { seed: 777, samples: 1 });' +
+            ' out.push(r.phases.map((p) => ({ phase: p.phase, counts: p.counts, extras: p.extras, checksum: p.checksum, traceHash: p.traceHash })));' +
+            '}' +
+            'process.stdout.write("RESULT " + JSON.stringify(out));';
+        const run = () => {
+            const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: PKG, encoding: 'utf8', timeout: 60000 });
+            assert.equal(r.status, 0, r.stderr);
+            return JSON.parse(r.stdout.slice(r.stdout.indexOf('RESULT ') + 7));
+        };
+        const a = run();
+        const b = run();
+        assert.deepEqual(a, b);
+        assert.equal(a[0].length, 3);
+        assert.ok(a[0].every((p) => p.checksum !== undefined && typeof p.traceHash === 'number'));
+        assert.notEqual(a[0][0].traceHash, a[1][0].traceHash, 'S7 and S7b are different streams');
+    });
+});
+
+describe('A2: counts integrity (phaseEndState must run AFTER readCounts / readExtras)', () => {
+    // Guards benchmark/Scenarios.mjs runScenario: phaseEndState probes (sumBefore) bump counters, so reading it before
+    // h.readCounts skews the row (observed: BlockedArray reweight elemScans 0 -> 504). The expected values come from
+    // an independent replay of the same steps WITHOUT any phaseEndState call.
+    for (const sc of [S7, S7B]) {
+        test('A2: ' + sc.id + ' @ 1024: every label x phase row counts / extras equal an independent fill + reset + run + read', async () => {
+            const built = build(sc, 1024, scenarioEvents(false));
+            for (const label of sc.adapters) {
+                const row = await runScenario(label, sc, 1024, { seed: SEED, samples: 1 });
+                assert.equal(row.phases.length, built.phases.length);
+                for (let i = 0; i < built.phases.length; i++) {
+                    const p = built.phases[i];
+                    const { ad, h } = await handleFor(label, built, 1024, sc.dims, sc.views);
+                    const cnt = new Int32Array(NC);
+                    const ext = new Float64Array(ad.extraCounts.length);
+                    h.resetCounts();
+                    runScript(h, p.script);
+                    h.readCounts(cnt);
+                    if (ext.length > 0) h.readExtras(ext);
+                    const rec = countsRecord(ad, cnt, ext);
+                    assert.equal(row.phases[i].phase, p.name);
+                    assert.deepEqual(row.phases[i].counts, rec.counts, label + ' ' + sc.id + ' ' + p.name + ' counts');
+                    assert.deepEqual(row.phases[i].extras, rec.extras, label + ' ' + sc.id + ' ' + p.name + ' extras');
+                }
+            }
+        });
+    }
+});
+
+// ---- A5 ----------------------------------------------------------------------------------------------------
+
+describe('A5: matrix + the R-BA15 scenario shape (every malformed field named)', () => {
+    test('A5: cells().length === 16 (2 members x 8 dimensions)', () => {
+        assert.equal(cells().length, 16);
+    });
+    test('A5: SCENARIOS ids are exactly S7, S7b; PHASES is the R-BA15 list and "splice" is retired', () => {
+        assert.deepEqual(SCENARIOS.map((s) => s.id), ['S7', 'S7b']);
+        assert.deepEqual([...PHASES], ['seek', 'walk', 'reweight', 'edit', 'bulk', 'blend']);
+        assert.ok(!PHASES.includes('splice'));
+        assert.equal(selectScenario('S7b').id, 'S7b');
+        assert.throws(() => selectScenario('S1'), /unknown scenario S1/);
+    });
+
+    const base = () => ({
+        id: 'S7', title: 't', dims: 1, views: 1, mix: { a: 1 }, adapters: ['SumSequence'], sizes: [8], build() { return null; },
+    });
+    assert.doesNotThrow(() => validateScenario(base()));
+    const rows = [
+        ['id', { id: 's7' }], ['id', { id: 'S' }], ['id', { id: 'S7B' }], ['id', { id: 'S7ab' }], ['id', { id: 7 }],
+        ['title', { title: '' }],
+        ['dims', { dims: 0 }], ['dims', { dims: 5 }], ['dims', { dims: 1.5 }], ['dims', { dims: '1' }],
+        ['views', { views: 2 }], ['views', { views: 0 }], ['views', { views: 4 }],
+        ['mix', { mix: [] }], ['mix', { mix: null }], ['mix', { mix: 'x' }], ['mix', { mix: {} }], ['mix', { mix: new Map() }],
+        ['mix.a', { mix: { a: NaN } }], ['mix.a', { mix: { a: '' } }], ['mix.a', { mix: { a: [1] } }],
+        ['adapters', { adapters: [] }], ['adapters', { adapters: ['SpliceFoil'] }], ['adapters', { adapters: ['Nope'] }],
+        ['adapters', { adapters: ['SumSequence', 'SumSequence'] }],
+        ['sizes', { sizes: [] }], ['sizes', { sizes: [0] }], ['sizes', { sizes: [1.5] }], ['sizes', { sizes: [(1 << 20) + 1] }],
+        ['build', { build: 1 }],
+    ];
+    for (const [field, patch] of rows) {
+        test('A5: validateScenario rejects ' + JSON.stringify(Object.keys(patch)) + ' = ' + JSON.stringify(patch[Object.keys(patch)[0]]) + ' naming ' + field, () => {
+            assert.throws(() => validateScenario(Object.assign(base(), patch)), (e) => e.message.includes(field) && /scenario/.test(e.message));
+        });
+    }
+    for (const k of ['id', 'title', 'dims', 'views', 'mix', 'adapters', 'sizes', 'build']) {
+        test('A5: validateScenario rejects a missing ' + k + ' naming it', () => {
+            const s = base();
+            delete s[k];
+            assert.throws(() => validateScenario(s), (e) => e.message.includes(k));
+        });
+    }
+    test('A5: validateScenario rejects an unknown key (did-you-mean), a non-plain root and a symbol key', () => {
+        assert.throws(() => validateScenario(Object.assign(base(), { dimz: 1 })), /dimz/);
+        assert.throws(() => validateScenario([]), /plain/);
+        assert.throws(() => validateScenario(Object.assign(base(), { [Symbol('x')]: 1 })), /scenario/);
+    });
+    test('A5: the retired "splice" phase name is rejected by the built-script gate, naming name', async () => {
+        const bad = Object.assign(base(), {
+            adapters: ['SumSequence'], sizes: [8],
+            build(a, n, seed, events) {
+                const b = S7.build(a, n, seed, events);
+                b.phases[0].name = 'splice';
+                return b;
+            },
+        });
+        await assert.rejects(() => runScenario('SumSequence', bad, 8, { seed: SEED, samples: 1 }), /name|phase/);
+        const unk = Object.assign(base(), {
+            build(a, n, seed, events) {
+                const b = S7.build(a, n, seed, events);
+                b.phases[0].name = 'bogus';
+                return b;
+            },
+        });
+        await assert.rejects(() => runScenario('SumSequence', unk, 8, { seed: SEED, samples: 1 }), /name|phase/);
+    });
+});
+
+// ---- B1 review: fail-closed adapter rows -----------------------------------------------------------------------
+
+describe('B1 review: createViews, tune, variant and counter-wrap throw rows (each names its field)', () => {
+    const withViews = () => ADAPTERS.filter((a) => typeof a.createViews === 'function');
+    test('createViews: k = 0, 4, 1.5, NaN, "3" throw naming createViews on every adapter that has it', () => {
+        assert.ok(withViews().length >= 4);
+        for (const a of withViews()) {
+            for (const k of [0, 4, 1.5, NaN, '3', -1, undefined]) {
+                assert.throws(() => a.createViews(8, 1, k), /createViews/, a.name + ' k=' + String(k));
+            }
+            for (const k of [1, 2, 3]) assert.equal(a.createViews(8, 1, k).length, k);
+        }
+    });
+    test('validateAdapter: createViews AND an na reason fails (na.createViews); neither fails (createViews)', () => {
+        assert.throws(() => validateAdapter(Object.assign({}, SumSequenceAdapter, { na: { createViews: 'x' } })), /na\.createViews/);
+        const { createViews, ...rest } = SumSequenceAdapter;
+        assert.equal(typeof createViews, 'function');
+        assert.throws(() => validateAdapter(rest), /createViews/);
+        assert.doesNotThrow(() => validateAdapter(Object.assign({}, rest, { na: { createViews: 'one view per create' } })));
+    });
+    test('BlockedArray tune: unknown key, variant mismatch, chunkCap 6 / 65540 / NaN / 2^16+4 throw naming the field', async () => {
+        assert.throws(() => BlockedArrayAdapter.create(64, 1, { bogus: 1 }), /tune\.bogus/);
+        assert.throws(() => BlockedArrayAdapter.create(64, 1, { variant: 'plain' }), /tune\.variant/);
+        assert.throws(() => BlockedArrayAdapter.create(64, 1, { variant: 'nope' }), /tune\.variant/);
+        for (const cc of [6, 65540, NaN, 7, 4, 1.5, '16']) {
+            assert.throws(() => BlockedArrayAdapter.create(64, 1, { chunkCap: cc }), /tune\.chunkCap/, 'chunkCap ' + String(cc));
+        }
+        assert.throws(() => BlockedArrayAdapter.createViews(64, 1, 3, { chunkCap: 6 }), /tune\.chunkCap/);
+        const plain = await blockedArrayAdapter('plain');
+        assert.throws(() => plain.create(64, 1, { variant: 'unrolled' }), /tune\.variant/);
+        assert.equal(BlockedArrayAdapter.create(64, 1, { chunkCap: 8 }).instance.chunkCap, 8);
+        assert.equal(BlockedArrayAdapter.create(64, 1, { chunkCap: 65536 }).instance.chunkCap, 65536);
+    });
+    test('FenwickRebuild takes no tune; blockedArrayAdapter("bogus") throws; SumSequence rejects an unknown tune key', async () => {
+        for (const a of [FenwickSuffixAdapter, FenwickFullAdapter]) {
+            assert.throws(() => a.create(8, 1, { chunkCap: 8 }), /tune/);
+            assert.throws(() => a.createViews(8, 1, 3, { chunkCap: 8 }), /tune/);
+        }
+        await assert.rejects(() => blockedArrayAdapter('bogus'), /variant/);
+        assert.throws(() => SumSequenceAdapter.create(8, 1, { leafSize: 5 }), /leafSize/);
+        assert.throws(() => SumSequenceAdapter.create(8, 1, { x: 1 }), /tune\.x/);
+    });
+    test('counter wrap: a rival whose Int32 counter reads negative makes readCounts / readExtras throw', () => {
+        let sawExtras = 0;
+        for (const a of [BlockedArrayAdapter, FenwickSuffixAdapter, FenwickFullAdapter]) {
+            const h = a.create(8, 1);
+            const orig = h.instance.readCounters.bind(h.instance);
+            h.instance.readCounters = (out) => { orig(out); out.fill(-1); };
+            assert.throws(() => h.readCounts(new Int32Array(12)), /readCounts/, a.name + ' readCounts');
+            if (a.extraCounts.length > 0) {
+                sawExtras++;
+                assert.throws(() => h.readExtras(new Float64Array(a.extraCounts.length)), /readExtras/, a.name + ' readExtras');
+            }
+        }
+        assert.ok(sawExtras >= 1, 'no rival has extras: the readExtras row is vacuous');
+    });
+    test('selectAdapter names the RETIRED FenwickFixed slot with its ruling', () => {
+        assert.throws(() => selectAdapter('FenwickFixed'), /RETIRED.*R-BA18/s);
+    });
+});
+
+// ---- A3 + A4: the --expose-gc child -----------------------------------------------------------------------------
+
+async function childMain(u) {
+    const SC = await import(u.scn);
+    const AD = await import(u.adp);
+    const M = await import(u.meter);
+    const L = await import(u.leak);
+    const G = await import(u.prof);
+    const out = { semi: M.semiSpaceOk(), lanes: [], walk: [], controls: [], gc: null, leak: null, ctlRetain: null };
+    if (!out.semi) return out;
+    const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+    const settle = async () => { globalThis.gc(); await tick(20); globalThis.gc(); await tick(20); };
+    const N = 4096;
+    const EV = 4000;
+    const WIN = 6;
+    const LABELS = u.labels;
+    // WARM calls of the script run OUTSIDE the measured region on every lane: BlockedArray's _merge / removeAt tier up
+    // only after ~40,000 ops, so 3 warm calls left the edit lane (18,000 ops) interpreted (912 / 896 B per call).
+    // u.warm is overridden only by the cold check (warm 2, edit script of BlockedArray labels only).
+    const WARM = u.warm;
+    const S7 = SC.SCENARIOS.find((s) => s.id === 'S7');
+    const built = S7.build(null, N, u.seed, EV);
+    const S7B = SC.SCENARIOS.find((s) => s.id === 'S7b');
+    const built7b = S7B.build(null, N, u.seed, EV);
+    const mk = (n, f) => { const s = new Int32Array(n * 4); for (let j = 0; j < n; j++) f(s, j * 4, j); return s; };
+    const T = SC.OP;
+    const scripts = built.phases.map((p) => ({ name: p.name, script: p.script, fill: built.fill }));
+    for (const p of built7b.phases) scripts.push({ name: 'S7b.' + p.name, script: p.script, fill: built7b.fill });
+    scripts.push({ name: 'walk', script: mk(2000, (s, o, j) => { s[o] = T.WALK; s[o + 1] = 0; s[o + 2] = (Math.imul(j, 2654435761) >>> 0) % 400000; s[o + 3] = 30; }), fill: built.fill });
+    // edit: alternating insert at the end / remove at 0 keeps the length in [N, N + 1]
+    scripts.push({ name: 'edit', script: mk(2000, (s, o, j) => {
+        if ((j & 1) === 0) { s[o] = T.INSERT; s[o + 1] = N; s[o + 2] = 7; s[o + 3] = 0; } else { s[o] = T.REMOVE; s[o + 1] = 0; }
+    }), fill: built.fill });
+    const IOUT = new Int32Array(4);
+    const WALKY = new Int32Array(4096);
+    for (let j = 0; j < 4096; j++) WALKY[j] = (Math.imul(j, 2246822519) >>> 0) % 400000;
+    const bases = new Map();
+    const base = (ops) => { if (!bases.has(ops)) bases.set(ops, M.baseline(ops, WIN)); return bases.get(ops); };
+    const prof = new G.GcProfiler();
+    prof.start();
+    const gate = { enter: () => { prof.enter('lanes'); }, exit: () => { prof.exit(); } };
+    for (const label of LABELS) {
+        const ad = await SC.resolveLabel(label);
+        const partner = SC.appendPartner(ad, 1);
+        const views = ad.createViews(N + 8, 1, 3);
+        for (let v = 0; v < 3; v++) {
+            const h = views[v];
+            let curFill = built.fill;
+            const refill = () => { for (let w = 0; w < 3; w++) if (w !== v) views[w].clear(); SC.fillHandle(h, curFill, N, 1, v === 0 ? partner : null); };
+            for (const sc of scripts) {
+                if (u.only && sc.name !== u.only) continue;
+                curFill = sc.fill;
+                for (let w = 0; w < WARM; w++) { refill(); IOUT[0] = SC.runScript(h, sc.script); }
+                const r = M.lane(label + '.v' + v + '.' + sc.name, () => { IOUT[0] = SC.runScript(h, sc.script); }, 1, WIN, refill, gate);
+                const events = sc.script.length / 4;
+                const perCall = M.bop(r, base(1));
+                out.lanes.push({ name: r.name, perCall, bop: perCall / events, wins: M.winText(r, base(1)) });
+            }
+            if (u.only) continue;
+            curFill = built.fill;
+            refill();
+            const r = M.lane(label + '.v' + v + '.cursorWalkSum', (k) => { IOUT[1] = h.cursorWalkSum(0, WALKY[k & 4095], 30); }, 10000, WIN, undefined, gate);
+            out.walk.push({ name: r.name, bop: M.bop(r, base(10000)), wins: M.winText(r, base(10000)) });
+        }
+        for (const v of views) v.clear();
+        partner && partner.clear();
+    }
+    if (u.only) { prof.stop(); return out; }
+    await prof.settle();
+    const s = prof.summary();
+    prof.stop();
+    const rep = G.checkNoGc(s, { perRegion: { lanes: { maxMajor: 0 } } });
+    const lg = s.byRegion && s.byRegion.lanes ? s.byRegion.lanes.gc : null;
+    out.gc = { ok: rep.ok === true && lg !== null, major: lg ? lg.major : -1 };
+
+    // must-fail control (outside the region): a runScript that allocates an Int32Array(1) per event
+    const HOLD = [null, null];
+    const allocScript = (h, script) => {
+        let acc = 0;
+        for (let k = 0; k < script.length; k += 4) {
+            HOLD[(k >> 2) & 1] = new Int32Array(1);
+            if (script[k] === T.SEEK) acc = (acc + h.indexAtSum(script[k + 1], script[k + 2])) | 0;
+            else if (script[k] === T.SET) h.setMeasure(script[k + 1], script[k + 2], script[k + 3]);
+        }
+        return acc;
+    };
+    const ssA = await SC.resolveLabel('SumSequence');
+    const ch = ssA.create(N + 8, 1);
+    const cref = built.phases.find((p) => p.name === 'blend').script;
+    const crefn = cref.length / 4;
+    const crefill = () => SC.fillHandle(ch, built.fill, N, 1, null);
+    crefill(); IOUT[0] = allocScript(ch, cref);
+    const cr = M.lane('ctl.allocPerEvent', () => { IOUT[0] = allocScript(ch, cref); }, 1, WIN, crefill);
+    out.controls.push({ name: cr.name, perCall: M.bop(cr, base(1)), bop: M.bop(cr, base(1)) / crefn, wins: M.winText(cr, base(1)) });
+    // must-fail control 2: ONE 32-byte-class allocation per runScript CALL (not per event). Reads < 1 B/event
+    // (>= 16 B / 4000 events) but must FAIL the per-call floor. Same warm-up as the lanes.
+    const perCallScript = (h, script) => { HOLD[0] = new Float64Array(4); return SC.runScript(h, script); };
+    for (let w = 0; w < WARM; w++) { crefill(); IOUT[0] = perCallScript(ch, cref); }
+    const cp = M.lane('ctl.allocPerCall', () => { IOUT[0] = perCallScript(ch, cref); }, 1, WIN, crefill);
+    out.controls.push({ name: cp.name, perCall: M.bop(cp, base(1)), bop: M.bop(cp, base(1)) / crefn, wins: M.winText(cp, base(1)) });
+
+    // ---- A4: 100 cycles of createViews(C, d, 3) -> fill -> phase -> clear -> drop, per adapter
+    const K = new Int32Array(2);
+    const onFin = () => { K[0]++; };
+    const small = S7.build(null, 40, u.seed, 1000);
+    const blendSmall = small.phases.find((p) => p.name === 'blend').script;
+    const leakRun = async (retain) => {
+        K[0] = 0; K[1] = 0;
+        const tracker = L.createLeakTracker({ name: retain ? 'scn-ctl' : 'scn', onLeak: () => {}, onWarning: () => {} });
+        const refs = [];
+        const kept = [];
+        const per = {};
+        for (const label of LABELS) {
+            const ad = await SC.resolveLabel(label);
+            // one cycle per call: no local of a finished cycle survives on the stack to pin its views
+            const cycle = () => {
+                const vs = ad.createViews(128, 1, 3);
+                for (const h of vs) {
+                    const hv = tracker.track(h, onFin, label + '.handle');
+                    const hi = tracker.track(h.instance, onFin, label + '.instance');
+                    refs.push(new WeakRef(h), new WeakRef(h.instance));
+                    SC.fillHandle(h, small.fill, 40, 1, null);
+                    IOUT[0] = SC.runScript(h, blendSmall);
+                    if (!retain) h.clear();
+                    if (h.length() === 0) { tracker.untrack(hv); tracker.untrack(hi); } else K[1]++;
+                    if (retain) kept.push(h);
+                }
+            };
+            for (let a = 0; a < 100; a++) cycle();
+            per[label] = 100;
+        }
+        await settle();
+        const size = tracker.size();
+        let alive = 0;
+        for (const r of refs) if (r.deref() !== undefined) alive++;
+        const held = kept.length;
+        kept.length = 0;
+        return { size, alive, fin: K[0], notReset: K[1], tracked: refs.length, held, cycles: per };
+    };
+    out.leak = await leakRun(false);
+    out.ctlRetain = await leakRun(true);
+    out.labels = LABELS;
+    return out;
+}
+
+let childResult = null;
+const A3_WARM = 60;
+function runChild(over) {
+    if (!over && childResult) return childResult;
+    const u = {
+        scn: new URL('../benchmark/Scenarios.mjs', import.meta.url).href,
+        adp: new URL('../benchmark/Adapters.mjs', import.meta.url).href,
+        meter: new URL('./torture-meter.mjs', import.meta.url).href,
+        seed: SEED, labels: S7.adapters, warm: A3_WARM, leak: import.meta.resolve('@zakkster/lite-leak'), prof: import.meta.resolve('@zakkster/lite-gc-profiler'),
+    };
+    Object.assign(u, over);
+    const code = '(' + childMain.toString() + ')(' + JSON.stringify(u) + ').then((r) => { process.stdout.write("RESULT " + JSON.stringify(r) + "\\n"); },' +
+        ' (e) => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });';
+    const r = spawnSync(process.execPath, ['--expose-gc', '--no-concurrent-recompilation', '--min-semi-space-size=4',
+        '--max-semi-space-size=4', '--input-type=module', '-e', code], { cwd: PKG, encoding: 'utf8', timeout: 240000 });
+    assert.equal(r.status, 0, 'child failed: ' + r.stderr + r.stdout.slice(-800));
+    const line = r.stdout.split('\n').find((l) => l.startsWith('RESULT '));
+    assert.ok(line, 'child printed no RESULT line: ' + r.stdout);
+    const res = JSON.parse(line.slice(7));
+    if (over) return res;
+    childResult = res;
+    return childResult;
+}
+
+describe('A3 / A4: the --expose-gc child (BA-7a precedent)', () => {
+    test('A3: runScript, every phase x every adapter x view 0..2 at n 4096: < 1 B/event, maxMajor 0; control reads > 8', () => {
+        const r = runChild();
+        assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
+        for (const l of r.lanes) console.log('# lane ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
+        for (const l of r.controls) console.log('# control ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
+        // 5 adapters x 3 views x 8 scripts (S7 seek / reweight / blend, S7b the same, walk, edit); 'bulk' has no opcode yet
+        assert.equal(r.lanes.length, 120);
+        // JSON carries NaN (no gated window) as null: a non-number reading fails closed. Both floors: per call < 16 B
+        // AND per event < 1 B (the division alone hid a ~900 B interpreted-boxing call behind 4000 events).
+        for (const l of r.lanes) {
+            assert.ok(typeof l.perCall === 'number' && l.perCall < 16, l.name + ' perCall ' + l.perCall);
+            assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+        }
+        assert.equal(r.gc.ok, true, 'gc region: ' + JSON.stringify(r.gc));
+        assert.equal(r.gc.major, 0);
+        assert.equal(r.controls.length, 2);
+        assert.ok(typeof r.controls[0].bop === 'number' && r.controls[0].bop > 8, 'control must read > 8 B/event, read ' + r.controls[0].bop);
+        // must-fail control: one allocation per runScript CALL reads < 1 B/event but must FAIL the per-call floor
+        const pc = r.controls[1];
+        console.log('# control ' + pc.name + ' perCall=' + String(pc.perCall));
+        assert.equal(pc.name, 'ctl.allocPerCall');
+        assert.ok(typeof pc.bop === 'number' && pc.bop < 1, 'per-call control must read < 1 B/event, read ' + pc.bop);
+        assert.ok(typeof pc.perCall === 'number' && !(pc.perCall < 16), 'per-call control must FAIL perCall < 16, read ' + pc.perCall);
+    });
+    test('A3: cold check -- with 2 warm calls the BlockedArray edit lane reads >= 16 B per call (the lane reaches the interpreted path)', () => {
+        const labels = S7.adapters.filter((l) => l.startsWith('BlockedArray'));
+        assert.ok(labels.length >= 1);
+        const r = runChild({ warm: 2, only: 'edit', labels });
+        assert.equal(r.semi, true);
+        assert.equal(r.lanes.length, labels.length * 3);
+        for (const l of r.lanes) console.log('# cold ' + l.name + ' perCall=' + String(l.perCall));
+        assert.ok(r.lanes.some((l) => typeof l.perCall === 'number' && l.perCall >= 16), 'no cold edit lane read >= 16 B per call');
+    });
+    test('A3: the cursorWalkSum lanes (every adapter, views 0..2) read < 1 B/op', () => {
+        const r = runChild();
+        for (const l of r.walk) console.log('# walk ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
+        assert.equal(r.walk.length, 15);
+        for (const l of r.walk) assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+    });
+    test('A4: 100 cycles of createViews(C, d, 3) -> fill -> phase -> clear -> drop, every adapter: tracker.size() 0; retaining control >= 1', () => {
+        const r = runChild();
+        console.log('# leak ' + JSON.stringify(r.leak) + ' ctl ' + JSON.stringify(r.ctlRetain));
+        assert.equal(r.leak.tracked, 5 * 100 * 3 * 2);
+        assert.deepEqual([r.leak.size, r.leak.alive, r.leak.fin, r.leak.notReset], [0, 0, 0, 0]);
+        assert.ok(r.ctlRetain.size >= 1, 'retaining control must leave size() >= 1');
+        assert.ok(r.ctlRetain.alive >= 1, 'retaining control must keep views alive');
+    });
+});

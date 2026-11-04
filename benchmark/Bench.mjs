@@ -7,10 +7,10 @@
  *     npm run bench -- --quick              # the same, small sizes (a smoke, never a run of record)
  *     npm run bench -- --scenario S7        # one scenario's (label x size) cells (exit 2 on an unknown id)
  *     npm run bench -- --runs 3             # every cell 3 times, interleaved by pass
- *     npm run bench -- --publish            # the run of record: benchmark/results.json + report.html
+ *     npm run bench -- --publish --all --runs 5 --picks benchmark/chunkcap.json   # the run of record (under quiet-lock)
  *     npm run bench -- --all                # the 16 D-rows + every registered scenario's cells (BA-33)
  *     npm run bench -- --sweep chunkCap --scenario S7   # BlockedArray x sweepGrid(d) per (Sid, n) (BA-31)
- *     npm run bench -- --picks <path>       # parsed + validated, then refused until g2b-3a B3
+ *     npm run bench -- --picks <path>       # every BlockedArray label at the picked chunkCap (BA-31)
  *
  * Repo-only. Bench-ADOPT group 1 TASK 6 (.handoff/PLAN-bench-adopt-g1.md; SPEC-bench-adopt BA-1,
  * BA-5, BA-9, BA-11). Copied from @zakkster/lite-logn benchmark/Bench.mjs (Bench v2 kit, LiteLogN
@@ -44,10 +44,40 @@
  * registered BlockedArray at every chunkCap of sweepGrid(defaultChunkCap(C)), C the scenario's built
  * capacity computed cold in this parent, keyed '<label>/<Sid>@<n>~c<chunkCap>' (cellKey); EXCLUDED
  * (the census cells over 300 s per pass) are left out and printed with their census seconds.
+ *
+ * g2b-3a B3 (SPEC BA-29 / BA-30 / BA-31 / BA-33): publishGuard (pure) refuses, with exit 2 before any
+ * cell runs or any file is written: --publish without --all; --publish whose --runs is not K (5);
+ * --sweep with --picks; a sweep --publish on a non-QUIET host; a QUIET run (published or not) citing a
+ * non-QUIET --picks table; a QUIET run-of-record --publish --all with no --picks table or one whose
+ * meta.runCount is not K.
+ * results.json lossTable = Compare.mjs lossRows(results).rows, its INCONCLUSIVE flag + twin readings
+ * in 'comparison' (validated); a run with no untagged scenario cell (D-rows only, or a sweep) carries
+ * lossTable [] and no 'comparison' (lossRows is never called with nothing to compare). validateResults
+ * requires 'comparison' on a MEASURED payload with an untagged scenario cell (BA-36).
+ *
+ * The chunkCap pick table (benchmark/chunkcap.json; schema PICKS_SCHEMA, checked by validatePicks both
+ * when written and when read by --picks; fail closed on a malformed field, an unknown key, a non-plain
+ * object, a chunkCap that is not a multiple of 4 in [8, 65536]):
+ *   { schema: 'yggdrasil-chunkcap/1',
+ *     meta: { date, hostState, commit, mainFileSha, runCount, loadAvgStart, loadAvgEnd, quietLockWhy,
+ *             command },                       (the results.json meta checks of the same names)
+ *     picks: [{ scenario, n, capacity, d, grid, chunkCap, edge, nsPerEvent }] }
+ * one row per swept (Sid, n): d = defaultChunkCap(capacity), grid = sweepGrid(d), chunkCap = the
+ * pickChunkCap argmin (a grid member), edge = it is the grid's first or last entry, nsPerEvent its
+ * median-of-K blend ns/event (REPORTED). A QUIET `--sweep chunkCap --publish --all` writes
+ * benchmark/chunkcap.json ONLY (no results.json / report.html); a sweep without --publish writes
+ * benchmark/out/chunkcap.json beside its out/ results. With --picks <path>, every BlockedArray label
+ * (BlockedArray, BlockedArray.plain, BlockedArray.twin) runs each (Sid, n) cell with tune { chunkCap:
+ * pick } under its UNTAGGED key; planCells exits 2 (also --quick) on a BlockedArray cell with no pick for
+ * its (Sid, n), on a stale pick (its capacity is not the capacity this run builds at that (Sid, n): re-run
+ * --sweep chunkCap) and on a picks table naming no BlockedArray cell of the run; a cell that recorded
+ * another chunkCap exits 1, and results.json carries 'tuning'
+ * { source, sha256, hostState, picks } (validateTuning).
  */
 
 import { spawnSync } from 'node:child_process';
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
@@ -58,7 +88,7 @@ import { ADAPTERS, RIVAL_SLOTS, RETIRED_SLOTS, selectAdapter, validateCounts, is
     from './Adapters.mjs';
 import { SCENARIOS, MAX_SIZE, selectScenario, scenarioSizes, scenarioEvents, labelBase, knownLabels, resolveLabel, runScenario }
     from './Scenarios.mjs';
-import { defaultChunkCap, sweepGrid, rotateLabels } from './Compare.mjs';
+import { defaultChunkCap, sweepGrid, rotateLabels, lossRows, pickChunkCap, CAP_MIN, CAP_MAX, K } from './Compare.mjs';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const PKG_DIR = fileURLToPath(new URL('..', import.meta.url));
@@ -70,6 +100,9 @@ const PUBLISH_PATHS = {
     label: 'benchmark/',
 };
 const OUT_PATHS = { results: OUT_DIR + 'results.json', report: OUT_DIR + 'report.html', label: 'benchmark/out/' };
+/** The committed chunkCap pick table (written only by a QUIET `--sweep chunkCap --publish --all`). */
+const PICKS_PUBLISH_PATH = fileURLToPath(new URL('./chunkcap.json', import.meta.url));
+const PICKS_OUT_PATH = OUT_DIR + 'chunkcap.json';
 
 /** results.json schema id. */
 export const SCHEMA = 'yggdrasil-bench/1';
@@ -86,7 +119,7 @@ export const META_FIELDS = Object.freeze(['seed', 'node', 'arch', 'platform', 'c
 
 const TOP_REQUIRED = ['schema', 'status', 'meta', 'subjects', 'dimensions', 'titles', 'scenarios', 'results',
     'lossTable'];
-const TOP_OPTIONAL = ['foil', 'adapters', 'opClass'];
+const TOP_OPTIONAL = ['foil', 'adapters', 'opClass', 'tuning', 'comparison'];
 const LOSS_KEYS = ['scenario', 'winner', 'loser', 'crossoverN', 'reason'];
 const RIVAL_KEYS = ['role', 'status', 'version', 'params', 'reason'];
 const HOST_STATES = ['QUIET', 'PRELIMINARY'];
@@ -250,6 +283,115 @@ function validateLossRow(l, i) {
     if (!ok) rvFail(w + '.crossoverN', "must be an integer >= 1, 'none up to <n>' or 'n/a', got " + JSON.stringify(c));
 }
 
+// ---------------------------------------------------------------------------
+// The chunkCap pick table (BA-31) and the payload records that cite it (tuning) or the A/A control
+// (comparison). Cold, fail closed; every throw names the field.
+// ---------------------------------------------------------------------------
+
+/** chunkcap.json schema id. */
+export const PICKS_SCHEMA = 'yggdrasil-chunkcap/1';
+const PICKS_TOP = ['schema', 'meta', 'picks'];
+/** The picks table meta: the results.json meta checks of the same names. */
+export const PICKS_META_FIELDS = Object.freeze(['date', 'hostState', 'commit', 'mainFileSha', 'runCount', 'loadAvgStart',
+    'loadAvgEnd', 'quietLockWhy', 'command']);
+const PICK_KEYS = ['scenario', 'n', 'capacity', 'd', 'grid', 'chunkCap', 'edge', 'nsPerEvent'];
+const TUNING_KEYS = ['source', 'sha256', 'hostState', 'picks'];
+const COMPARISON_KEYS = ['inconclusive', 'twin'];
+const TWIN_KEYS = ['scenario', 'n', 'phase', 'verdict', 'ratio'];
+
+function exactKeys(v, keys, w, fail) {
+    if (!isPlain(v)) fail(w, 'must be a plain object {' + keys.join(', ') + '}');
+    for (const k of keys) if (!Object.prototype.hasOwnProperty.call(v, k)) fail(w + '.' + k, 'missing');
+    for (const k of Object.keys(v)) if (!keys.includes(k)) fail(w + '.' + k, 'unknown key' + didYouMean(k, keys));
+}
+
+function pkFail(field, detail) {
+    throw new Error('[bench] picks: ' + field + ' ' + detail);
+}
+
+const capOk = (c) => Number.isInteger(c) && c >= CAP_MIN && c <= CAP_MAX && c % 4 === 0;
+
+// one pick row, with `fail` naming the container (picks table or results.json tuning)
+function validatePickRow(p, w, fail) {
+    exactKeys(p, PICK_KEYS, w, fail);
+    if (typeof p.scenario !== 'string' || !SID_RE.test(p.scenario)) fail(w + '.scenario', 'must be a scenario id, got ' + JSON.stringify(p.scenario));
+    try { selectScenario(p.scenario); } catch (e) { fail(w + '.scenario', e.message); }
+    if (!(Number.isInteger(p.n) && p.n >= 1 && p.n <= MAX_SIZE)) fail(w + '.n', 'must be an integer in [1, 2^20], got ' + JSON.stringify(p.n));
+    if (!(Number.isInteger(p.capacity) && p.capacity >= p.n && p.capacity <= 0x7FFFFFFF)) {
+        fail(w + '.capacity', 'must be an integer >= n, got ' + JSON.stringify(p.capacity));
+    }
+    if (p.d !== defaultChunkCap(p.capacity)) fail(w + '.d', 'must be defaultChunkCap(capacity) = ' + defaultChunkCap(p.capacity) + ', got ' + JSON.stringify(p.d));
+    const grid = sweepGrid(p.d);
+    if (!Array.isArray(p.grid) || p.grid.length !== grid.length || !grid.every((c, i) => p.grid[i] === c)) {
+        fail(w + '.grid', 'must be sweepGrid(d) = [' + grid.join(', ') + '], got ' + JSON.stringify(p.grid));
+    }
+    if (!capOk(p.chunkCap)) fail(w + '.chunkCap', 'must be an integer multiple of 4 in [' + CAP_MIN + ', ' + CAP_MAX + '], got ' + JSON.stringify(p.chunkCap));
+    if (!grid.includes(p.chunkCap)) fail(w + '.chunkCap', 'must be a member of grid, got ' + p.chunkCap);
+    const edge = p.chunkCap === grid[0] || p.chunkCap === grid[grid.length - 1];
+    if (p.edge !== edge) fail(w + '.edge', 'must be ' + edge + ' (the pick is ' + (edge ? '' : 'not ') + "the grid's first or last chunkCap)");
+    if (!(typeof p.nsPerEvent === 'number' && Number.isFinite(p.nsPerEvent) && p.nsPerEvent > 0)) {
+        fail(w + '.nsPerEvent', 'must be a finite number > 0, got ' + JSON.stringify(p.nsPerEvent));
+    }
+}
+
+function validatePickList(list, w, fail) {
+    if (!Array.isArray(list) || list.length === 0) fail(w, 'must be a non-empty array');
+    const seen = new Set();
+    for (let i = 0; i < list.length; i++) {
+        validatePickRow(list[i], w + '[' + i + ']', fail);
+        const k = list[i].scenario + '@' + list[i].n;
+        if (seen.has(k)) fail(w + '[' + i + ']', k + ' listed twice');
+        seen.add(k);
+    }
+}
+
+/**
+ * Fail-closed check of a chunkCap pick table (the chunkcap.json format in the header). Used when a
+ * sweep writes the table and when --picks reads one. Throws "[bench] picks: <field> ..."; returns true.
+ */
+export function validatePicks(t) {
+    exactKeys(t, PICKS_TOP, '(root)', pkFail);
+    if (t.schema !== PICKS_SCHEMA) pkFail('schema', "must be '" + PICKS_SCHEMA + "', got " + JSON.stringify(t.schema));
+    exactKeys(t.meta, PICKS_META_FIELDS, 'meta', pkFail);
+    for (const f of PICKS_META_FIELDS) {
+        const ok = META_CHECKS[f](t.meta[f]);
+        if (ok !== true) pkFail('meta.' + f, ok + ', got ' + JSON.stringify(t.meta[f]));
+    }
+    validatePickList(t.picks, 'picks', pkFail);
+    return true;
+}
+
+/** Fail-closed check of results.json 'tuning' { source, sha256, hostState, picks } (throws like validateResults). */
+export function validateTuning(v) {
+    exactKeys(v, TUNING_KEYS, 'tuning', rvFail);
+    if (!nonEmptyString(v.source)) rvFail('tuning.source', 'must be a non-empty string (the --picks path)');
+    if (typeof v.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(v.sha256)) rvFail('tuning.sha256', 'must be the sha256 of the picks file (64 lowercase hex)');
+    if (!HOST_STATES.includes(v.hostState)) rvFail('tuning.hostState', "must be 'QUIET' or 'PRELIMINARY'");
+    validatePickList(v.picks, 'tuning.picks', rvFail);
+    return true;
+}
+
+/** Fail-closed check of results.json 'comparison' { inconclusive, twin } (Compare.mjs twinControl's shape). */
+export function validateComparison(v) {
+    exactKeys(v, COMPARISON_KEYS, 'comparison', rvFail);
+    if (typeof v.inconclusive !== 'boolean') rvFail('comparison.inconclusive', 'must be a boolean');
+    if (!Array.isArray(v.twin)) rvFail('comparison.twin', 'must be an array');
+    if (v.inconclusive !== (v.twin.length > 0)) rvFail('comparison.inconclusive', 'must be true exactly when twin lists a reading');
+    v.twin.forEach((t, i) => {
+        const w = 'comparison.twin[' + i + ']';
+        exactKeys(t, TWIN_KEYS, w, rvFail);
+        if (typeof t.scenario !== 'string' || !SID_RE.test(t.scenario)) rvFail(w + '.scenario', 'must be a scenario id');
+        if (!(Number.isInteger(t.n) && t.n >= 1)) rvFail(w + '.n', 'must be an integer >= 1');
+        const missing = t.verdict === 'MISSING';
+        if (!missing && t.verdict !== 'A' && t.verdict !== 'B') rvFail(w + '.verdict', "must be 'A', 'B' or 'MISSING'");
+        if (missing ? t.phase !== null : !nonEmptyString(t.phase)) rvFail(w + '.phase', missing ? 'must be null when MISSING' : 'must be a non-empty string');
+        if (missing ? t.ratio !== null : !(typeof t.ratio === 'number' && Number.isFinite(t.ratio) && t.ratio > 0)) {
+            rvFail(w + '.ratio', missing ? 'must be null when MISSING' : 'must be a finite number > 0');
+        }
+    });
+    return true;
+}
+
 /**
  * '<adapter>/<Dk>' (D-rows) or '<label>/<Sid>@<n>' (scenario cells; a label may carry one '.<tag>'), a
  * chunkCap sweep cell '<label>/<Sid>@<n>~c<chunkCap>' (g2b-3a; a D-row key never takes the tag). Groups:
@@ -379,6 +521,45 @@ export function validateResults(results) {
     if (results.adapters !== undefined && !isPlain(results.adapters)) rvFail('adapters', 'must be a plain object');
     if (results.opClass !== undefined && !isPlain(results.opClass)) rvFail('opClass', 'must be a plain object');
     if (results.foil !== undefined && !nonEmptyString(results.foil)) rvFail('foil', 'must be a non-empty string');
+    if (results.comparison !== undefined) validateComparison(results.comparison);
+    // BA-29: a loss reason is INCONCLUSIVE-marked exactly when the twin A/A record says so; a marked
+    // row with no comparison record cites a reading that is not there (fail closed)
+    const inconclusive = results.comparison !== undefined && results.comparison.inconclusive === true;
+    results.lossTable.forEach((l, i) => {
+        const marked = l.reason.startsWith('INCONCLUSIVE');
+        if (marked !== inconclusive) {
+            rvFail('lossTable[' + i + '].reason', marked ? 'is marked INCONCLUSIVE but ' + (results.comparison === undefined ?
+                'there is no comparison record' : 'comparison.inconclusive is false') :
+                'must start INCONCLUSIVE: comparison.inconclusive is true (BA-29)');
+        }
+    });
+    // BA-36: a MEASURED payload with an untagged scenario cell carries its A/A control record; an
+    // unmeasured twin is never read as TIE (fail closed). D-rows only, a ~c sweep or PENDING: optional.
+    if (results.status === 'MEASURED' && results.comparison === undefined &&
+        keys.some((k) => { const m = RESULT_KEY.exec(k); return m[3] !== undefined && m[5] === undefined; })) {
+        rvFail('comparison', 'missing: a MEASURED payload with an untagged scenario cell needs { inconclusive, twin } (BA-36)');
+    }
+    if (results.tuning !== undefined) {
+        validateTuning(results.tuning);
+        if (results.meta.hostState === 'QUIET' && results.tuning.hostState !== 'QUIET') {
+            rvFail('tuning.hostState', 'a QUIET run cannot cite a non-QUIET picks table (BA-31)');
+        }
+        // every untagged BlockedArray-family cell ran at its (Sid, n) pick (fail closed)
+        const pick = new Map(results.tuning.picks.map((p) => [p.scenario + '@' + p.n, p.chunkCap]));
+        for (const key of keys) {
+            const m = RESULT_KEY.exec(key);
+            if (m[3] === undefined || m[5] !== undefined || labelBase(m[1]) !== 'BlockedArray') continue;
+            const want = pick.get(m[3] + '@' + m[4]);
+            if (want === undefined) rvFail('results.' + key + '.chunkCap', 'has no tuning pick for ' + m[3] + '@' + m[4]);
+            const row = results.results[key];
+            const runs = [row].concat(Array.isArray(row.repeats) ? row.repeats : []);
+            for (const r of runs) {
+                if (!isPlain(r) || r.chunkCap !== want) {
+                    rvFail('results.' + key + '.chunkCap', 'must equal the tuning pick ' + want + ', got ' + JSON.stringify(isPlain(r) ? r.chunkCap : r));
+                }
+            }
+        }
+    }
     return true;
 }
 
@@ -560,20 +741,27 @@ export function exclusionLine(e) {
  * of the scenarios in scope, sweep = one { sid, n, capacity, d, grid } row per swept (Sid, n). A
  * sweep cell is the registered BlockedArray with tune { chunkCap } and its chunkCap field set; d =
  * defaultChunkCap(capacity), capacity from the scenario's build at this n, computed HERE, cold.
- * excluded keeps only the rows whose n is a size of THIS run (a --quick run caps sizes, so a row at a
- * full-run n drops out). Throws "unknown scenario <id>" on a bad --scenario, on a bad exclusion list,
- * and on --picks or --sweep --publish (both refused until g2b-3a B3; orchestrate -> exit 2).
+ * excluded keeps only the rows whose n is a size of THIS run (a --quick run caps sizes, so a row at an
+ * n outside the quick sizes drops out). With picks (a validatePicks table), every BlockedArray-family
+ * cell (BlockedArray, BlockedArray.plain, BlockedArray.twin) gets tune { chunkCap: pick } and
+ * pickCap = pick, its key staying UNTAGGED. Throws "unknown scenario <id>" on a bad --scenario, on a
+ * bad exclusion list, on a BlockedArray cell whose (Sid, n) has no pick, on a pick whose capacity is
+ * not the capacity this run builds at that (Sid, n) (a stale table), and on a picks table naming no
+ * BlockedArray cell of the run (orchestrate -> exit 2).
  * @param {object} o  parseArgs options
  * @param {object[]} [excludedList]  defaults to EXCLUDED
+ * @param {object|null} [picks]  the parsed + validated --picks table, or null
  */
-export function planCells(o, excludedList = EXCLUDED) {
+export function planCells(o, excludedList = EXCLUDED, picks = null) {
     validateExcluded(excludedList);
-    if (o.picks !== null) throw new Error('[bench] --picks lands with publishGuard (g2b-3a B3): refused until then');
-    if (o.sweep !== null && o.publish) throw new Error('[bench] --sweep --publish writes benchmark/chunkcap.json (BA-31, g2b-3a B3): refused until then');
+    if (picks !== null) validatePicks(picks);
+    const pickOf = picks === null ? null : new Map(picks.picks.map((p) => [p.scenario + '@' + p.n, p]));
+    const builtCap = new Map(); // (Sid, n) -> the built capacity, computed cold the way the sweep computes it
+    let tunedCells = 0;
     const groups = [];
     const sweep = [];
     const ids = o.scenario !== null ? [selectScenario(o.scenario).id] : o.all ? SCENARIOS.map((x) => x.id) : [];
-    // an EXCLUDED row names a full-run n: a --quick run (sizes capped) is not its run, so it drops out
+    // a --quick run keeps only the EXCLUDED rows whose n is one of its (capped) sizes
     const excluded = excludedList.filter((e) => ids.includes(e.sid) && scenarioSizes(selectScenario(e.sid), o.quick).includes(e.n));
     if (ids.length === 0 || (o.all && o.sweep === null)) for (const c of cells()) groups.push([c]);
     for (const id of ids) {
@@ -592,12 +780,28 @@ export function planCells(o, excludedList = EXCLUDED) {
         }
         const exclude = excluded.filter((e) => e.sid === sc.id).map((e) => ({ label: e.label, n: e.n }));
         const byN = new Map();
-        for (const c of cells(sc.id, { quick: o.quick, exclude })) {
+        for (const c0 of cells(sc.id, { quick: o.quick, exclude })) {
+            let c = c0;
+            if (pickOf !== null && labelBase(c.member) === 'BlockedArray') {
+                const p = pickOf.get(sc.id + '@' + c.n);
+                if (p === undefined) {
+                    throw new Error('[bench] --picks: no chunkCap pick for ' + sc.id + '@' + c.n + ' (' + c.member + ' cannot run untuned: fail closed)');
+                }
+                const at = sc.id + '@' + c.n;
+                if (!builtCap.has(at)) builtCap.set(at, sc.build(selectAdapter('BlockedArray'), c.n, o.seed >>> 0, scenarioEvents(o.quick)).capacity);
+                if (p.capacity !== builtCap.get(at)) {
+                    throw new Error('[bench] --picks: the pick for ' + at + ' was swept at capacity ' + p.capacity + ', this run builds capacity ' +
+                        builtCap.get(at) + ' (a stale table: re-run --sweep chunkCap)');
+                }
+                tunedCells++;
+                c = { ...c0, tune: { chunkCap: p.chunkCap }, pickCap: p.chunkCap };
+            }
             if (!byN.has(c.n)) byN.set(c.n, []);
             byN.get(c.n).push(c);
         }
         for (const g of byN.values()) groups.push(g);
     }
+    if (picks !== null && tunedCells === 0) throw new Error('[bench] --picks names no BlockedArray cell of this run');
     return { groups, excluded, sweep };
 }
 
@@ -680,6 +884,101 @@ export function hostState(env = process.env, quick = false) {
     return !quick && env.QUIET_LOCK_HOST === 'quiet' ? 'QUIET' : 'PRELIMINARY';
 }
 
+/**
+ * The publication guard (BA-31 / BA-33), PURE: o = parseArgs options, env = the process env (host via
+ * hostState(env, o.quick)), picks = the parsed --picks table or null. Returns null (allowed) or the
+ * refusal message; orchestrate exits 2 on a message before any cell runs or any file is written.
+ * Refused: --sweep with --picks; a QUIET run (published or not) citing a non-QUIET picks table;
+ * --publish without --all (both modes); a sweep --publish on a non-QUIET host (only a QUIET sweep
+ * writes the committed chunkcap.json); a QUIET run-of-record --publish --all with no picks table, a
+ * non-QUIET one or one whose meta.runCount is not K; any --publish whose --runs is not K (R-BA28).
+ */
+export function publishGuard(o, env, picks) {
+    const host = hostState(env, o.quick);
+    if (o.sweep !== null && (o.picks !== null || picks !== null)) {
+        return '[bench] --sweep ' + o.sweep + ' computes the picks: drop --picks';
+    }
+    if (!o.publish) {
+        // BA-31: a QUIET run never cites a non-QUIET picks table, published or not
+        if (host === 'QUIET' && picks !== null && (!isPlain(picks) || !isPlain(picks.meta) || picks.meta.hostState !== 'QUIET')) {
+            return '[bench] a QUIET run refuses a non-QUIET picks table (BA-31)';
+        }
+        return null;
+    }
+    if (!o.all) return '[bench] --publish is the run of record: it needs --all (BA-33)';
+    if (o.sweep !== null) {
+        if (host !== 'QUIET') {
+            return '[bench] --sweep ' + o.sweep + ' --publish writes the committed benchmark/chunkcap.json: ' +
+                'only from a QUIET host, this host is ' + host + ' (BA-31)';
+        }
+    } else if (host === 'QUIET') {
+        if (picks === null) return '[bench] a QUIET run of record needs --picks <QUIET chunkcap.json> (BA-31): none given';
+        if (!isPlain(picks) || !isPlain(picks.meta) || picks.meta.hostState !== 'QUIET') {
+            return '[bench] a QUIET run of record refuses a non-QUIET picks table (BA-31): its host is ' +
+                String(isPlain(picks) && isPlain(picks.meta) ? picks.meta.hostState : picks);
+        }
+        if (picks.meta.runCount !== K) {
+            return '[bench] a QUIET run of record refuses a picks table swept at runCount ' + String(picks.meta.runCount) +
+                ' (R-BA28: the sweep runs K = ' + K + ' interleaved passes)';
+        }
+    }
+    if (o.runs !== K) return '[bench] --publish needs --runs ' + K + ' (R-BA28: K interleaved passes; the sweep uses the same K), got ' + o.runs;
+    return null;
+}
+
+/**
+ * Read + validate a --picks table cold (fail closed). Returns { table, tuning } with tuning the
+ * results.json record { source, sha256, hostState, picks }; throws on a missing file, bad JSON or a
+ * table validatePicks rejects.
+ */
+export function readPicks(path) {
+    let bytes;
+    try {
+        bytes = readFileSync(resolvePath(path));
+    } catch (e) {
+        throw new Error('[bench] --picks: cannot read ' + path + ': ' + e.message);
+    }
+    let table;
+    try {
+        table = JSON.parse(bytes.toString('utf8'));
+    } catch (e) {
+        throw new Error('[bench] --picks: ' + path + ' is not JSON: ' + e.message);
+    }
+    validatePicks(table);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    return { table, tuning: { source: path, sha256, hostState: table.meta.hostState, picks: table.picks } };
+}
+
+/**
+ * The picks of a finished sweep run (BA-31), pure: one row per plan.sweep (Sid, n), pickChunkCap over
+ * its '~c' cells. Throws on a missing sweep cell.
+ */
+export function sweepPicks(plan, results) {
+    return plan.sweep.map((w) => {
+        const rows = w.grid.map((cc) => {
+            const key = cellKey('BlockedArray', w.sid, w.n, cc);
+            if (!isPlain(results[key])) throw new Error('[bench] sweep: no cell ' + key);
+            return results[key];
+        });
+        const p = pickChunkCap(rows);
+        return { scenario: w.sid, n: w.n, capacity: w.capacity, d: w.d, grid: w.grid.slice(), chunkCap: p.chunkCap,
+            edge: p.edge, nsPerEvent: p.nsPerEvent };
+    });
+}
+
+/**
+ * The comparison records of a results map, pure (BA-29 / BA-30): { lossTable, comparison } with
+ * lossTable = lossRows(results).rows and comparison = { inconclusive, twin }. A map with no untagged
+ * scenario cell (D-rows only, or a chunkCap sweep) has nothing to compare: { lossTable: [],
+ * comparison: null } and lossRows is not called.
+ */
+export function comparisonOf(results) {
+    const scen = Object.keys(results).some((k) => { const m = RESULT_KEY.exec(k); return m !== null && m[3] !== undefined && m[5] === undefined; });
+    if (!scen) return { lossTable: [], comparison: null };
+    const lr = lossRows(results);
+    return { lossTable: lr.rows, comparison: { inconclusive: lr.inconclusive, twin: lr.twin } };
+}
+
 function quietLockWhy() {
     const w = process.env.QUIET_LOCK_WHY;
     return typeof w === 'string' && w.length > 0 ? w : null;
@@ -693,7 +992,7 @@ function cpuInfo() {
     };
 }
 
-function printHeader(o, meta0, nCells, extra = [], plan = null) {
+function printHeader(o, meta0, nCells, extra = [], plan = null, picked = null) {
     const cpu = cpuInfo();
     console.log('===========================================================================');
     console.log('@zakkster/lite-yggdrasil -- benchmark suite (' + nCells + ' cells' +
@@ -710,7 +1009,8 @@ function printHeader(o, meta0, nCells, extra = [], plan = null) {
     console.log('  host:    ' + meta0.hostState + (meta0.quietLockWhy ? ' (' + meta0.quietLockWhy + ')' : ' (not under quiet-lock)'));
     console.log('  commit:  ' + meta0.commit + ' | Yggdrasil.js sha256/8 ' + meta0.mainFileSha);
     console.log('  runs:    ' + o.runs + (o.quick ? ' | QUICK (a smoke, never a run of record)' : ''));
-    console.log('  writes:  ' + (o.publish ? PUBLISH_PATHS.label : OUT_PATHS.label) + 'results.json + report.html');
+    console.log('  writes:  ' + (o.sweep !== null && o.publish ? 'benchmark/chunkcap.json ONLY (a QUIET sweep, BA-31)'
+        : (o.publish ? PUBLISH_PATHS.label : OUT_PATHS.label) + 'results.json + report.html' + (o.sweep !== null ? ' + chunkcap.json' : '')));
     console.log('  gc:      children spawned with --expose-gc; D6 children + --no-concurrent-recompilation');
     console.log('  NOTE:    counts are DETERMINISTIC; every timing is REPORTED (gates nothing).');
     console.log('  NOTE:    D4 is a PORTABLE PROXY (no native perf counters).');
@@ -729,6 +1029,15 @@ function printHeader(o, meta0, nCells, extra = [], plan = null) {
             console.log('  sweep:   ' + w.sid + '@' + w.n + ' capacity ' + w.capacity + ' d ' + w.d + ' chunkCap ' + w.grid.join(', '));
         }
         for (const e of plan.excluded) console.log('  exclude: ' + exclusionLine(e));
+        if (picked !== null) {
+            const m = picked.table.meta;
+            console.log('  picks:   ' + picked.tuning.source + ' | host ' + m.hostState + ' | date ' + m.date + ' | commit ' + m.commit +
+                ' | sha256/8 ' + picked.tuning.sha256.slice(0, 8) + ' | every BlockedArray label at its (Sid, n) pick (BA-31)');
+            for (const p of picked.table.picks) {
+                console.log('  pick:    ' + p.scenario + '@' + p.n + ' chunkCap ' + p.chunkCap + (p.edge ? ' (edge)' : '') + ' of [' +
+                    p.grid.join(', ') + '] d ' + p.d + ' | ' + fmt(p.nsPerEvent) + ' ns/event (REPORTED)');
+            }
+        }
         if (o.scenario !== null || o.all) {
             console.log('  exclude: ' + (plan.excluded.length === 0 ? 'none (no census cell over ' + EXCLUDE_LIMIT_S + ' s per pass, BA-34)'
                 : plan.excluded.length + ' cell(s), never a GO input (BA-34)'));
@@ -896,11 +1205,22 @@ async function orchestrate(o) {
     if (o.publish && process.env.QUIET_LOCK_HOST !== 'quiet' && process.env.QUIET_LOCK_HOST !== 'preliminary') {
         usageExit('[bench] --publish is the run of record: run it under quiet-lock');
     }
+    // --picks is read + validated cold, then the publication guard runs: all before any cell or file
+    let picked = null;
+    if (o.picks !== null) {
+        try {
+            picked = readPicks(o.picks);
+        } catch (e) {
+            usageExit(e.message);
+        }
+    }
+    const refusal = publishGuard(o, process.env, picked === null ? null : picked.table);
+    if (refusal !== null) usageExit(refusal);
     let plan;
     try {
-        plan = planCells(o);
+        plan = planCells(o, EXCLUDED, picked === null ? null : picked.table);
     } catch (e) {
-        usageExit(e.message); // "unknown scenario <id>" -> exit 2
+        usageExit(e.message); // "unknown scenario <id>", a BlockedArray cell with no pick -> exit 2
     }
     const all = plan.groups.flat();
     // labels that are not registered adapter names (BlockedArray variants) print in meta.rivals too
@@ -919,7 +1239,7 @@ async function orchestrate(o) {
         commit: commitId(),
         mainFileSha: mainFileSha(),
     };
-    printHeader(o, meta0, all.length, extra, plan);
+    printHeader(o, meta0, all.length, extra, plan, picked);
 
     // fail closed: no two cells may share a result key (variant labels; a g2b-3 tune sweep must tag its keys)
     const seenKeys = new Set();
@@ -949,6 +1269,19 @@ async function orchestrate(o) {
     if (failures > 0) {
         process.stderr.write('[bench] ' + failures + ' cell(s) failed\n');
         process.exit(1);
+    }
+
+    // --picks: every tuned cell (and each repeat) must have run at its pick (fail closed)
+    for (const c of all) {
+        if (c.pickCap === undefined) continue;
+        const r = results[keyOf(c)];
+        for (const x of [r].concat(Array.isArray(r.repeats) ? r.repeats : [])) {
+            if (x.chunkCap !== c.pickCap) {
+                process.stderr.write('[bench] tuning: ' + keyOf(c) + ' ran at chunkCap ' + x.chunkCap + ', its pick is ' + c.pickCap +
+                    '\n[bench] nothing written\n');
+                process.exit(1);
+            }
+        }
     }
 
     try {
@@ -994,9 +1327,37 @@ async function orchestrate(o) {
         subjects: SUBJECTS, foil: FOIL, dimensions: DIMENSIONS, titles: DIMENSION_TITLES,
         scenarios: o.scenario !== null ? [selectScenario(o.scenario).id] : SCENARIOS.map((s) => s.id),
         adapters, results,
-        lossTable: [], // group 2b: the scenario runs measure the loss rows (RESEARCH section 4.3)
+        lossTable: [],
         opClass: OP_CLASS,
     };
+    // BA-30: the loss rows + the A/A control readings (none for a D-row-only run or a sweep)
+    try {
+        const cmp = comparisonOf(results);
+        payload.lossTable = cmp.lossTable;
+        if (cmp.comparison !== null) payload.comparison = cmp.comparison;
+    } catch (e) {
+        process.stderr.write(e.message + '\n[bench] nothing written\n');
+        process.exit(1);
+    }
+    if (picked !== null) payload.tuning = picked.tuning;
+    let pickTable = null;
+    if (o.sweep !== null) {
+        try {
+            pickTable = { schema: PICKS_SCHEMA, meta: {
+                date: meta.date, hostState: meta.hostState, commit: meta.commit, mainFileSha: meta.mainFileSha,
+                runCount: meta.runCount, loadAvgStart: meta.loadAvgStart, loadAvgEnd: meta.loadAvgEnd,
+                quietLockWhy: meta.quietLockWhy, command: meta.command }, picks: sweepPicks(plan, results) };
+            validatePicks(JSON.parse(JSON.stringify(pickTable)));
+        } catch (e) {
+            process.stderr.write(e.message + '\n[bench] nothing written\n');
+            process.exit(1);
+        }
+        console.log('-- chunkCap picks (BA-31; median-of-K blend ns/event, REPORTED) ' + '-'.repeat(8));
+        for (const p of pickTable.picks) {
+            console.log('  ' + (p.scenario + '@' + p.n).padEnd(16) + ' chunkCap ' + String(p.chunkCap).padStart(5) + (p.edge ? ' edge' : '     ') +
+                '  of [' + p.grid.join(', ') + ']  ' + fmt(p.nsPerEvent) + ' ns/event');
+        }
+    }
     // round-trip through JSON first, so the check sees exactly what lands on disk
     const json = JSON.stringify(payload, null, 2);
     const onDisk = JSON.parse(json);
@@ -1008,10 +1369,17 @@ async function orchestrate(o) {
     }
     const { renderHtml } = await import('./Report.mjs');
     const html = renderHtml(onDisk);
+    if (pickTable !== null && o.publish) {
+        // BA-31: a QUIET sweep --publish writes the committed pick table ONLY (publishGuard checked the host)
+        writeFileSync(PICKS_PUBLISH_PATH, JSON.stringify(pickTable, null, 2) + '\n');
+        console.log('picks written to benchmark/chunkcap.json (' + pickTable.picks.length + ' (Sid, n) row(s), host ' + meta.hostState + ')');
+        return;
+    }
     if (!o.publish) mkdirSync(OUT_DIR, { recursive: true });
+    if (pickTable !== null) writeFileSync(PICKS_OUT_PATH, JSON.stringify(pickTable, null, 2) + '\n');
     writeFileSync(P.results, json);
     writeFileSync(P.report, html);
-    console.log('results written to ' + P.label + 'results.json + report.html (' + all.length + ' cells x ' +
+    console.log('results written to ' + P.label + 'results.json + report.html' + (pickTable !== null ? ' + chunkcap.json' : '') + ' (' + all.length + ' cells x ' +
         o.runs + ' run(s), host ' + meta.hostState + ')');
 }
 

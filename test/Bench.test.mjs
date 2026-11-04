@@ -11,7 +11,8 @@
 import test, { describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 import { SumSequence } from '../Yggdrasil.js';
 import {
@@ -727,13 +728,11 @@ describe('g2b-3a B2: sweep keys, flags and the cell plan', () => {
         const src = readFileSync(PKG + 'benchmark/Bench.mjs', 'utf8');
         assert.equal(src.split('for (const c of runOrder(plan, pass))').length, 2, 'the pass loop must run runOrder');
     });
-    test('planCells refuses --picks and --sweep --publish until g2b-3a B3 (pure: a spawned --publish could write results.json)', () => {
-        assert.throws(() => B.planCells(B.parseArgs(['--scenario', 'S7', '--picks', 'benchmark/chunkcap.json'])), /--picks/);
-        assert.throws(() => B.planCells(B.parseArgs(['--all', '--quick', '--picks', 'x.json'])), /--picks lands with publishGuard/);
-        assert.throws(() => B.planCells(B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S7', '--publish'])), /--sweep --publish/);
-        // the sweep alone and --publish alone still plan
+    test('B3: planCells no longer refuses --picks / --sweep --publish (publishGuard owns both refusals)', () => {
+        // full S7 sizes 10000 / 100000 / 1000000 -> 3 swept (Sid, n)
+        assert.equal(B.planCells(B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S7', '--publish'])).sweep.length, 3);
+        assert.ok(B.planCells(B.parseArgs(['--scenario', 'S7', '--picks', 'x.json'])).groups.length > 0);
         assert.equal(B.planCells(B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S7', '--quick'])).sweep.length, 1);
-        assert.ok(B.planCells(B.parseArgs(['--scenario', 'S7', '--publish'])).groups.length > 0);
     });
     test('EXCLUDED (BA-34): empty today (census max 105.25 s); planted rows: SumSequence / BlockedArray family throw; a valid row prints the ruled wording and leaves the cell out', () => {
         assert.deepEqual(B.EXCLUDED, []);
@@ -762,5 +761,537 @@ describe('g2b-3a B2: sweep keys, flags and the cell plan', () => {
         assert.throws(() => B.validateExcluded([{ ...row, n: 4096 + 1 }]), /is not a size of S1b/);
         assert.throws(() => B.validateExcluded([{ ...row, reasn: 'x' }]), /unknown key reasn/);
         assert.throws(() => B.validateExcluded([row, row]), /listed twice/);
+    });
+});
+
+// ---- g2b-3a B3: publishGuard, the picks table, tuning, lossTable / comparison, Report sections, inl drivers
+// (PLAN g2b-3a TASKS 4-5, TASK 7 B3 rows; SPEC CURRENT BA-29..BA-33; ASSERTIONS A2 / A4). Hand oracles:
+// sweepGrid(100) = [28, 52, 100, 200, 400] (25 -> 28, 50 -> 52), d(100000) = ceil(316.23) = 317 -> 320,
+// sweepGrid(1000) = [252, 500, 1000, 2000, 4000] (250 -> 252).
+describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
+    let B, Rep;
+    before(async () => {
+        B = await import('../benchmark/Bench.mjs');
+        Rep = await import('../benchmark/Report.mjs');
+    });
+    const bench = (args, env) => spawnSync(process.execPath, [PKG + 'benchmark/Bench.mjs', ...args],
+        { encoding: 'utf8', timeout: 60000, env: env === undefined ? process.env : env });
+    const P = (args) => B.parseArgs(args);
+    const QUIET = { QUIET_LOCK_HOST: 'quiet' };
+    const PRELIM = { QUIET_LOCK_HOST: 'preliminary' };
+
+    const S7_PICKS = () => [
+        { scenario: 'S7', n: 10000, capacity: 10000, d: 100, grid: [28, 52, 100, 200, 400], chunkCap: 100, edge: false, nsPerEvent: 41.5 },
+        { scenario: 'S7', n: 100000, capacity: 100000, d: 320, grid: [80, 160, 320, 640, 1280], chunkCap: 80, edge: true, nsPerEvent: 52.25 },
+        { scenario: 'S7', n: 1000000, capacity: 1000000, d: 1000, grid: [252, 500, 1000, 2000, 4000], chunkCap: 2000, edge: false, nsPerEvent: 77 },
+    ];
+    const table = (hostState = 'QUIET') => ({
+        schema: 'yggdrasil-chunkcap/1',
+        meta: { date: '2026-11-01T09:00:00.000Z', hostState, commit: 'abcdef0', mainFileSha: '0123abcd', runCount: 5,
+            loadAvgStart: [0.5, 0.5, 0.5], loadAvgEnd: [0.6, 0.6, 0.6], quietLockWhy: 'fixture sweep',
+            command: 'node benchmark/Bench.mjs --sweep chunkCap --publish --all' },
+        picks: S7_PICKS(),
+    });
+
+    // ---- publishGuard (A4): every rule + its allowed case; pure (env passed in)
+    const GUARD = [
+        ['--publish (no --all), any host', ['--publish', '--runs', '5'], QUIET, null, /needs --all \(BA-33\)/],
+        ['--publish --scenario S7 (no --all)', ['--publish', '--scenario', 'S7', '--runs', '5'], PRELIM, null, /needs --all/],
+        ['--sweep --scenario S7 --publish (no --all), QUIET', ['--sweep', 'chunkCap', '--scenario', 'S7', '--publish', '--runs', '5'], QUIET, null, /needs --all/],
+        ['--sweep with --picks (no publish)', ['--sweep', 'chunkCap', '--scenario', 'S7', '--picks', 'p.json'], {}, table(), /drop --picks/],
+        ['--sweep --all --publish on PRELIMINARY (mutant M1c && !o.all)', ['--sweep', 'chunkCap', '--all', '--publish', '--runs', '5'], PRELIM, null, /only from a QUIET host/],
+        ['--sweep --all --publish, no quiet-lock env', ['--sweep', 'chunkCap', '--all', '--publish', '--runs', '5'], {}, null, /only from a QUIET host/],
+        ['QUIET --all --publish, picks missing', ['--all', '--publish', '--runs', '5'], QUIET, null, /needs --picks/],
+        ['QUIET --all --publish, PRELIMINARY picks', ['--all', '--publish', '--picks', 'p.json', '--runs', '5'], QUIET, table('PRELIMINARY'),
+            /a QUIET run of record refuses a non-QUIET picks table \(BA-31\): its host is PRELIMINARY/],
+        // R-BA28: K passes on every --publish; a QUIET run of record cites only a K-pass sweep
+        ['QUIET --sweep --all --publish at the default --runs 1', ['--sweep', 'chunkCap', '--all', '--publish'], QUIET, null, /--publish needs --runs 5 .*got 1$/],
+        ['QUIET --sweep --all --publish --runs 4', ['--sweep', 'chunkCap', '--all', '--publish', '--runs', '4'], QUIET, null, /--publish needs --runs 5 .*got 4$/],
+        ['QUIET --all --publish with QUIET picks at --runs 1', ['--all', '--publish', '--picks', 'p.json'], QUIET, table('QUIET'), /--publish needs --runs 5 .*got 1$/],
+        ['PRELIMINARY --all --publish at --runs 1', ['--all', '--publish'], PRELIM, null, /--publish needs --runs 5/],
+        ['QUIET --all --publish --runs 5, picks meta.runCount 1', ['--all', '--publish', '--picks', 'p.json', '--runs', '5'], QUIET,
+            (() => { const t = table('QUIET'); t.meta.runCount = 1; return t; })(), /picks table swept at runCount 1 \(R-BA28/],
+        // R-BA28 above K: the refusal is !== K, not < K (mutants MRUNSLT / MRCLT)
+        ['QUIET --sweep --all --publish --runs 6', ['--sweep', 'chunkCap', '--all', '--publish', '--runs', '6'], QUIET, null, /--publish needs --runs 5 .*got 6$/],
+        ['QUIET --all --publish --runs 5, picks meta.runCount 6', ['--all', '--publish', '--picks', 'p.json', '--runs', '5'], QUIET,
+            (() => { const t = table('QUIET'); t.meta.runCount = 6; return t; })(), /swept at runCount 6 \(R-BA28/],
+        // BA-31: a QUIET run never cites a non-QUIET table, published or not
+        ['QUIET --scenario S7 --picks (no publish), PRELIMINARY picks', ['--scenario', 'S7', '--picks', 'p.json'], QUIET, table('PRELIMINARY'),
+            /^\[bench\] a QUIET run refuses a non-QUIET picks table \(BA-31\)$/],
+        ['QUIET --all --picks (no publish), PRELIMINARY picks', ['--all', '--picks', 'p.json'], QUIET, table('PRELIMINARY'), /a QUIET run refuses a non-QUIET picks table/],
+    ];
+    for (const [name, args, env, picks, re] of GUARD) {
+        test('publishGuard refuses: ' + name, () => {
+            const msg = B.publishGuard(P(args), env, picks);
+            assert.equal(typeof msg, 'string', name);
+            assert.match(msg, re);
+        });
+    }
+    const ALLOWED = [
+        ['QUIET --sweep chunkCap --all --publish --runs 5', ['--sweep', 'chunkCap', '--all', '--publish', '--runs', '5'], QUIET, null],
+        ['QUIET --all --publish --runs 5 with QUIET picks', ['--all', '--publish', '--picks', 'p.json', '--runs', '5'], QUIET, table('QUIET')],
+        ['PRELIMINARY --all --publish --runs 5, no picks', ['--all', '--publish', '--runs', '5'], PRELIM, null],
+        ['QUIET --scenario S7 --picks (no publish) with QUIET picks', ['--scenario', 'S7', '--picks', 'p.json'], QUIET, table('QUIET')],
+        ['PRELIMINARY --scenario S7 --picks, picks meta.runCount 1 (only a QUIET run of record pins runCount)', ['--scenario', 'S7', '--picks', 'p.json'],
+            PRELIM, (() => { const t = table('PRELIMINARY'); t.meta.runCount = 1; return t; })()],
+        ['--scenario S7 (no publish)', ['--scenario', 'S7'], {}, null],
+        ['--scenario S7 --picks (no publish, PRELIMINARY picks)', ['--scenario', 'S7', '--picks', 'p.json'], {}, table('PRELIMINARY')],
+        ['--sweep chunkCap --scenario S7 --quick', ['--sweep', 'chunkCap', '--scenario', 'S7', '--quick'], {}, null],
+    ];
+    for (const [name, args, env, picks] of ALLOWED) {
+        test('publishGuard allows: ' + name, () => assert.equal(B.publishGuard(P(args), env, picks), null));
+    }
+    test('publishGuard is pure: the host comes from the env argument, never process.env', () => {
+        const saved = process.env.QUIET_LOCK_HOST;
+        process.env.QUIET_LOCK_HOST = 'quiet';
+        try {
+            assert.match(B.publishGuard(P(['--sweep', 'chunkCap', '--all', '--publish']), {}, null), /only from a QUIET host/);
+        } finally {
+            if (saved === undefined) delete process.env.QUIET_LOCK_HOST; else process.env.QUIET_LOCK_HOST = saved;
+        }
+    });
+
+    // ---- the picks table validator (read side of --picks, write side of a sweep)
+    test('validatePicks: the fixture table passes (control baseline); PICKS_SCHEMA pinned', () => {
+        assert.equal(B.PICKS_SCHEMA, 'yggdrasil-chunkcap/1');
+        assert.equal(B.validatePicks(table()), true);
+        assert.equal(B.validatePicks(JSON.parse(JSON.stringify(table('PRELIMINARY')))), true);
+    });
+    const PICK_BAD = [
+        ['non-plain root', () => Object.create(table()), /\(root\) must be a plain object/],
+        ['an array root', () => [], /\(root\)/],
+        ['schema wrong', (t) => { t.schema = 'yggdrasil-chunkcap/2'; }, /picks: schema/],
+        ['unknown top key', (t) => { t.extra = 1; }, /unknown key/],
+        ['meta missing commit', (t) => { delete t.meta.commit; }, /meta\.commit missing/],
+        ['meta unknown key', (t) => { t.meta.seed = 1; }, /meta\.seed unknown key/],
+        ['meta.hostState LOUD', (t) => { t.meta.hostState = 'LOUD'; }, /meta\.hostState/],
+        ['meta.date not ISO', (t) => { t.meta.date = 'yesterday'; }, /meta\.date/],
+        ['meta.mainFileSha 7 hex', (t) => { t.meta.mainFileSha = '0123abc'; }, /meta\.mainFileSha/],
+        ['meta.runCount 0', (t) => { t.meta.runCount = 0; }, /meta\.runCount/],
+        ['meta.loadAvgEnd 2 numbers', (t) => { t.meta.loadAvgEnd = [1, 1]; }, /meta\.loadAvgEnd/],
+        ['meta.command empty', (t) => { t.meta.command = ''; }, /meta\.command/],
+        ['meta non-plain', (t) => { t.meta = Object.create(t.meta); }, /meta must be a plain object/],
+        ['picks empty', (t) => { t.picks = []; }, /picks must be a non-empty array/],
+        ['picks not an array', (t) => { t.picks = { 0: t.picks[0] }; }, /picks must be a non-empty array/],
+        ['row non-plain', (t) => { t.picks[0] = Object.create(t.picks[0]); }, /picks\[0\] must be a plain object/],
+        ['row unknown key', (t) => { t.picks[1].chunkcap = 80; }, /picks\[1\]\.chunkcap unknown key/],
+        ['row missing edge', (t) => { delete t.picks[0].edge; }, /picks\[0\]\.edge missing/],
+        ['scenario S99', (t) => { t.picks[0].scenario = 'S99'; }, /picks\[0\]\.scenario/],
+        ['scenario D1', (t) => { t.picks[0].scenario = 'D1'; }, /picks\[0\]\.scenario/],
+        ['n 0', (t) => { t.picks[0].n = 0; }, /picks\[0\]\.n/],
+        ['n 10000.5', (t) => { t.picks[0].n = 10000.5; }, /picks\[0\]\.n/],
+        ['capacity < n', (t) => { t.picks[0].capacity = 9999; }, /picks\[0\]\.capacity/],
+        ['d not defaultChunkCap(capacity)', (t) => { t.picks[0].d = 104; }, /picks\[0\]\.d must be defaultChunkCap/],
+        ['grid not sweepGrid(d)', (t) => { t.picks[0].grid = [25, 50, 100, 200, 400]; }, /picks\[0\]\.grid/],
+        ['chunkCap 102 (not a multiple of 4)', (t) => { t.picks[0].chunkCap = 102; }, /chunkCap must be an integer multiple of 4/],
+        ['chunkCap 4 (below 8)', (t) => { t.picks[0].chunkCap = 4; }, /chunkCap must be an integer multiple of 4 in \[8, 65536\]/],
+        ['chunkCap 65540 (above 65536)', (t) => { t.picks[0].chunkCap = 65540; }, /chunkCap must be an integer multiple of 4/],
+        ['chunkCap "100" (a string)', (t) => { t.picks[0].chunkCap = '100'; }, /chunkCap must be an integer/],
+        ['chunkCap 104 (not a grid member)', (t) => { t.picks[0].chunkCap = 104; }, /chunkCap must be a member of grid/],
+        ['edge wrong (interior pick flagged edge)', (t) => { t.picks[0].edge = true; }, /picks\[0\]\.edge must be false/],
+        ['edge wrong (end pick not flagged)', (t) => { t.picks[1].edge = false; }, /picks\[1\]\.edge must be true/],
+        ['nsPerEvent 0', (t) => { t.picks[2].nsPerEvent = 0; }, /picks\[2\]\.nsPerEvent/],
+        ['nsPerEvent null', (t) => { t.picks[2].nsPerEvent = null; }, /picks\[2\]\.nsPerEvent/],
+        ['a (scenario, n) twice', (t) => { t.picks.push({ ...t.picks[0] }); }, /S7@10000 listed twice/],
+    ];
+    for (const [name, mutate, re] of PICK_BAD) {
+        test('validatePicks throws: ' + name, () => {
+            const t = table();
+            const r = mutate(t);
+            assert.throws(() => B.validatePicks(r === undefined ? t : r), re);
+        });
+    }
+
+    // ---- results fixtures with timed scenario cells (counts records the adapters accept)
+    const phaseRow = (label, phase, ns) => {
+        const a = selectAdapter(label.startsWith('BlockedArray') ? 'BlockedArray' : label);
+        const rec = countsRecord(a, new Int32Array(NC), new Float64Array(a.extraCounts.length));
+        return { phase, events: 100, ops: 100, nsPerOp: ns, p50: ns, p90: ns, ...rec, checksum: 5, endState: 1, traceHash: 9 };
+    };
+    const S7N = [10000, 100000, 1000000];
+    const pickAt = (n) => S7_PICKS().find((p) => p.n === n).chunkCap;
+    function put(R, label, n, runs, chunkCap) {
+        const cc = chunkCap !== undefined ? chunkCap : label.startsWith('BlockedArray') ? pickAt(n) : 'n/a';
+        const one = (v) => ({ member: label, scenario: 'S7', n, chunkCap: cc, phases: [phaseRow(label, 'blend', v)] });
+        R[label + '/S7@' + n] = { ...one(runs[0]), repeats: runs.slice(1).map(one) };
+    }
+    const five = (v) => [v, v, v, v, v];
+    // A2 S7 shape: SumSequence median 100 (outliers 900 / 1), FenwickRebuild.suffix 50 (wins: 50 < 95),
+    // BlockedArray / .plain 100 (TIE), twin ~100 (TIE): conclusive.
+    const s7 = (twinAt1e5 = [100, 101, 99, 100, 100]) => {
+        const R = {};
+        for (const n of S7N) {
+            put(R, 'SumSequence', n, [100, 900, 100, 1, 100]);
+            put(R, 'FenwickRebuild.suffix', n, five(50));
+            put(R, 'BlockedArray', n, five(100));
+            put(R, 'BlockedArray.plain', n, five(100));
+            put(R, 'BlockedArray.twin', n, n === 100000 ? twinAt1e5 : [100, 101, 99, 100, 100]);
+        }
+        return R;
+    };
+    const meta = (hostState) => ({ seed: SEED, node: 'v22.0.0', arch: 'arm64', platform: 'darwin', cpuModel: 'Fixture CPU',
+        cpuCount: 8, date: '2026-11-01T12:00:00.000Z', sentinel: null, loadAvgStart: [0.5, 0.5, 0.5], loadAvgEnd: [0.6, 0.6, 0.6],
+        hostState, quietLockWhy: 'fixture', commit: 'abcdef0', mainFileSha: '0123abcd', runCount: 5,
+        command: 'node benchmark/Bench.mjs --scenario S7 --runs 5', rivals: {} });
+    const payload = (R, hostState = 'PRELIMINARY', status = 'MEASURED') => {
+        const cmp = B.comparisonOf(R);
+        const p = { schema: 'yggdrasil-bench/1', status, meta: meta(hostState), subjects: ['SumSequence'], dimensions: [],
+            titles: {}, scenarios: ['S7'], results: R, lossTable: cmp.lossTable };
+        if (cmp.comparison !== null) p.comparison = cmp.comparison;
+        return JSON.parse(JSON.stringify(p));
+    };
+
+    test('lossTable (A2): the S7 fixture gives exactly one row {S7, FenwickRebuild.suffix, SumSequence, none up to 1000000}; it passes validateResults; twin never a row', () => {
+        const cmp = B.comparisonOf(s7());
+        assert.equal(cmp.lossTable.length, 1);
+        const [row] = cmp.lossTable;
+        assert.deepEqual([row.scenario, row.winner, row.loser, row.crossoverN], ['S7', 'FenwickRebuild.suffix', 'SumSequence', 'none up to 1000000']);
+        assert.ok(nonEmpty(row.reason) && !/^INCONCLUSIVE/.test(row.reason));
+        for (const r of cmp.lossTable) assert.ok(!r.winner.startsWith('BlockedArray'), r.winner);
+        assert.deepEqual(cmp.comparison, { inconclusive: false, twin: [] });
+        const p = payload(s7());
+        assert.equal(p.lossTable.length, 1);
+        assert.equal(B.validateResults(p), true);
+    });
+    const nonEmpty = (s) => typeof s === 'string' && s.length > 0;
+    test('lossTable: a twin not TIE at S7@100000 -> comparison INCONCLUSIVE with the reading, every loss reason starts INCONCLUSIVE, still validates', () => {
+        const p = payload(s7(five(80)));
+        assert.equal(p.comparison.inconclusive, true);
+        assert.equal(p.comparison.twin.length, 1);
+        assert.deepEqual([p.comparison.twin[0].scenario, p.comparison.twin[0].n, p.comparison.twin[0].phase, p.comparison.twin[0].verdict], ['S7', 100000, 'blend', 'A']);
+        assert.ok(p.lossTable.length === 1 && /^INCONCLUSIVE/.test(p.lossTable[0].reason));
+        assert.equal(B.validateResults(p), true);
+    });
+    test('comparisonOf: nothing to compare (D-rows only, or a ~c sweep) -> lossTable [] and no comparison record', () => {
+        assert.deepEqual(B.comparisonOf({ 'SumSequence/D1': {}, 'SpliceFoil/D8': {} }), { lossTable: [], comparison: null });
+        const sw = {};
+        for (const cc of [16, 32]) sw['BlockedArray/S7@4096~c' + cc] = { member: 'BlockedArray', scenario: 'S7', n: 4096, chunkCap: cc, phases: [phaseRow('BlockedArray', 'blend', 10)] };
+        assert.deepEqual(B.comparisonOf(sw), { lossTable: [], comparison: null });
+    });
+    const CMP_BAD = [
+        ['non-plain', (p) => { p.comparison = []; }, /comparison must be a plain object/],
+        ['unknown key', (p) => { p.comparison.twins = []; }, /comparison\.twins unknown key/],
+        ['inconclusive not a boolean', (p) => { p.comparison.inconclusive = 'no'; }, /comparison\.inconclusive must be a boolean/],
+        ['inconclusive true with no reading', (p) => { p.comparison.inconclusive = true; }, /must be true exactly when/],
+        ['a reading with inconclusive false', (p) => { p.comparison.twin.push({ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'A', ratio: 0.8 }); }, /must be true exactly when/],
+        ['a reading with a bad verdict', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'TIE', ratio: 1 }] }; }, /twin\[0\]\.verdict/],
+        ['MISSING with a ratio', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: null, verdict: 'MISSING', ratio: 1 }] }; }, /twin\[0\]\.ratio must be null/],
+        ['a reading with ratio 0', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'B', ratio: 0 }] }; }, /twin\[0\]\.ratio/],
+    ];
+    for (const [name, mutate, re] of CMP_BAD) {
+        test('validateResults comparison throws: ' + name, () => {
+            const p = payload(s7());
+            mutate(p);
+            assert.throws(() => B.validateResults(p), re);
+        });
+    }
+    test('validateResults: an unknown top-level key still throws (tuning / comparison are the only new ones)', () => {
+        const p = payload(s7());
+        p.tunings = {};
+        assert.throws(() => B.validateResults(p), /tunings unknown key/);
+    });
+
+    // ---- tuning
+    const tuning = () => ({ source: 'benchmark/chunkcap.json', sha256: 'ab'.repeat(32), hostState: 'QUIET', picks: S7_PICKS() });
+    test('validateTuning: the fixture passes; a payload with tuning + every BlockedArray cell at its pick validates', () => {
+        assert.equal(B.validateTuning(tuning()), true);
+        const p = payload(s7());
+        p.tuning = tuning();
+        assert.equal(B.validateResults(p), true);
+    });
+    const TUNING_BAD = [
+        ['non-plain', () => Object.create(tuning()), /tuning must be a plain object/],
+        ['unknown key', (t) => { t.commit = 'x'; }, /tuning\.commit unknown key/],
+        ['missing picks', (t) => { delete t.picks; }, /tuning\.picks missing/],
+        ['source empty', (t) => { t.source = ''; }, /tuning\.source/],
+        ['sha256 sha256/8 only', (t) => { t.sha256 = '0123abcd'; }, /tuning\.sha256/],
+        ['sha256 uppercase', (t) => { t.sha256 = 'AB'.repeat(32); }, /tuning\.sha256/],
+        ['hostState quiet (case)', (t) => { t.hostState = 'quiet'; }, /tuning\.hostState/],
+        ['picks empty', (t) => { t.picks = []; }, /tuning\.picks must be a non-empty array/],
+        ['a pick chunkCap 102', (t) => { t.picks[0].chunkCap = 102; }, /tuning\.picks\[0\]\.chunkCap/],
+        ['a pick with an unknown key', (t) => { t.picks[2].why = 'x'; }, /tuning\.picks\[2\]\.why unknown key/],
+    ];
+    for (const [name, mutate, re] of TUNING_BAD) {
+        test('validateTuning throws: ' + name, () => {
+            const t = tuning();
+            const r = mutate(t);
+            assert.throws(() => B.validateTuning(r === undefined ? t : r), re);
+            const p = payload(s7());
+            p.tuning = r === undefined ? t : r;
+            assert.throws(() => B.validateResults(p), re);
+        });
+    }
+    test('validateResults with tuning: a BlockedArray-family cell (or a repeat) off its pick, or with no pick, throws', () => {
+        const p = payload(s7());
+        p.tuning = tuning();
+        p.results['BlockedArray.plain/S7@10000'].repeats[3].chunkCap = 36;
+        assert.throws(() => B.validateResults(p), /BlockedArray\.plain\/S7@10000\.chunkCap must equal the tuning pick 100/);
+        const q = payload(s7());
+        q.tuning = { ...tuning(), picks: S7_PICKS().slice(0, 2) };
+        assert.throws(() => B.validateResults(q), /has no tuning pick for S7@1000000/);
+    });
+    test('validateResults (BA-31): a QUIET payload citing a PRELIMINARY tuning throws; QUIET + QUIET and PRELIMINARY + PRELIMINARY validate', () => {
+        const ok = payload(s7(), 'QUIET');
+        ok.tuning = tuning();
+        assert.equal(B.validateResults(ok), true);
+        const pre = payload(s7(), 'PRELIMINARY');
+        pre.tuning = { ...tuning(), hostState: 'PRELIMINARY' };
+        assert.equal(B.validateResults(pre), true);
+        const bad = payload(s7(), 'QUIET');
+        bad.tuning = { ...tuning(), hostState: 'PRELIMINARY' };
+        assert.throws(() => B.validateResults(bad), /tuning\.hostState a QUIET run cannot cite a non-QUIET picks table \(BA-31\)/);
+    });
+    test('validateResults (BA-29): a loss reason is INCONCLUSIVE-marked exactly when comparison.inconclusive (both ways; a marked row needs the record)', () => {
+        const strip = payload(s7(five(80)));
+        assert.equal(B.validateResults(strip), true);
+        strip.lossTable[0].reason = strip.lossTable[0].reason.replace(/^INCONCLUSIVE \([^)]*\): /, '');
+        assert.ok(!strip.lossTable[0].reason.startsWith('INCONCLUSIVE'), 'fixture: the prefix was stripped');
+        assert.throws(() => B.validateResults(strip), /lossTable\[0\]\.reason must start INCONCLUSIVE/);
+        const add = payload(s7());
+        add.lossTable[0].reason = 'INCONCLUSIVE (forged): ' + add.lossTable[0].reason;
+        assert.throws(() => B.validateResults(add), /lossTable\[0\]\.reason is marked INCONCLUSIVE but comparison\.inconclusive is false/);
+        const none = payload(s7(five(80)));
+        delete none.comparison;
+        assert.throws(() => B.validateResults(none), /lossTable\[0\]\.reason is marked INCONCLUSIVE but there is no comparison record/);
+    });
+    // a timed D-row (SumSequence/D1) with a valid counts record
+    const dRow = () => ({ n: 1024, ops: 64, nsPerOp: 100, ...countsRecord(SumSequenceAdapter, new Int32Array(NC), undefined) });
+    test('validateResults (BA-36): a MEASURED payload with untagged scenario cells and no comparison record throws naming comparison + BA-36 (QUIET and PRELIMINARY)', () => {
+        for (const host of ['PRELIMINARY', 'QUIET']) {
+            const p = payload(s7(), host);
+            assert.equal(B.validateResults(p), true, host + ' control: with the record it validates');
+            delete p.comparison;
+            assert.throws(() => B.validateResults(p), /results: comparison missing: .*\(BA-36\)/, host);
+        }
+        // one untagged scenario cell among D-rows is enough
+        const mix = payload(s7());
+        mix.results = { 'SumSequence/D1': dRow(), 'SumSequence/S7@10000': mix.results['SumSequence/S7@10000'] };
+        mix.lossTable = [];
+        delete mix.comparison;
+        assert.throws(() => B.validateResults(mix), /comparison missing/);
+    });
+    test('validateResults (BA-36): no record needed for D-rows only, a ~c-tagged sweep, or a PENDING scenario payload', () => {
+        const drows = payload({ 'SumSequence/D1': dRow() }, 'QUIET');
+        assert.equal(drows.status, 'MEASURED');
+        assert.equal(drows.comparison, undefined);
+        assert.equal(B.validateResults(drows), true, 'D-rows only, MEASURED');
+        const sw = {};
+        for (const cc of [16, 32]) sw['BlockedArray/S7@4096~c' + cc] = { member: 'BlockedArray', scenario: 'S7', n: 4096, chunkCap: cc, phases: [phaseRow('BlockedArray', 'blend', 10)] };
+        const swp = payload(sw);
+        assert.equal(swp.status, 'MEASURED');
+        assert.equal(swp.comparison, undefined);
+        assert.equal(B.validateResults(swp), true, 'a ~c sweep, MEASURED');
+        const pend = payload(s7(), 'PRELIMINARY', 'PENDING');
+        delete pend.comparison;
+        assert.equal(B.validateResults(pend), true, 'PENDING with untagged scenario cells');
+    });
+
+    // ---- planCells with picks; sweepPicks
+    test('planCells with picks: every BlockedArray label runs its (Sid, n) pick under an UNTAGGED key; other labels untuned', () => {
+        const plan = B.planCells(P(['--scenario', 'S7']), [], table());
+        let tuned = 0;
+        for (const c of plan.groups.flat()) {
+            const key = B.cellKey(c.member, c.scenario, c.n);
+            assert.ok(!key.includes('~c'), key);
+            if (c.member.startsWith('BlockedArray')) {
+                tuned++;
+                assert.deepEqual(c.tune, { chunkCap: pickAt(c.n) }, key);
+                assert.equal(c.pickCap, pickAt(c.n), key);
+                assert.equal(c.chunkCap, undefined, key + ': a chunkCap field would tag the key');
+            } else {
+                assert.equal(c.tune, undefined, key);
+            }
+        }
+        assert.equal(tuned, 3 * 3, 'BlockedArray, .plain, .twin x 3 n');
+    });
+    test('planCells with picks fails closed: a BlockedArray (Sid, n) with no pick throws (also --quick); an invalid table throws', () => {
+        const t = table();
+        t.picks = t.picks.filter((p) => p.n !== 100000);
+        assert.throws(() => B.planCells(P(['--scenario', 'S7']), [], t), /no chunkCap pick for S7@100000/);
+        assert.throws(() => B.planCells(P(['--scenario', 'S7', '--quick']), [], table()), /no chunkCap pick for S7@4096/);
+        const bad = table();
+        bad.picks[0].chunkCap = 102;
+        assert.throws(() => B.planCells(P(['--scenario', 'S7']), [], bad), /picks: picks\[0\]\.chunkCap/);
+    });
+    test('planCells round trip (S2, built capacity n + 1, R-BA21): --quick sweep plan -> picks table -> planned cells at each pick; a table at capacity n is stale', async () => {
+        const { defaultChunkCap, sweepGrid } = await import('../benchmark/Compare.mjs');
+        const sweep = B.planCells(P(['--sweep', 'chunkCap', '--scenario', 'S2', '--quick']), []).sweep;
+        assert.deepEqual(sweep.map((w) => w.n), [1024, 2048, 4096]);
+        for (const w of sweep) {
+            assert.equal(w.capacity, w.n + 1, 'S2@' + w.n + ' sweeps at its built capacity n + 1');
+            assert.equal(w.capacity, selectScenario('S2').build(null, w.n, SEED).capacity, 'the scenario builds that capacity');
+        }
+        const t = table();
+        t.picks = sweep.map((w) => ({ scenario: w.sid, n: w.n, capacity: w.capacity, d: w.d, grid: w.grid.slice(), chunkCap: w.grid[2],
+            edge: false, nsPerEvent: 10 }));
+        const plan = B.planCells(P(['--scenario', 'S2', '--quick']), [], JSON.parse(JSON.stringify(t)));
+        let tuned = 0;
+        for (const c of plan.groups.flat()) {
+            if (!c.member.startsWith('BlockedArray')) continue;
+            tuned++;
+            const w = sweep.find((x) => x.n === c.n);
+            assert.equal(c.pickCap, w.grid[2], c.member + '@' + c.n);
+            assert.deepEqual(c.tune, { chunkCap: w.grid[2] });
+        }
+        assert.ok(tuned >= 3, 'BlockedArray labels planned: ' + tuned);
+        // control: the same table swept at capacity n (d / grid recomputed so validatePicks accepts it) is stale
+        const stale = JSON.parse(JSON.stringify(t));
+        for (const p of stale.picks) {
+            p.capacity = p.n;
+            p.d = defaultChunkCap(p.n);
+            p.grid = sweepGrid(p.d);
+            p.chunkCap = p.grid[2];
+        }
+        assert.equal(B.validatePicks(JSON.parse(JSON.stringify(stale))), true, 'the stale control is a valid table');
+        assert.throws(() => B.planCells(P(['--scenario', 'S2', '--quick']), [], stale), /swept at capacity 1024, this run builds capacity 1025/);
+    });
+    test('planCells with picks fails closed: a pick whose capacity is not the capacity this run builds (a stale table) throws', () => {
+        // S7 builds capacity n (the sweep test above pins 4096 -> 4096); a pick swept at capacity 20000 for n 10000 is stale.
+        // Hand oracle: ceil(sqrt(20000)) = 142 -> 144; sweepGrid(144) = [36, 72, 144, 288, 576].
+        const t = table();
+        Object.assign(t.picks[0], { capacity: 20000, d: 144, grid: [36, 72, 144, 288, 576], chunkCap: 144, edge: false });
+        assert.equal(B.validatePicks(t), true, 'fixture: the stale table is otherwise valid');
+        assert.throws(() => B.planCells(P(['--scenario', 'S7']), [], t), /pick for S7@10000 was swept at capacity 20000, this run builds capacity 10000/);
+        assert.ok(B.planCells(P(['--scenario', 'S7']), [], table()).groups.length > 0, 'control: the capacity-n table plans');
+    });
+    test('planCells with picks fails closed: a run with no BlockedArray scenario cell (D-rows only) refuses the table', () => {
+        assert.throws(() => B.planCells(P(['--picks', 'p.json']), [], table()), /--picks names no BlockedArray cell of this run/);
+        assert.ok(B.planCells(P(['--scenario', 'S7', '--picks', 'p.json']), [], table()).groups.flat().some((c) => c.pickCap !== undefined), 'control: an S7 run tunes its BlockedArray cells');
+    });
+    test('sweepPicks: argmin per (Sid, n) over the ~c cells, edge flag; the table validates; a missing cell throws', () => {
+        const plan = B.planCells(P(['--sweep', 'chunkCap', '--scenario', 'S7', '--quick']));
+        const mk = (vals) => {
+            const R = {};
+            [16, 32, 64, 128, 256].forEach((cc, i) => {
+                R['BlockedArray/S7@4096~c' + cc] = { member: 'BlockedArray', scenario: 'S7', n: 4096, chunkCap: cc, phases: [phaseRow('BlockedArray', 'blend', vals[i])] };
+            });
+            return R;
+        };
+        const mid = B.sweepPicks(plan, mk([30, 20, 10, 20, 30]));
+        assert.deepEqual(mid, [{ scenario: 'S7', n: 4096, capacity: 4096, d: 64, grid: [16, 32, 64, 128, 256], chunkCap: 64, edge: false, nsPerEvent: 10 }]);
+        const end = B.sweepPicks(plan, mk([30, 20, 10, 9, 8]));
+        assert.deepEqual([end[0].chunkCap, end[0].edge], [256, true]);
+        assert.equal(B.validatePicks({ ...table(), picks: mid }), true);
+        const gap = mk([1, 2, 3, 4, 5]);
+        delete gap['BlockedArray/S7@4096~c128'];
+        assert.throws(() => B.sweepPicks(plan, gap), /no cell BlockedArray\/S7@4096~c128/);
+    });
+
+    // ---- spawned exits (each before any cell: no 'running' line, no file)
+    const scratch = mkdtempSync(tmpdir() + '/ygg-picks-');
+    const picksFile = (t) => {
+        const f = scratch + '/p' + Math.random().toString(36).slice(2) + '.json';
+        writeFileSync(f, typeof t === 'string' ? t : JSON.stringify(t));
+        return f;
+    };
+    const chunkcap = PKG + 'benchmark/chunkcap.json';
+    test('spawned: --picks missing file / bad JSON / bad table / no pick for the quick n, and --sweep with --picks, each exit 2 before any cell', () => {
+        const bad = table();
+        bad.picks[0].edge = true;
+        const rows = [
+            [['--scenario', 'S7', '--quick', '--picks', scratch + '/none.json'], '--picks: cannot read'],
+            [['--scenario', 'S7', '--quick', '--picks', picksFile('{"schema":')], 'is not JSON'],
+            [['--scenario', 'S7', '--quick', '--picks', picksFile(bad)], 'picks: picks[0].edge'],
+            [['--scenario', 'S7', '--quick', '--picks', picksFile(table())], 'no chunkCap pick for S7@4096'],
+            [['--sweep', 'chunkCap', '--scenario', 'S7', '--quick', '--picks', picksFile(table())], 'drop --picks'],
+            [['--quick', '--picks', picksFile(table())], '--picks names no BlockedArray cell of this run'],
+        ];
+        for (const [args, msg] of rows) {
+            const r = bench(args);
+            assert.equal(r.status, 2, args.join(' ') + ': ' + r.stderr);
+            assert.ok(r.stderr.includes(msg), args.join(' ') + ' stderr: ' + r.stderr);
+            assert.ok(!r.stderr.includes('running '), 'no cell ran: ' + args.join(' '));
+        }
+    });
+    test('spawned (A4): QUIET_LOCK_HOST=preliminary --sweep chunkCap --all --publish exits 2 before any cell, writes no chunkcap.json', () => {
+        const had = existsSync(chunkcap);
+        const r = bench(['--sweep', 'chunkCap', '--all', '--publish'], { ...process.env, QUIET_LOCK_HOST: 'preliminary' });
+        assert.equal(r.status, 2, r.stdout + r.stderr);
+        assert.ok(r.stderr.includes('only from a QUIET host'), r.stderr);
+        assert.ok(!r.stderr.includes('running ') && !r.stdout.includes('cells'), 'no header, no cell');
+        assert.equal(existsSync(chunkcap), had);
+    });
+    test('spawned: QUIET_LOCK_HOST=preliminary --scenario S7 --publish exits 2 (needs --all) before any cell', () => {
+        const r = bench(['--scenario', 'S7', '--publish'], { ...process.env, QUIET_LOCK_HOST: 'preliminary' });
+        assert.equal(r.status, 2, r.stdout + r.stderr);
+        assert.ok(r.stderr.includes('needs --all'), r.stderr);
+        assert.ok(!r.stderr.includes('running '));
+    });
+
+    // ---- Report: the four sections, PRELIMINARY labels, no GO text, "not measured", fail closed
+    const TITLES = ['chunkCap picks (BA-31)', 'Blend win / TIE / loss grid (BA-29)', 'Crossovers (BA-30)',
+        'BlockedArray unrolled vs plain A/B, twin A/A control (BA-29)'];
+    const h2 = (title) => '<h2>' + title.replace(/&/g, '&amp;') ;
+    const tuned = (hostState) => { const p = payload(s7(), hostState); p.tuning = tuning(); return p; };
+    test('Report: the four sections render; PRELIMINARY payload labels each [PRELIMINARY]; no GO text', () => {
+        const html = Rep.renderHtml(tuned('PRELIMINARY'));
+        for (const t of TITLES) assert.ok(html.includes(h2(t) + ' [PRELIMINARY]</h2>'), t);
+        assert.ok(html.includes('FenwickRebuild.suffix'));
+        assert.ok(html.includes('none up to 1000000'));
+        assert.ok(html.includes('<td>loss</td>') && html.includes('<td>TIE</td>'), 'blend grid verdicts');
+        assert.ok(html.includes('twin TIE'));
+        assert.ok(!/\bGO\b/.test(html) && !/NO-GO/i.test(html), 'no GO / NO-GO text');
+    });
+    test('Report: a QUIET MEASURED payload renders the four sections WITHOUT the PRELIMINARY label; no GO text', () => {
+        const html = Rep.renderHtml(tuned('QUIET'));
+        for (const t of TITLES) {
+            assert.ok(html.includes(h2(t) + '</h2>'), t);
+            assert.ok(!html.includes(h2(t) + ' [PRELIMINARY]'), t);
+        }
+        assert.ok(!/\bGO\b/.test(html));
+    });
+    test('Report: twin not TIE -> INCONCLUSIVE shown in the crossovers and the A/A section', () => {
+        const html = Rep.renderHtml(payload(s7(five(80))));
+        assert.ok(html.includes('<td>INCONCLUSIVE</td>'));
+        assert.match(html, /twin A\/A \(BlockedArray\.twin vs BlockedArray\): INCONCLUSIVE/);
+        // grid (SumSequence vs FenwickRebuild.suffix = loss, vs BlockedArray = TIE) and the unrolled vs plain A/B row (TIE)
+        assert.ok(html.includes('<td>loss (INCONCLUSIVE)</td>') && html.includes('<td>TIE (INCONCLUSIVE)</td>'), 'grid + A/B rows');
+        assert.ok(/<td>0\.\d+<\/td><td>TIE \(INCONCLUSIVE\)<\/td><\/tr>/.test(html) || /<td>1(\.0+)?<\/td><td>TIE \(INCONCLUSIVE\)<\/td>/.test(html),
+            'an A/B row (ratio cell, then its verdict) carries the suffix');
+        assert.ok(!/<td>(win|loss|TIE|unrolled win|plain win)<\/td>/.test(html), 'no bare verdict under INCONCLUSIVE');
+        assert.ok(!/\bGO\b/.test(html));
+    });
+    test('Report: labels not in the payload read "not measured in this run" (no throw); no tuning section without tuning', () => {
+        const d = { schema: 'yggdrasil-bench/1', status: 'PENDING', meta: meta('PRELIMINARY'), subjects: ['SumSequence'],
+            dimensions: [], titles: {}, scenarios: [], results: {}, lossTable: [] };
+        const html = Rep.renderHtml(d);
+        assert.ok(!html.includes(TITLES[0]));
+        assert.ok(html.split('not measured in this run').length - 1 >= 4, 'grid, crossovers, A/B, twin');
+        assert.ok(!/\bGO\b/.test(html), 'no GO text in the not-measured form');
+        const R = s7();
+        for (const n of S7N) { delete R['BlockedArray.plain/S7@' + n]; }
+        const h = Rep.renderHtml(payload(R));
+        assert.match(h, /unrolled vs plain: not measured in this run/);
+        assert.ok(h.includes('FenwickRebuild.suffix'));
+    });
+    test('Report: the per-phase Scenarios table renders every scenario key form (untagged and a sweep ~c key), n and phase filled', () => {
+        const html = Rep.renderHtml(payload(s7()));
+        assert.ok(html.includes('<h2>Scenarios'), 'section rendered');
+        assert.ok(html.includes('<tr><td>SumSequence/S7@10000</td><td>10000</td><td>blend</td><td>'), 'a known untagged cell');
+        assert.ok(html.includes('<tr><td>BlockedArray.twin/S7@1000000</td><td>1000000</td><td>blend</td><td>'), 'a dotted label');
+        const sw = {};
+        for (const cc of [16, 32]) sw['BlockedArray/S7@4096~c' + cc] = { member: 'BlockedArray', scenario: 'S7', n: 4096, chunkCap: cc, phases: [phaseRow('BlockedArray', 'blend', 10)] };
+        const h = Rep.renderHtml(payload(sw));
+        assert.ok(h.includes('<tr><td>BlockedArray/S7@4096~c16</td><td>4096</td><td>blend</td><td>'), 'a sweep cell');
+        assert.ok(!h.includes('<td>undefined</td>'));
+    });
+    test('Report fails closed: a Compare throw other than "not measured" propagates (a (Sid, n) with no SumSequence cell)', () => {
+        const R = s7();
+        delete R['SumSequence/S7@100000'];
+        const p = payload(s7());
+        p.results = JSON.parse(JSON.stringify(R));
+        assert.throws(() => Rep.renderHtml(p), /has no SumSequence cell/);
+    });
+
+    // ---- inl drivers (TASK 2 smoke, 2 spawns)
+    test('inl drivers: benchmark/inl/unrolled.mjs and plain.mjs exit 0 and print the same checksum line', { timeout: 120000 }, () => {
+        const out = ['unrolled', 'plain'].map((v) => spawnSync(process.execPath, [PKG + 'benchmark/inl/' + v + '.mjs'], { encoding: 'utf8', timeout: 110000 }));
+        const lines = out.map((r, i) => {
+            assert.equal(r.status, 0, ['unrolled', 'plain'][i] + ': ' + r.stderr);
+            const m = /^inl checksum \S+ length \d+ sum \S+$/m.exec(r.stdout);
+            assert.ok(m, 'checksum line: ' + r.stdout);
+            return m[0];
+        });
+        assert.equal(lines[0], lines[1]);
     });
 });

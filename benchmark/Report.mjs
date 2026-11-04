@@ -21,12 +21,21 @@
  *
  * exports: renderSvg (one chart spec -> an <svg> string), renderHtml (the payload -> an HTML document),
  * isPreliminary (the BA-5 label rule).
+ *
+ * g2b-3a B3 (SPEC BA-29 / BA-30 / BA-31): four comparison sections read the results map through
+ * benchmark/Compare.mjs (crossovers, abSummary, twinControl): the chunkCap pick table (when the run
+ * used --picks), the blend win / TIE / loss grid per (scenario, rival, n), the crossovers (INCONCLUSIVE
+ * when the twin A/A control is not TIE), and the unrolled vs plain BlockedArray A/B plus the twin A/A
+ * readings. Each is labelled PRELIMINARY unless the payload is a QUIET MEASURED run (isPreliminary).
+ * A section whose labels did not run in the payload reads "not measured in this run"; any other
+ * Compare throw propagates (fail closed). The report prints facts, never a go / no-go verdict (BA-30).
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { validateResults } from './Bench.mjs';
 import { COUNTER_NAMES } from './Adapters.mjs';
+import { crossovers, abSummary, twinControl, BAND, SUBJECT, TWIN, TWIN_OF } from './Compare.mjs';
 
 const OUT_DIR = fileURLToPath(new URL('./out/', import.meta.url));
 const PATHS = {
@@ -229,6 +238,94 @@ function naNote(r) {
     return typeof r.na === 'string' ? 'n/a: ' + r.na : null;
 }
 
+const NOT_MEASURED = 'not measured in this run';
+const PLAIN = 'BlockedArray.plain';
+const UNTAGGED_SCENARIO = /^([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)?)\/(S\d+[a-z]?)@([1-9]\d*)$/;
+
+// SumSequence's side of one compare(SumSequence, rival) verdict
+const VERDICT_TEXT = { A: 'win', B: 'loss', TIE: 'TIE' };
+
+// The comparison sections (BA-29 / BA-30 / BA-31), in order; sec = the PRELIMINARY-aware section builder.
+function comparisonSections(payload, sec) {
+    const R = payload.results;
+    const out = [];
+    // labels per scenario, untagged scenario cells only (what Compare compares)
+    const labels = new Map();
+    for (const k of Object.keys(R)) {
+        const m = UNTAGGED_SCENARIO.exec(k);
+        if (m === null) continue;
+        if (!labels.has(m[2])) labels.set(m[2], new Set());
+        labels.get(m[2]).add(m[1]);
+    }
+    const ran = (label) => [...labels.values()].some((x) => x.has(label));
+
+    if (payload.tuning !== undefined) {
+        const t = payload.tuning;
+        out.push(sec('chunkCap picks (BA-31)', 'Every BlockedArray label ran each (scenario, n) at the chunkCap picked by a ' +
+            '--sweep chunkCap run: the lowest median-of-K blend ns/event over d x {1/4, 1/2, 1, 2, 4} (REPORTED). Table ' +
+            t.source + ', sha256/8 ' + t.sha256.slice(0, 8) + ', host ' + t.hostState + '. "edge" = the pick is the end of its grid.', null,
+        tableRows(['scenario', 'n', 'capacity', 'd', 'grid', 'chunkCap', 'edge', 'ns/event'],
+            t.picks.map((p) => [p.scenario, String(p.n), String(p.capacity), String(p.d), p.grid.join(' '), String(p.chunkCap),
+                p.edge ? 'edge' : '', num(p.nsPerEvent)]))));
+    }
+
+    const xs = crossovers(R);
+    const inc = xs.length > 0 && xs[0].inconclusive;
+    const incNote = inc ? 'INCONCLUSIVE: the twin A/A control read other than TIE in this run (BA-29); every comparison below is INCONCLUSIVE. ' : '';
+    const grid = [];
+    for (const e of xs) {
+        for (let i = 0; i < e.grid.length; i++) {
+            grid.push([e.scenario, e.rival, e.phase, String(e.grid[i]), VERDICT_TEXT[e.verdicts[i]] + (inc ? ' (INCONCLUSIVE)' : '')]);
+        }
+    }
+    out.push(sec('Blend win / TIE / loss grid (BA-29)', grid.length === 0 ? NOT_MEASURED + ' (no ' + SUBJECT + ' vs rival scenario cells)' :
+        incNote + SUBJECT + ' vs each rival on the blend phase (a one-phase scenario on its only phase): win = ' + SUBJECT +
+        "'s median-of-K below " + BAND + " x the rival's, loss = the rival's below " + BAND + ' x ' + SUBJECT + "'s, else TIE. REPORTED.",
+    null, grid.length === 0 ? '' : tableRows(['scenario', 'rival', 'phase', 'n', SUBJECT], grid)));
+
+    out.push(sec('Crossovers (BA-30)', xs.length === 0 ? NOT_MEASURED + ' (no ' + SUBJECT + ' vs rival scenario cells)' :
+        incNote + 'The smallest measured n from which ' + SUBJECT + ' wins at every larger measured n ("none up to <n>" when there is ' +
+        'none). REPORTED.', null, xs.length === 0 ? '' : tableRows(['scenario', 'rival', 'phase', 'measured n', 'crossover n', 'control'],
+        xs.map((e) => [e.scenario, e.rival, e.phase, e.grid.join(' '), String(e.crossoverN), e.inconclusive ? 'INCONCLUSIVE' : 'twin TIE']))));
+
+    // unrolled vs plain (per scenario: blend, or a one-phase scenario's only phase) + the twin A/A readings
+    const ab = [];
+    for (const [sid, set] of labels) {
+        if (!set.has(TWIN_OF) || !set.has(PLAIN)) continue;
+        const sub = {};
+        let phase = null;
+        for (const k of Object.keys(R)) {
+            const m = UNTAGGED_SCENARIO.exec(k);
+            if (m === null || m[2] !== sid) continue;
+            sub[k] = R[k];
+            if (m[1] === TWIN_OF && phase === null) {
+                const names = Array.isArray(R[k].phases) ? R[k].phases.map((p) => p.phase) : [];
+                phase = names.includes('blend') ? 'blend' : names.length === 1 ? names[0] : 'blend';
+            }
+        }
+        for (const r of abSummary(sub, TWIN_OF, PLAIN, phase).rows) {
+            ab.push([r.scenario, String(r.n), phase, num(r.a), num(r.b), num(r.ratio),
+                (r.verdict === 'A' ? 'unrolled win' : r.verdict === 'B' ? 'plain win' : 'TIE') + (inc ? ' (INCONCLUSIVE)' : '')]);
+        }
+    }
+    let twinRows = null;
+    let twinNote = 'twin A/A: ' + NOT_MEASURED + ' (no BlockedArray scenario cell).';
+    if (ran(TWIN_OF)) {
+        const tc = twinControl(R);
+        twinRows = tc.twin.map((t) => [t.scenario, String(t.n), t.phase === null ? NA : t.phase, t.verdict,
+            t.ratio === null ? NA : num(t.ratio)]);
+        twinNote = tc.inconclusive ? 'twin A/A (' + TWIN + ' vs ' + TWIN_OF + '): INCONCLUSIVE, ' + tc.twin.length +
+            ' reading(s) other than TIE (or a missing twin cell) below; every comparison of this run is INCONCLUSIVE.' :
+            'twin A/A (' + TWIN + ' vs ' + TWIN_OF + '): TIE at every (scenario, n, phase) both ran.';
+    }
+    out.push(sec('BlockedArray unrolled vs plain A/B, twin A/A control (BA-29)',
+        (ab.length === 0 ? 'unrolled vs plain: ' + NOT_MEASURED + ' (no scenario ran both ' + TWIN_OF + ' and ' + PLAIN + '). ' :
+            'unrolled (' + TWIN_OF + ') vs ' + PLAIN + ', median-of-K ns/event, ratio = unrolled / plain, win band ' + BAND + '. REPORTED. ') + twinNote,
+    null, (ab.length === 0 ? '' : tableRows(['scenario', 'n', 'phase', 'unrolled ns/event', 'plain ns/event', 'ratio', 'verdict'], ab)) +
+        (twinRows === null || twinRows.length === 0 ? '' : tableRows(['scenario', 'n', 'phase', 'twin verdict', 'twin / BlockedArray'], twinRows))));
+    return out;
+}
+
 function provenanceLine(meta) {
     const la = (a) => a.map((x) => x.toFixed(2)).join(' ');
     return 'date ' + meta.date + ' | node ' + meta.node + ' | ' + meta.platform + '/' + meta.arch +
@@ -426,15 +523,17 @@ export function renderHtml(payload) {
             tableRows(['op-row', 'n', 'ns/op', 'p50', 'p90', ...COUNTER_NAMES, 'extras/op'], rows)));
     }
 
-    // Scenarios (group 2b): one row per timed phase; counts beside the times.
-    const scen = Object.keys(R).filter((k) => /\/S\d+$/.test(k));
+    // Scenarios (group 2b): one row per timed phase; counts beside the times. Every scenario key form
+    // of Bench.mjs RESULT_KEY ('<label>/<Sid>@<n>' and a sweep's '<label>/<Sid>@<n>~c<chunkCap>'): a
+    // sweep's per-chunkCap cells are listed too (they are its only per-cell timing table).
+    const scen = Object.keys(R).filter((k) => /\/S\d+[a-z]?@[1-9]\d*(~c[1-9]\d*)?$/.test(k));
     if (scen.length > 0) {
         const rows = [];
         for (const k of scen) {
             const r = R[k];
             if (naNote(r)) { rows.push([k, naNote(r)]); continue; }
             for (const p of (Array.isArray(r.phases) ? r.phases : [])) {
-                rows.push([k, String(p.n), String(p.name), num(p.nsPerOp), countsCell(p)]);
+                rows.push([k, String(r.n), String(p.phase), num(p.nsPerOp), countsCell(p)]);
             }
         }
         sections.push(sec('Scenarios', 'Scenario cells (RESEARCH section 4.2), counts beside the times.', null,
@@ -450,6 +549,9 @@ export function renderHtml(payload) {
                 'Each loss with its crossover n (or "none up to <n>").', null,
             tableRows(['scenario', 'winner', 'loser', 'crossover n', 'reason'], rows)));
     }
+
+    // The comparison sections (g2b-3a B3).
+    for (const x of comparisonSections(payload, sec)) sections.push(x);
 
     // Per-op honesty class.
     if (payload.opClass) {

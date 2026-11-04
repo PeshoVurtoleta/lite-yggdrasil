@@ -15,9 +15,9 @@ kernel lanes are in place (629f04b); the runner, report and README generator
 README pin test in B4. Committed in burst 31-32 (5b5f375, bd7faf3): the rival fixes, the
 rival tests and B/op lanes, and the scenario runner with S7 / S7b. S1a / S1b are
 built (3a7a668) and S2 / S2a / S2b are built in the working tree (g2b-2b, R-BA17,
-R-BA19..R-BA27; uncommitted at this edit); the chunkCap sweep, the unroll A/B and
-the run of record are g2b-3. The sections below are the contract they
-are built to.
+R-BA19..R-BA27; uncommitted at this edit); the chunkCap sweep / A/B / crossover tooling is built
+(g2b-3a); its timed runs, the unroll A/B and the run of record are g2b-3b (PENDING). The sections below are the
+contract they are built to.
 
 ## The one rule
 
@@ -216,6 +216,64 @@ subtraction) is the same core lite-logn and lite-o1 use. Here its output is
 REPORTED: printed with the timings, gating nothing. Fail closed everywhere: fewer
 than 8 samples -> `n/a` (the string), never NaN / Infinity / 0.
 
+## Sweep, A/B, crossover
+
+Status: the tooling is built and gated (g2b-3a: Bench.mjs, Compare.mjs, Report.mjs; rulings R-BA28..R-BA36, SPEC
+BA-28..BA-36). The timed runs (the QUIET chunkCap sweep and the run of record, g2b-3b) are PENDING: this section holds
+no measured number.
+
+- Passes (BA-28): K = 5 interleaved passes, pass-major. Inside each (scenario, n) group the label order is rotated
+  left by one per pass (Compare.mjs rotateLabels). A child times 5 samples per phase (3 under --quick, never a run
+  of record) and reports their median; a (label, scenario, n, phase) value is the median of its K child medians. The
+  sweep uses the same K.
+- Win or TIE (BA-29): A wins when its median-of-K is below 0.95 x B's (Compare.mjs BAND), B wins the same way, else
+  TIE (neither a win nor a loss).
+- A/A twin control (BA-29): `BlockedArray.twin` (BlockedArray.js plus one comment line, separately compiled) runs
+  beside `BlockedArray` in every pass. Twin vs BlockedArray other than TIE at any (scenario, n) makes every comparison
+  of that run INCONCLUSIVE (results.json `comparison { inconclusive, twin }`; each loss row's reason then starts
+  INCONCLUSIVE).
+- Crossover (BA-30): read on the blend phase. The crossover vs a rival label is the smallest measured n from which
+  SumSequence wins at every larger measured n; a TIE or a rival win breaks the run; none -> 'none up to <largest n>'.
+  S1 = the larger of S1a / S1b; S2 = the S2 id (S2a / S2b are reported, not GO inputs); "vs BlockedArray" = the
+  larger of BlockedArray and BlockedArray.plain. A loss row exists per (scenario, rival label except twin) with a
+  rival win at >= 1 measured n; the S7 Fenwick row reads S7's blend against FenwickRebuild.suffix. The tooling never
+  prints GO / NO-GO (the verdict is the maintainer's, RESEARCH 14.4).
+- chunkCap sweep (BA-31): `--sweep chunkCap` runs the registered BlockedArray at every (Sid, n) over d x {1/4, 1/2, 1,
+  2, 4}, d = defaultChunkCap(capacity) (max(16, ceil(sqrt(C))) rounded up to a multiple of 4, C the capacity the
+  scenario builds at that n, computed cold in the parent). Each grid member is rounded up to a multiple of 4, clamped
+  to [8, 65536] and deduped. The pick is the lowest median-of-K blend ns/event; a pick at the grid's first or last
+  entry prints 'edge'. Cells are keyed `<label>/<Sid>@<n>~c<chunkCap>`.
+- Exclusions (BA-34): a scenario cell whose census wall time exceeds 300 s per pass is left out and printed with its
+  census seconds; no SumSequence or BlockedArray cell is ever excluded. Nothing is excluded today
+  (the EXCLUDED list in Bench.mjs is empty: the B0 census, PRELIMINARY, one pass at frozen ea760e4,
+  found no cell over 300 s; SPEC BA-34).
+- `benchmark/chunkcap.json`: `{ schema: 'yggdrasil-chunkcap/1', meta, picks }`. meta = date, hostState, commit,
+  mainFileSha, runCount, loadAvgStart, loadAvgEnd, quietLockWhy, command (the results.json meta fields of the same
+  names). One picks row per swept (Sid, n): scenario, n, capacity, d, grid, chunkCap, edge, nsPerEvent (median-of-K
+  blend ns/event, REPORTED). validatePicks checks it when written and when read by `--picks` (fail closed on a
+  malformed field, an unknown key, a non-plain object, or a chunkCap that is not a multiple of 4 in [8, 65536]). A
+  QUIET `--sweep chunkCap --publish --all` writes this committed file ONLY (no results.json / report.html); a sweep
+  without --publish writes `benchmark/out/chunkcap.json` beside its out/ results.
+- `--picks <path>`: every BlockedArray label (BlockedArray, BlockedArray.plain, BlockedArray.twin) runs each (Sid, n)
+  at the picked chunkCap under its untagged key; results.json carries `tuning { source, sha256, hostState, picks }`.
+  planCells exits 2 (also under --quick) on a BlockedArray cell with no pick for its (Sid, n), on a stale pick (its
+  capacity is not the capacity this run builds there: re-run the sweep), and on a picks table naming no BlockedArray
+  cell of the run. A cell that recorded another chunkCap exits 1.
+- publishGuard refusals (exit 2, before any cell runs or any file is written):
+  - `--publish` without `--all` (BA-33);
+  - `--publish` whose `--runs` is not 5 (R-BA28);
+  - `--sweep` with `--picks` (the sweep computes the picks);
+  - a sweep `--publish` on a non-QUIET host (only a QUIET sweep writes chunkcap.json);
+  - a QUIET run, published or not, citing a non-QUIET `--picks` table;
+  - a QUIET run-of-record `--publish --all` with no `--picks` table, or one whose meta.runCount is not 5.
+- Empty loss table (BA-35, R-BA35): a MEASURED QUIET results.json with an empty lossTable makes Readme.mjs
+  renderBenchmarksSection throw (Readme.mjs:151-152); README keeps its PENDING form and the run is re-planned. A run
+  with no untagged scenario cell (D-rows only, or a sweep) carries lossTable [] and no `comparison`; it is not a run
+  of record.
+- Comparison record (BA-36, R-BA36): validateResults requires `comparison { inconclusive, twin }` whenever status is
+  MEASURED and any key is an untagged scenario key (`<label>/<Sid>@<n>`, no ~c tag); a missing record throws, since
+  an unmeasured twin control is never treated as TIE.
+
 ## Provenance and the quiet host
 
 Every timed run goes through the suite quiet lock:
@@ -235,9 +293,13 @@ state, run count, commit + main-file sha, plus the seed and the exact command.
 
 ## Publication
 
-- `npm run bench` writes to `benchmark/out/` (gitignored). Only the run of
-  record, `npm run bench -- --publish` under the quiet lock, writes the committed
-  `benchmark/results.json` and `benchmark/report.html` (maintainer ruling R-BA1).
+- `npm run bench` writes to `benchmark/out/` (gitignored). Only `--publish`, run under the quiet lock (exit 2
+  outside it), writes the committed `benchmark/results.json` and `benchmark/report.html` (maintainer ruling R-BA1);
+  publishGuard requires `--all` (BA-33), `--runs 5` (R-BA28) and, on a QUIET host, a QUIET `--picks` table swept at
+  K = 5 (BA-31). The run of record is
+  `npm run bench -- --publish --all --runs 5 --picks benchmark/chunkcap.json` run under `quiet-lock run --strict`
+  (procedure: Bench.mjs reads only QUIET_LOCK_HOST and does not enforce --strict), after the QUIET
+  `--sweep chunkCap --publish --all --runs 5` that writes chunkcap.json (see "Sweep, A/B, crossover").
 - The README "Benchmarks" section is generated from the committed results.json,
   never hand-typed, and a test pins that README equals the generator output.
 - README carries numbers only from a QUIET run of record. A PRELIMINARY

@@ -948,6 +948,8 @@ pays 0 extra bytes and 0 extra instructions (ROADMAP 3.7).
 
 ### 12.3 The blocked-array rival draft (B-31, section 4.1)
 
+Status (2026-11-04): tooling built (g2b-3a), runs PENDING (g2b-3b).
+
 researchNotes/BlockedArray.md holds a BlockedArray class mirroring the SumSequence API (insertAt / removeAt /
 setMeasure / getMeasure / entityAt / sumBefore / indexAtSum / splitAt / append / clear / arena, same error
 tokens and check order) plus a bench harness. Layout: a per-view directory (dir, dirSize, dirSums by dim)
@@ -1194,6 +1196,58 @@ crossover is <= 32k and SumSequence wins at 100k, AND the S7 loss row shows the 
 reweighting. PAUSE and evaluate R-7 (B+ fanout) if BlockedArray beats SumSequence at n >= 100k on S1 or S2. Any
 other outcome (for example an S1 crossover between 64k and 100k) has no automatic verdict: the maintainer decides
 from the table. "Wins" = the median of K interleaved runs on a QUIET host; a PRELIMINARY log decides nothing.
+
+Pre-registered additions (maintainer, AskUserQuestion; option text quoted verbatim from the maintainer-local,
+gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"; recorded 2026-11-04, before any timed run of g2b-3b):
+
+- R-BA28 (Q-K, 2026-11-01, burst 36) = "K = 5 (Recommended)". Option text: "K = 5 interleaved passes (Bench --runs 5:
+  pass-major, the label order inside each (scenario, n) rotated by one per pass). Each child times 5 samples per phase
+  and reports their median; a (label, scenario, n, phase) value is the median of its K child medians. The sweep uses
+  the same K."
+- R-BA29 (Q-WIN, 2026-11-01, burst 36) = "0.95 band + A/A twin (Recommended)". Option text: "At one (scenario, n,
+  phase),
+  A wins when its median-of-K is below 0.95 x B's, B wins the same way, else TIE, which is neither a win nor a loss.
+  The A/A control BlockedArray.twin (BlockedArray.js plus one comment line, a separately compiled copy) runs beside
+  BlockedArray in every pass; if twin vs BlockedArray reads other than TIE at any (scenario, n), every comparison of
+  that run prints INCONCLUSIVE."
+- R-BA30 (Q-XOVER, 2026-11-01, burst 36) = "Wins at every larger n (Recommended)". Option text: "Crossovers read the
+  blend
+  phase. A scenario's crossover vs a rival label is the smallest measured n from which SumSequence wins at every
+  larger measured n; a TIE or a rival win breaks the run; no such n -> 'none up to <largest n>'. S1's crossover = the
+  larger of S1a's and S1b's; S2's is the S2 id's (S2a / S2b are reported, not GO inputs). 'vs BlockedArray' = the
+  larger crossover of BlockedArray and BlockedArray.plain. A loss row is written for every (scenario, rival label
+  except twin) where the rival wins at >= 1 measured n. The S7 Fenwick row reads S7's blend against
+  FenwickRebuild.suffix. The tooling never prints GO / NO-GO."
+- R-BA31 (Q-CAP, 2026-11-01, burst 36) = "d x {1/4..4} per cell (Recommended)". Option text: "The sweep runs the
+  registered BlockedArray at every (scenario, n) of the run of record over chunkCap = d x {1/4, 1/2, 1, 2, 4}, d the
+  class default for the cell's capacity, each rounded up to a multiple of 4, clamped to [8, 65536], deduped; the pick
+  per (scenario, n) is the lowest median-of-K blend ns/event, an end-of-grid pick prints 'edge', and every
+  BlockedArray label runs the run of record at that pick. Only a QUIET `--sweep chunkCap --publish` writes the
+  committed benchmark/chunkcap.json; a QUIET run of record refuses a missing or non-QUIET table (exit 2)."
+- R-BA32 (Q-LEAF, 2026-11-01, burst 36) = "Shipped leafSize 16 only (Recommended)". Option text: "SumSequence runs
+  every
+  scenario at its shipped leafSize 16; the leafSize sweep stays in D4 and is not a scenario axis (closes RESEARCH 12.3
+  'sweep both')."
+- R-BA33 (Q-ROR, 2026-11-01, burst 36) = "One --publish --all run (Recommended)". Option text: "The run of record is
+  one
+  `--publish --all` run: the 16 D-rows plus every registered scenario's cells in one results.json; --publish without
+  --all exits 2."
+- R-BA34 (Q-HEAVY, 2026-11-01, burst 36, asked with the B0 census) = "Exclude > 300 s (Recommended)". Option text: "A
+  scenario cell whose census wall time exceeds 300 s per pass is left out of the sweep and the run of record, printed
+  as '<label> <Sid>@<n> excluded: census <s> s per pass (O(n) rebuild per structural op)'; an excluded cell is never
+  a GO input; no SumSequence or BlockedArray cell is ever excluded (one over 300 s re-plans the run)."
+- R-BA35 (Q-EMPTYLOSS, 2026-11-01, burst 38, asked after the B3 r1 review) = "Refuse, keep the rule (Recommended)".
+  Option text: "A MEASURED QUIET results.json with an empty lossTable still makes renderBenchmarksSection throw
+  (Readme.mjs:151-152); the README keeps its PENDING form and the run is re-planned. Every scenario has a variant
+  designed for a rival win (RESEARCH 4.3; R-BA12 requires the S7 Fenwick loss row), so zero rival wins means the
+  honesty design failed, not that SumSequence won everywhere."
+- R-BA36 (Q-CMPREQ, 2026-11-04, burst 39, asked after the B3 r2 review) = "Require comparison (Recommended)". Option
+  text: "validateResults requires results.comparison { inconclusive, twin } whenever status is MEASURED and any
+  results
+  key is an untagged scenario key (<label>/<Sid>@<n> with no ~c tag); a missing record throws (fail closed: an
+  unmeasured twin control is never treated as TIE). Every MEASURED fixture with scenario cells gains its
+  comparisonOf(results).comparison, including the fixtures in test/Compare.test.mjs and the Readme rows of
+  test/Bench.test.mjs (B3 r3 owns those test files)."
 
 ## 15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; RULED R-BA15..R-BA18, 2026-11-01)
 

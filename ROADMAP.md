@@ -174,6 +174,9 @@ What makes it public and honest:
 - **Provenance on every table**: date, host, CPU, Node, load average start / end, quiet-lock state
   (QUIET / NOISY = PRELIMINARY), run count, commit + main-file sha. Numbers enter README / llms.txt /
   CHANGELOG only from a run log of THIS cycle, after the final gate run (suite law).
+- AS-BUILT (g2b-3a, 2026-11-04): the sweep / A/B / crossover / loss-table tooling is built and gated
+  (benchmark/Bench.mjs,
+  Compare.mjs, Report.mjs; benchmark/METHODOLOGY.md "Sweep, A/B, crossover"); the timed runs (g2b-3b) are PENDING.
 - Benchmark rulings R-BA1..R-BA8 -- RULED (maintainer, AskUserQuestion, 2026-10-31; cited by benchmark/METHODOLOGY.md;
   option text quoted verbatim from the maintainer-local, gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings";
   R-BA9..R-BA11 are quoted in section 6 (Bench-ADOPT notes, "Competent rivals -- RULED"), R-BA12 in section 5,
@@ -182,6 +185,10 @@ What makes it public and honest:
   writes them. `npm run bench` writes to benchmark/out/ (gitignored); `npm run bench -- --publish`, run under
   quiet-lock, writes benchmark/results.json and benchmark/report.html. The README pin reads the committed results.json,
   so a local bench run never turns npm test red."
+  (As built, BA-33 / R-BA28 / BA-31: --publish needs --all and --runs 5, and on a QUIET host a QUIET --picks table;
+  the run of record is `npm run bench -- --publish --all --runs 5 --picks benchmark/chunkcap.json` run under
+  `quiet-lock run --strict` (procedure, not enforced by Bench.mjs), after the QUIET
+  `--sweep chunkCap --publish --all --runs 5`; see benchmark/METHODOLOGY.md "Sweep, A/B, crossover".)
   R-BA2 "Raw + gzip, no dep (Recommended)": "D5 reports the raw and node:zlib gzip size of Yggdrasil.js, with no
   minifier and no new devDependency; the tree-shaking column is 'n/a' (single-file, single-member package)."
   R-BA3 "Counts, then REPORTED fit (Recommended)": "D1 shows the deterministic splice-witness counts first (touches per

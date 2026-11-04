@@ -8,6 +8,9 @@
  *     npm run bench -- --scenario S7        # one scenario's (label x size) cells (exit 2 on an unknown id)
  *     npm run bench -- --runs 3             # every cell 3 times, interleaved by pass
  *     npm run bench -- --publish            # the run of record: benchmark/results.json + report.html
+ *     npm run bench -- --all                # the 16 D-rows + every registered scenario's cells (BA-33)
+ *     npm run bench -- --sweep chunkCap --scenario S7   # BlockedArray x sweepGrid(d) per (Sid, n) (BA-31)
+ *     npm run bench -- --picks <path>       # parsed + validated, then refused until g2b-3a B3
  *
  * Repo-only. Bench-ADOPT group 1 TASK 6 (.handoff/PLAN-bench-adopt-g1.md; SPEC-bench-adopt BA-1,
  * BA-5, BA-9, BA-11). Copied from @zakkster/lite-logn benchmark/Bench.mjs (Bench v2 kit, LiteLogN
@@ -35,6 +38,12 @@
  * checksum + endState + traceHash per (Sid, n) across every label (crossCheck) and exits 1 on
  * "checksum mismatch" / "endState mismatch" / "traceHash mismatch" before anything is written. --quick caps sizes at
  * 4096 and the event stream at 1/10. ASCII only.
+ *
+ * g2b-3a B2 (SPEC BA-28 / BA-31 / BA-34): every pass runs each (Sid, n) group with its label order
+ * rotated by the pass (Compare.mjs rotateLabels, pass-major); a --sweep chunkCap run's cells are the
+ * registered BlockedArray at every chunkCap of sweepGrid(defaultChunkCap(C)), C the scenario's built
+ * capacity computed cold in this parent, keyed '<label>/<Sid>@<n>~c<chunkCap>' (cellKey); EXCLUDED
+ * (the census cells over 300 s per pass) are left out and printed with their census seconds.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -47,7 +56,9 @@ import { SUBJECTS, FOIL, DIMENSIONS, DIMENSION_TITLES, baselineFor, cells, OP_CL
 import { DEFAULT_SEED } from './Harness.mjs';
 import { ADAPTERS, RIVAL_SLOTS, RETIRED_SLOTS, selectAdapter, validateCounts, isPlain, didYouMean, NA }
     from './Adapters.mjs';
-import { SCENARIOS, MAX_SIZE, selectScenario, scenarioSizes, labelBase, resolveLabel, runScenario } from './Scenarios.mjs';
+import { SCENARIOS, MAX_SIZE, selectScenario, scenarioSizes, scenarioEvents, labelBase, knownLabels, resolveLabel, runScenario }
+    from './Scenarios.mjs';
+import { defaultChunkCap, sweepGrid, rotateLabels } from './Compare.mjs';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const PKG_DIR = fileURLToPath(new URL('..', import.meta.url));
@@ -239,15 +250,47 @@ function validateLossRow(l, i) {
     if (!ok) rvFail(w + '.crossoverN', "must be an integer >= 1, 'none up to <n>' or 'n/a', got " + JSON.stringify(c));
 }
 
-/** '<adapter>/<Dk>' (D-rows) or '<label>/<Sid>@<n>' (scenario cells; a label may carry one '.<tag>'). */
-const RESULT_KEY = /^([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)?)\/(?:(D[1-8])|(S\d+[a-z]?)@([1-9]\d*))$/;
+/**
+ * '<adapter>/<Dk>' (D-rows) or '<label>/<Sid>@<n>' (scenario cells; a label may carry one '.<tag>'), a
+ * chunkCap sweep cell '<label>/<Sid>@<n>~c<chunkCap>' (g2b-3a; a D-row key never takes the tag). Groups:
+ * 1 label, 2 Dk, 3 Sid, 4 n, 5 chunkCap tag digits. Compare.mjs SCENARIO_KEY is the reference.
+ */
+export const RESULT_KEY = /^([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)?)\/(?:(D[1-8])|(S\d+[a-z]?)@([1-9]\d*)(?:~c([1-9]\d*))?)$/;
+
+const LABEL_RE = /^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)?$/;
+const SID_RE = /^S\d+[a-z]?$/;
+
+/**
+ * The results.json key of one scenario cell: '<label>/<Sid>@<n>', or '<label>/<Sid>@<n>~c<chunkCap>'
+ * when chunkCap is given (a sweep cell). Throws on a malformed part. Pure.
+ * @param {string} label
+ * @param {string} sid
+ * @param {number} n
+ * @param {number} [chunkCap]
+ * @returns {string}
+ */
+export function cellKey(label, sid, n, chunkCap) {
+    if (typeof label !== 'string' || !LABEL_RE.test(label)) throw new TypeError('[bench] cellKey: bad label ' + JSON.stringify(label));
+    if (typeof sid !== 'string' || !SID_RE.test(sid)) throw new TypeError('[bench] cellKey: bad scenario id ' + JSON.stringify(sid));
+    if (!Number.isInteger(n) || n < 1) throw new TypeError('[bench] cellKey: n must be an integer >= 1, got ' + String(n));
+    if (chunkCap !== undefined && !(Number.isInteger(chunkCap) && chunkCap >= 1)) {
+        throw new TypeError('[bench] cellKey: chunkCap must be an integer >= 1, got ' + String(chunkCap));
+    }
+    return label + '/' + sid + '@' + n + (chunkCap === undefined ? '' : '~c' + chunkCap);
+}
+
+// the key of one planned cell (a D-row or a scenario cell)
+function keyOf(c) {
+    return c.scenario !== undefined ? cellKey(c.member, c.scenario, c.n, c.chunkCap) : c.member + '/' + c.dim;
+}
 
 /**
  * Cross-check of the scenario cells (A1): every label of one (Sid, n) must read the same phase
  * list, and per phase the same checksum and traceHash. Throws "[bench] checksum mismatch ..." /
  * "[bench] endState mismatch ..." (the cold end-of-phase digest, Scenarios.mjs phaseEndState) /
  * "[bench] traceHash mismatch ..." / "[bench] phase mismatch ..." naming both labels. Returns the
- * number of (Sid, n) groups checked. D-row keys are ignored. Pure.
+ * number of (Sid, n) groups checked. D-row keys are ignored; a chunkCap sweep cell ('~c<cc>') joins its
+ * (Sid, n) group under the name '<label>~c<cc>' (chunkCap never changes a checksum). Pure.
  * @param {object} results  the results map ('<label>/<Sid>@<n>' -> cell result)
  * @returns {number}
  */
@@ -258,7 +301,7 @@ export function crossCheck(results) {
         if (!m || m[3] === undefined) continue;
         const g = m[3] + '@' + m[4];
         if (!groups.has(g)) groups.set(g, []);
-        groups.get(g).push([m[1], results[key]]);
+        groups.get(g).push([m[5] === undefined ? m[1] : m[1] + '~c' + m[5], results[key]]);
     }
     for (const [g, list] of groups) {
         const [refName, ref] = list[0];
@@ -313,12 +356,15 @@ export function validateResults(results) {
     if (results.status === 'MEASURED' && keys.length === 0) rvFail('results', 'must hold >= 1 cell when MEASURED');
     for (const key of keys) {
         const m = RESULT_KEY.exec(key);
-        if (!m) rvFail('results.' + key, "key must be '<adapter>/<Dk>' or '<label>/<Sid>@<n>'");
+        if (!m) rvFail('results.' + key, "key must be '<adapter>/<Dk>', '<label>/<Sid>@<n>' or '<label>/<Sid>@<n>~c<chunkCap>'");
         const row = results.results[key];
         if (!isPlain(row)) rvFail('results.' + key, 'must be a plain object');
         if (row.member !== undefined && row.member !== m[1]) rvFail('results.' + key + '.member', 'must be ' + m[1]);
         if (m[3] !== undefined && (row.scenario !== m[3] || row.n !== Number(m[4]))) {
             rvFail('results.' + key + '.scenario', 'must be ' + m[3] + ' at n ' + m[4]);
+        }
+        if (m[5] !== undefined && row.chunkCap !== Number(m[5])) {
+            rvFail('results.' + key + '.chunkCap', 'must equal its key tag ~c' + m[5] + ', got ' + JSON.stringify(row.chunkCap));
         }
         let adapter;
         try {
@@ -340,18 +386,26 @@ export function validateResults(results) {
 // CLI argument parsing (fail closed: an unknown flag or a bad value exits 2).
 // ---------------------------------------------------------------------------
 
-const VALUE_FLAGS = ['--scenario', '--runs', '--seed', '--member', '--dim', '--n', '--tune'];
+const VALUE_FLAGS = ['--scenario', '--runs', '--seed', '--member', '--dim', '--n', '--tune', '--sweep', '--picks'];
 const CELL_ONLY_FLAGS = ['--member', '--dim', '--n', '--tune'];
-const BOOL_FLAGS = ['--quick', '--publish', '--cell'];
+const PARENT_ONLY_FLAGS = ['--sweep', '--all', '--picks'];
+const BOOL_FLAGS = ['--quick', '--publish', '--cell', '--all'];
+/** The only --sweep axis (BA-31; the leafSize sweep stays in D4, BA-32). */
+export const SWEEP_AXES = Object.freeze(['chunkCap']);
 
 function usageExit(msg) {
     process.stderr.write(msg + '\n');
     process.exit(2);
 }
 
-function parseArgs(argv) {
+/**
+ * Parse the CLI flags into an options object. Fail closed: an unknown flag or a bad value prints the
+ * reason and exits 2. Exported so a test can pin the parsed shape of a valid argv.
+ * @param {string[]} argv
+ */
+export function parseArgs(argv) {
     const o = { scenario: null, runs: 1, seed: DEFAULT_SEED, quick: false, publish: false, cell: false,
-        member: null, dim: null, n: null, tune: undefined };
+        member: null, dim: null, n: null, tune: undefined, sweep: null, all: false, picks: null };
     const all = VALUE_FLAGS.concat(BOOL_FLAGS);
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
@@ -373,13 +427,24 @@ function parseArgs(argv) {
             try { t = JSON.parse(v); } catch (e) { usageExit('[bench] --tune must be a JSON object: ' + e.message); }
             if (!isPlain(t)) usageExit('[bench] --tune must be a JSON object, got ' + v);
             o.tune = t;
+        } else if (a === '--sweep') {
+            if (!SWEEP_AXES.includes(v)) usageExit('[bench] --sweep must be one of ' + SWEEP_AXES.join(', ') + ', got ' + v + didYouMean(v, SWEEP_AXES));
+            o.sweep = v;
+        } else if (a === '--picks') {
+            // a path string only (its use is B3): non-empty, no NUL, not a flag (a missing value never eats the next flag)
+            if (v.length === 0 || v.includes('\0') || v.startsWith('-')) usageExit('[bench] --picks needs a path, got ' + JSON.stringify(v));
+            o.picks = v;
         } else {
             o[a.slice(2)] = v;
         }
     }
     if (!o.cell) {
         for (const f of CELL_ONLY_FLAGS) if (argv.includes(f)) usageExit('[bench] ' + f + ' is a child-cell flag: it needs --cell');
+    } else {
+        for (const f of PARENT_ONLY_FLAGS) if (argv.includes(f)) usageExit('[bench] ' + f + ' is an orchestrator flag: drop --cell');
     }
+    if (o.all && o.scenario !== null) usageExit('[bench] --all runs every scenario: drop --scenario');
+    if (o.sweep !== null && o.scenario === null && !o.all) usageExit('[bench] --sweep ' + o.sweep + ' sweeps scenario cells: give --scenario <Sid> or --all');
     return o;
 }
 
@@ -428,6 +493,118 @@ async function runCell(o) {
 // ---------------------------------------------------------------------------
 // Orchestrator mode: spawn a child per cell, collect, summarize, validate, persist.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The cell plan (cold): exclusions (BA-34), the chunkCap sweep (BA-31), (Sid, n) groups (BA-28).
+// ---------------------------------------------------------------------------
+
+/** Census wall time per pass above which a scenario cell is excluded (BA-34). */
+export const EXCLUDE_LIMIT_S = 300;
+/** The ruled reason an excluded cell prints (BA-34 / R-BA34 option A). */
+export const EXCLUDE_REASON = 'O(n) rebuild per structural op';
+
+/**
+ * The cells left out of the sweep and the run of record (BA-34): every census cell over
+ * EXCLUDE_LIMIT_S s per pass, each { label, sid, n, censusS, reason }. FROZEN from
+ * .handoff/evidence/bench-adopt/g2b3/census.json (B0, frozen ea760e4, PRELIMINARY, 1 pass, 37 / 37 cells
+ * complete): the slowest cell read 105.25 s (FenwickRebuild.full S1b@1000000), none over 300 s, so the
+ * list is empty today. A re-census edits this constant, never a run's flags.
+ */
+export const EXCLUDED = Object.freeze([]);
+
+const EXCLUDED_FIELDS = ['label', 'sid', 'n', 'censusS', 'reason'];
+
+/**
+ * Fail-closed check of an exclusion list (BA-34). Throws on a malformed entry, an unknown label /
+ * scenario / size, a census time not over EXCLUDE_LIMIT_S, a duplicate, and on any SumSequence or
+ * BlockedArray-family cell ("never excluded: one over 300 s re-plans the run"). Returns the list.
+ */
+export function validateExcluded(list) {
+    if (!Array.isArray(list)) throw new TypeError('[bench] EXCLUDED: must be an array');
+    const seen = new Set();
+    for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        const w = '[bench] EXCLUDED[' + i + ']';
+        if (!isPlain(e)) throw new TypeError(w + ': must be a plain {label, sid, n, censusS, reason}');
+        for (const k of Object.keys(e)) if (!EXCLUDED_FIELDS.includes(k)) throw new TypeError(w + ': unknown key ' + k + didYouMean(k, EXCLUDED_FIELDS));
+        for (const k of EXCLUDED_FIELDS) if (!Object.prototype.hasOwnProperty.call(e, k)) throw new TypeError(w + '.' + k + ': missing');
+        if (!knownLabels().includes(e.label)) throw new Error(w + ".label: unknown label '" + String(e.label) + "'");
+        if (e.label === 'SumSequence' || labelBase(e.label) === 'BlockedArray') {
+            throw new Error(w + ': ' + e.label + ' is never excluded (BA-34: a SumSequence or BlockedArray cell over ' +
+                EXCLUDE_LIMIT_S + ' s re-plans the run)');
+        }
+        let sc;
+        try { sc = selectScenario(e.sid); } catch (err) { throw new Error(w + '.sid: ' + err.message); }
+        if (!sc.adapters.includes(e.label)) throw new Error(w + ': ' + e.label + ' is not a label of ' + sc.id);
+        if (!scenarioSizes(sc, false).includes(e.n)) throw new Error(w + '.n: ' + String(e.n) + ' is not a size of ' + sc.id);
+        if (!(typeof e.censusS === 'number' && e.censusS > EXCLUDE_LIMIT_S && isFinite(e.censusS))) {
+            throw new Error(w + '.censusS: must be a census time over ' + EXCLUDE_LIMIT_S + ' s, got ' + String(e.censusS));
+        }
+        if (!nonEmptyString(e.reason)) throw new Error(w + '.reason: must be a non-empty string');
+        const k = e.label + '/' + e.sid + '@' + e.n;
+        if (seen.has(k)) throw new Error(w + ': ' + k + ' listed twice');
+        seen.add(k);
+    }
+    return list;
+}
+
+/** The printed exclusion line (BA-34 wording). */
+export function exclusionLine(e) {
+    return e.label + ' ' + e.sid + '@' + e.n + ' excluded: census ' + e.censusS + ' s per pass (' + e.reason + ')';
+}
+
+/**
+ * The cell plan of one orchestrator run, cold. Returns { groups, excluded, sweep }: groups = the
+ * cells as run-order groups (each D-row alone; each scenario (Sid, n) one group, its labels in the
+ * registry order -- the orchestrator rotates each group per pass), excluded = the EXCLUDED entries
+ * of the scenarios in scope, sweep = one { sid, n, capacity, d, grid } row per swept (Sid, n). A
+ * sweep cell is the registered BlockedArray with tune { chunkCap } and its chunkCap field set; d =
+ * defaultChunkCap(capacity), capacity from the scenario's build at this n, computed HERE, cold.
+ * excluded keeps only the rows whose n is a size of THIS run (a --quick run caps sizes, so a row at a
+ * full-run n drops out). Throws "unknown scenario <id>" on a bad --scenario, on a bad exclusion list,
+ * and on --picks or --sweep --publish (both refused until g2b-3a B3; orchestrate -> exit 2).
+ * @param {object} o  parseArgs options
+ * @param {object[]} [excludedList]  defaults to EXCLUDED
+ */
+export function planCells(o, excludedList = EXCLUDED) {
+    validateExcluded(excludedList);
+    if (o.picks !== null) throw new Error('[bench] --picks lands with publishGuard (g2b-3a B3): refused until then');
+    if (o.sweep !== null && o.publish) throw new Error('[bench] --sweep --publish writes benchmark/chunkcap.json (BA-31, g2b-3a B3): refused until then');
+    const groups = [];
+    const sweep = [];
+    const ids = o.scenario !== null ? [selectScenario(o.scenario).id] : o.all ? SCENARIOS.map((x) => x.id) : [];
+    // an EXCLUDED row names a full-run n: a --quick run (sizes capped) is not its run, so it drops out
+    const excluded = excludedList.filter((e) => ids.includes(e.sid) && scenarioSizes(selectScenario(e.sid), o.quick).includes(e.n));
+    if (ids.length === 0 || (o.all && o.sweep === null)) for (const c of cells()) groups.push([c]);
+    for (const id of ids) {
+        const sc = selectScenario(id);
+        if (o.sweep === 'chunkCap') {
+            const ba = selectAdapter('BlockedArray');
+            for (const n of scenarioSizes(sc, o.quick)) {
+                const capacity = sc.build(ba, n, o.seed >>> 0, scenarioEvents(o.quick)).capacity;
+                const d = defaultChunkCap(capacity);
+                const grid = sweepGrid(d);
+                sweep.push({ sid: sc.id, n, capacity, d, grid });
+                groups.push(grid.map((chunkCap) => ({ member: 'BlockedArray', dim: sc.id, baseline: NA, n, scenario: sc.id,
+                    tune: { chunkCap }, chunkCap })));
+            }
+            continue;
+        }
+        const exclude = excluded.filter((e) => e.sid === sc.id).map((e) => ({ label: e.label, n: e.n }));
+        const byN = new Map();
+        for (const c of cells(sc.id, { quick: o.quick, exclude })) {
+            if (!byN.has(c.n)) byN.set(c.n, []);
+            byN.get(c.n).push(c);
+        }
+        for (const g of byN.values()) groups.push(g);
+    }
+    return { groups, excluded, sweep };
+}
+
+/** The cells of one pass in run order, pure (BA-28): pass-major, each group rotated left by pass. */
+export function runOrder(plan, pass) {
+    return plan.groups.flatMap((g) => rotateLabels(g, pass));
+}
 
 function spawnCell(member, dim, o, c = null) {
     const flags = ['--expose-gc'];
@@ -516,11 +693,12 @@ function cpuInfo() {
     };
 }
 
-function printHeader(o, meta0, nCells, extra = []) {
+function printHeader(o, meta0, nCells, extra = [], plan = null) {
     const cpu = cpuInfo();
     console.log('===========================================================================');
     console.log('@zakkster/lite-yggdrasil -- benchmark suite (' + nCells + ' cells' +
-        (o.scenario ? ', scenario ' + o.scenario : ', ' + DIMENSIONS.length + ' dimensions') +
+        (o.scenario ? ', scenario ' + o.scenario : o.all ? ', all: ' + (o.sweep ? '' : DIMENSIONS.length + ' dimensions + ') +
+            SCENARIOS.length + ' scenarios' : ', ' + DIMENSIONS.length + ' dimensions') + (o.sweep ? ', --sweep ' + o.sweep : '') +
         ', subject ' + SUBJECTS.join(', ') + ' vs foil ' + FOIL + ')');
     console.log('===========================================================================');
     console.log('  seed:    0x' + (o.seed >>> 0).toString(16) + ' (' + (o.seed >>> 0) + ')');
@@ -544,6 +722,17 @@ function printHeader(o, meta0, nCells, extra = []) {
         console.log('  scenario ' + s.id + ': ' + s.title + ' | dims ' + s.dims + ' | views ' + s.views + ' | sizes ' +
             scenarioSizes(s, o.quick).join(', ') + (o.quick ? ' (--quick: capped at 4096, events / 10)' : ''));
         for (const k of Object.keys(s.mix)) console.log('  mix.' + k + ': ' + (typeof s.mix[k] === 'object' ? JSON.stringify(s.mix[k]) : s.mix[k]));
+    }
+    if (plan !== null) {
+        console.log('  order:   each (Sid, n) group rotated by one label per pass (BA-28, pass-major)');
+        for (const w of plan.sweep) {
+            console.log('  sweep:   ' + w.sid + '@' + w.n + ' capacity ' + w.capacity + ' d ' + w.d + ' chunkCap ' + w.grid.join(', '));
+        }
+        for (const e of plan.excluded) console.log('  exclude: ' + exclusionLine(e));
+        if (o.scenario !== null || o.all) {
+            console.log('  exclude: ' + (plan.excluded.length === 0 ? 'none (no census cell over ' + EXCLUDE_LIMIT_S + ' s per pass, BA-34)'
+                : plan.excluded.length + ' cell(s), never a GO input (BA-34)'));
+        }
     }
     console.log('');
 }
@@ -675,7 +864,7 @@ function summarize(results) {
         }
         console.log('');
     }
-    const sKeys = Object.keys(results).filter((k) => /@\d+$/.test(k));
+    const sKeys = Object.keys(results).filter((k) => { const m = RESULT_KEY.exec(k); return m !== null && m[3] !== undefined; });
     if (sKeys.length > 0) {
         line('Scenario cells (ns/event REPORTED; checksum + endState + traceHash cross-checked per (Sid, n))');
         for (const k of sKeys) {
@@ -707,12 +896,13 @@ async function orchestrate(o) {
     if (o.publish && process.env.QUIET_LOCK_HOST !== 'quiet' && process.env.QUIET_LOCK_HOST !== 'preliminary') {
         usageExit('[bench] --publish is the run of record: run it under quiet-lock');
     }
-    let all;
+    let plan;
     try {
-        all = o.scenario !== null ? cells(o.scenario, { quick: o.quick }) : cells();
+        plan = planCells(o);
     } catch (e) {
         usageExit(e.message); // "unknown scenario <id>" -> exit 2
     }
+    const all = plan.groups.flat();
     // labels that are not registered adapter names (BlockedArray variants) print in meta.rivals too
     const extra = [];
     for (const c of all) {
@@ -729,20 +919,21 @@ async function orchestrate(o) {
         commit: commitId(),
         mainFileSha: mainFileSha(),
     };
-    printHeader(o, meta0, all.length, extra);
+    printHeader(o, meta0, all.length, extra, plan);
 
     // fail closed: no two cells may share a result key (variant labels; a g2b-3 tune sweep must tag its keys)
     const seenKeys = new Set();
     for (const c of all) {
-        const key = c.member + '/' + c.dim + (c.scenario !== undefined ? '@' + c.n : '');
+        const key = keyOf(c);
         if (seenKeys.has(key)) usageExit('[bench] duplicate result key ' + key + ' (one cell per label x scenario x n)');
         seenKeys.add(key);
     }
     const results = {};
     let failures = 0;
     for (let pass = 0; pass < o.runs; pass++) {
-        for (const c of all) {
-            const key = c.member + '/' + c.dim + (c.scenario !== undefined ? '@' + c.n : '');
+        // BA-28: pass-major; inside each (Sid, n) group the label order rotates by one per pass
+        for (const c of runOrder(plan, pass)) {
+            const key = keyOf(c);
             process.stderr.write('  running ' + key + (o.runs > 1 ? ' pass ' + (pass + 1) + '/' + o.runs : '') + ' (' +
                 (DIMENSION_TITLES[c.dim] || c.dim) + ') ...\n');
             try {
@@ -801,7 +992,7 @@ async function orchestrate(o) {
     const payload = {
         schema: SCHEMA, status: 'MEASURED', meta,
         subjects: SUBJECTS, foil: FOIL, dimensions: DIMENSIONS, titles: DIMENSION_TITLES,
-        scenarios: o.scenario !== null ? [o.scenario] : SCENARIOS.map((s) => s.id),
+        scenarios: o.scenario !== null ? [selectScenario(o.scenario).id] : SCENARIOS.map((s) => s.id),
         adapters, results,
         lossTable: [], // group 2b: the scenario runs measure the loss rows (RESEARCH section 4.3)
         opClass: OP_CLASS,

@@ -671,12 +671,13 @@ export const SpliceFoilAdapter = {
 // ---- BlockedArray (rival, RESEARCH 4.1 / 12.3; SPEC BA-14 / BA-15) --------------------------
 // tune { chunkCap, variant }: chunkCap an integer multiple of 4 in [8, 2^16] (the class rule, plus
 // a cap so a tune value can never size a huge pool; omitted = the class default
-// max(16, ceil(sqrt(C))) rounded up to a multiple of 4, BA-15); variant 'unrolled' | 'plain'
-// (benchmark/rivals/variant.mjs). One adapter per variant: the registered BlockedArray is
-// 'unrolled' (the file as written); `await blockedArrayAdapter('plain')` builds the other from a
-// data: URL (async, cold) and names it 'BlockedArray.plain'. A tune naming another variant than the
-// adapter's throws (fail closed). params.chunkCap is the printed default rule, never a measured
-// value: the chunkCap a cell actually used is per-cell data, read from h.instance.chunkCap.
+// max(16, ceil(sqrt(C))) rounded up to a multiple of 4, BA-15); variant 'unrolled' | 'plain' |
+// 'twin' (benchmark/rivals/variant.mjs). One adapter per variant: the registered BlockedArray is
+// 'unrolled' (the file as written); `await blockedArrayAdapter(variant)` builds each other variant
+// (plain, twin) from a data: URL (async, cold) and names it 'BlockedArray.<variant>'. A tune
+// naming another variant than the adapter's throws (fail closed). params.chunkCap is the printed
+// default rule, never a measured value: the chunkCap a cell actually used is per-cell data, read
+// from h.instance.chunkCap.
 
 const BA_TUNE_KEYS = ['chunkCap', 'variant'];
 const BA_CC_MAX = 1 << 16;

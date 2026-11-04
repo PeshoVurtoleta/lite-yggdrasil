@@ -117,7 +117,7 @@ function wants(id, n, shift) {
 // ---- registry ---------------------------------------------------------------------------------------------------
 
 describe('S1 registry (R-BA16): shape of the two entries', () => {
-    test('S1a and S1b are registered before S7, dims 1, views 1, the five S7 adapters, the ruled sizes, phases in order', () => {
+    test('S1a and S1b are registered before S7, dims 1, views 1, the six S7 adapters, the ruled sizes, phases in order', () => {
         const ids = SCENARIOS.map((s) => s.id);
         assert.ok(ids.indexOf('S1a') >= 0 && ids.indexOf('S1b') > ids.indexOf('S1a') && ids.indexOf('S1a') < ids.indexOf('S7'));
         const sizes = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 100000, 131072, 262144, 524288, 1000000];
@@ -145,11 +145,11 @@ describe('S1 registry (R-BA16): shape of the two entries', () => {
 
 // ---- A1 ----------------------------------------------------------------------------------------------------------
 
-describe('A1: all five labels and the oracle agree per phase (S1a, S1b at n 1024 and 4096, 20,000 events)', () => {
+describe('A1: all six labels and the oracle agree per phase (S1a, S1b at n 1024 and 4096, 20,000 events)', () => {
     for (const id of IDS) {
         for (const n of [1024, 4096]) {
             test('A1: ' + id + ' @ ' + n + ': checksum + endState + traceHash identical across labels and equal to the oracle', async () => {
-                assert.equal(sc(id).adapters.length, 5);
+                assert.equal(sc(id).adapters.length, 6);
                 const built = build(id, n);
                 const w = wants(id, n, false);
                 for (const label of sc(id).adapters) {
@@ -578,12 +578,12 @@ function runChild(over) {
 }
 
 describe('A3 / A4: the --expose-gc child (BA-7a precedent), S1a + S1b', () => {
-    test('A3: runScript, 2 scenarios x 4 phases x 5 labels at n 4096 / 20,000 events: < 8 B per call (K = 16) AND < 1 B per op, maxMajor 0; controls fail', () => {
+    test('A3: runScript, 2 scenarios x 4 phases x 6 labels at n 4096 / 20,000 events: < 8 B per call (K = 16) AND < 1 B per op, maxMajor 0; controls fail', () => {
         const r = runChild();
         assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
         for (const l of r.lanes) console.log('# lane ' + l.name + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
         for (const l of r.controls) console.log('# control ' + l.name + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
-        assert.equal(r.lanes.length, 40);
+        assert.equal(r.lanes.length, 48);
         const want = { walk: 18400, reweight: 1000, edit: 600, blend: 20000 };
         for (const l of r.lanes) {
             const phase = l.name.slice(l.name.lastIndexOf('.') + 1);
@@ -600,7 +600,7 @@ describe('A3 / A4: the --expose-gc child (BA-7a precedent), S1a + S1b', () => {
         assert.equal(r.controls.length, 1);
         assert.ok(typeof r.controls[0].bop === 'number' && r.controls[0].bop > 8, 'allocating runScript must read > 8 B/op, read ' + r.controls[0].bop);
         // must-fail control: one 16 B box per runScript CALL on every label reads < 1 B/op but must FAIL the per-call floor
-        assert.equal(r.pcControls.length, 5);
+        assert.equal(r.pcControls.length, 6);
         for (const pc of r.pcControls) {
             console.log('# control ' + pc.name + ' perCall=' + String(pc.perCall) + ' bop=' + String(pc.bop) + ' [' + pc.wins + ']');
             assert.ok(typeof pc.bop === 'number' && pc.bop < 1, pc.name + ' must read < 1 B/op, read ' + pc.bop);
@@ -622,7 +622,7 @@ describe('A3 / A4: the --expose-gc child (BA-7a precedent), S1a + S1b', () => {
     test('A4: 100 cycles per label of create(n + 1, 1) -> fill -> S1b blend -> clear -> drop: tracker.size() 0; retaining control >= 1', () => {
         const r = runChild();
         console.log('# leak ' + JSON.stringify(r.leak) + ' ctl ' + JSON.stringify(r.ctlRetain));
-        assert.equal(r.leak.tracked, 5 * 100 * 2);
+        assert.equal(r.leak.tracked, 6 * 100 * 2);
         assert.deepEqual([r.leak.size, r.leak.alive, r.leak.fin, r.leak.notReset], [0, 0, 0, 0]);
         assert.ok(r.ctlRetain.size >= 1, 'retaining control must leave size() >= 1');
         assert.ok(r.ctlRetain.alive >= 1, 'retaining control must keep handles alive');

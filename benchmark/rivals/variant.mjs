@@ -14,6 +14,9 @@
 //                 its plain stride-1 tail loop over the whole directory. sumBefore's directory loop is
 //                 already plain in the draft; its anchor is still count-checked (identity hunk) so an
 //                 edit that unrolls it later makes 'plain' throw instead of silently staying unrolled.
+//   'twin'     -- the file as written plus ONE added comment line (BA-29, the A/A control). The text
+//                 differs, so the data: URL differs and V8 compiles a separate copy: the same text
+//                 would hit the same cached module and be no A/A control at all.
 // Cold: build-time text work only; nothing here runs on a measured path.
 
 import { readFileSync } from 'node:fs';
@@ -79,12 +82,19 @@ const ANCHOR_SUMBEFORE_PLAIN =
   '      dirIdx++;\n' +
   '    }\n';
 
+const ANCHOR_TWIN_HEADER =
+  ' * BlockedArray -- Stride-1 Sqrt-Decomposition Rival for SumSequence (RESEARCH.md 4.1 / B-31, 12.3).\n';
+
 export const VARIANTS = Object.freeze({
   unrolled: Object.freeze([]),
   plain: Object.freeze([
     Object.freeze([ANCHOR_LOCATE_UNROLLED, '']),
     Object.freeze([ANCHOR_INDEXATSUM_UNROLLED, '']),
     Object.freeze([ANCHOR_SUMBEFORE_PLAIN, ANCHOR_SUMBEFORE_PLAIN]),
+  ]),
+  twin: Object.freeze([
+    Object.freeze([ANCHOR_TWIN_HEADER,
+      ANCHOR_TWIN_HEADER + ' * A/A twin (BA-29): a separately compiled copy of this file; this one comment line added.\n']),
   ]),
 });
 

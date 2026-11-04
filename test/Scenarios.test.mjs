@@ -30,6 +30,7 @@ import {
 } from '../benchmark/Adapters.mjs';
 import { cells } from '../benchmark/Matrix.mjs';
 import { DEFAULT_SEED } from '../benchmark/Harness.mjs';
+import { variantSource, loadVariant } from '../benchmark/rivals/variant.mjs';
 
 const PKG = fileURLToPath(new URL('..', import.meta.url));
 const S7 = SCENARIOS.find((s) => s.id === 'S7');
@@ -105,14 +106,15 @@ async function handleFor(label, built, n, dims, views = 1) {
 // ---- A1 ----------------------------------------------------------------------------------------------------
 
 describe('A1: every adapter and the oracle agree per phase (S7, S7b at n 1024 and 4096)', () => {
-    test('A1: S7 / S7b list exactly the five R-BA18 adapters (BlockedArray unrolled + plain, Fenwick suffix + full)', () => {
+    test('A1: S7 / S7b list exactly the R-BA18 adapters + the BA-29 twin (BlockedArray unrolled + plain + twin, Fenwick suffix + full)', () => {
         for (const sc of [S7, S7B]) {
-            assert.equal(sc.adapters.length, 5);
+            assert.equal(sc.adapters.length, 6);
             assert.ok(sc.adapters.includes('SumSequence'));
             assert.ok(sc.adapters.includes('BlockedArray.plain'));
+            assert.ok(sc.adapters.includes('BlockedArray.twin'));
             assert.ok(sc.adapters.includes('FenwickRebuild.suffix'));
             assert.ok(sc.adapters.includes('FenwickRebuild.full'));
-            assert.equal(sc.adapters.filter((a) => a.startsWith('BlockedArray')).length, 2);
+            assert.equal(sc.adapters.filter((a) => a.startsWith('BlockedArray')).length, 3);
             assert.ok(!sc.adapters.includes('SpliceFoil'));
             assert.ok(!sc.adapters.includes('FenwickFixed'));
         }
@@ -886,6 +888,33 @@ async function childMain(u) {
         for (const v of views) v.clear();
         partner && partner.clear();
     }
+    // g2b-3a A5: BlockedArray.twin runScript on every S7 / S7b phase, K = 16 calls per window (the per-call floor
+    // needs K calls: a 1-call window drifts +-16 B), warm per BA-26 = max(u.warm, ceil(1e5 / events)) calls, no gc()
+    // between the warm and the lane; one-box control (one 16 B HeapNumber per call) on every script, outside the region.
+    const TWIN = 'BlockedArray.twin';
+    out.twin = [];
+    out.twinCtl = [];
+    if (!u.only && LABELS.includes(TWIN)) {
+        const ad = await SC.resolveLabel(TWIN);
+        const h = ad.create(N + 8, 1);
+        for (const sc of scripts) {
+            if (!/^(S7b\.)?(seek|reweight|blend)$/.test(sc.name)) continue;
+            const events = sc.script.length / 4;
+            const warm = Math.max(WARM, Math.ceil(1e5 / events));
+            const refill = () => SC.fillHandle(h, sc.fill, N, 1, null);
+            refill();
+            for (let w = 0; w < warm; w++) IOUT[0] = SC.runScript(h, sc.script);
+            const r = M.lane(TWIN + '.k16.' + sc.name, () => { IOUT[0] = SC.runScript(h, sc.script); }, BULK_K, WIN, refill, gate);
+            const perCall = M.bop(r, base(BULK_K));
+            out.twin.push({ name: r.name, perCall, bop: perCall / events, k: BULK_K, calls: warm, warmEvents: warm * events,
+                wins: M.winText(r, base(BULK_K)) });
+            refill();
+            for (let w = 0; w < warm; w++) IOUT[0] = boxScript(h, sc.script);
+            const c = M.lane('ctl.box.' + TWIN + '.' + sc.name, () => { IOUT[0] = boxScript(h, sc.script); }, BULK_K, WIN, refill);
+            out.twinCtl.push({ name: c.name, perCall: M.bop(c, base(BULK_K)), wins: M.winText(c, base(BULK_K)) });
+        }
+        h.clear();
+    }
     if (u.only) { prof.stop(); return out; }
     await prof.settle();
     const s = prof.summary();
@@ -925,17 +954,17 @@ async function childMain(u) {
     const onFin = () => { K[0]++; };
     const small = S7.build(null, 40, u.seed, 1000);
     const blendSmall = small.phases.find((p) => p.name === 'blend').script;
-    const leakRun = async (retain) => {
+    const views3 = (ad) => ad.createViews(128, 1, 3);
+    const leakRun = async (retain, labels = LABELS, make = views3) => {
         K[0] = 0; K[1] = 0;
         const tracker = L.createLeakTracker({ name: retain ? 'scn-ctl' : 'scn', onLeak: () => {}, onWarning: () => {} });
         const refs = [];
         const kept = [];
         const per = {};
-        for (const label of LABELS) {
-            const ad = await SC.resolveLabel(label);
+        for (const label of labels) {
             // one cycle per call: no local of a finished cycle survives on the stack to pin its views
-            const cycle = () => {
-                const vs = ad.createViews(128, 1, 3);
+            const cycle = (ad) => {
+                const vs = make(ad);
                 for (const h of vs) {
                     const hv = tracker.track(h, onFin, label + '.handle');
                     const hi = tracker.track(h.instance, onFin, label + '.instance');
@@ -947,7 +976,7 @@ async function childMain(u) {
                     if (retain) kept.push(h);
                 }
             };
-            for (let a = 0; a < 100; a++) cycle();
+            for (let a = 0; a < 100; a++) cycle(await SC.resolveLabel(label)); // resolve -> create -> ... each cycle
             per[label] = 100;
         }
         await settle();
@@ -960,6 +989,12 @@ async function childMain(u) {
     };
     out.leak = await leakRun(false);
     out.ctlRetain = await leakRun(true);
+    // g2b-3a A5: 100 cycles resolve twin -> create -> fill -> runScript -> clear -> drop (one handle per cycle)
+    if (LABELS.includes(TWIN)) {
+        const one = (ad) => [ad.create(128, 1)];
+        out.twinLeak = await leakRun(false, [TWIN], one);
+        out.twinRetain = await leakRun(true, [TWIN], one);
+    }
     out.labels = LABELS;
     return out;
 }
@@ -995,8 +1030,8 @@ describe('A3 / A4: the --expose-gc child (BA-7a precedent)', () => {
         assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
         for (const l of r.lanes) console.log('# lane ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
         for (const l of r.controls) console.log('# control ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
-        // 5 adapters x 3 views x 8 scripts (S7 seek / reweight / blend, S7b the same, walk, edit) + 1 bulk lane per adapter
-        assert.equal(r.lanes.length, 125);
+        // 6 adapters x 3 views x 8 scripts (S7 seek / reweight / blend, S7b the same, walk, edit) + 1 bulk lane per adapter
+        assert.equal(r.lanes.length, 150);
         // g2b-2b bulk lane: one per label on views[0], 16 calls per window, warm >= 60 calls (108,000 records)
         const bulk = r.lanes.filter((l) => l.name.endsWith('.v0.bulk'));
         assert.deepEqual(bulk.map((l) => l.name), S7.adapters.map((x) => x + '.v0.bulk'));
@@ -1009,7 +1044,7 @@ describe('A3 / A4: the --expose-gc child (BA-7a precedent)', () => {
         // must-fail control: one 16 B box per bulk call, every label, must FAIL the < 8 B per call floor
         for (const c of r.bulkCtl) console.log('# control ' + c.name + ' perCall=' + String(c.perCall) + ' fresh=' + String(c.fresh) + ' [' + c.wins + ']');
         assert.deepEqual(r.bulkCtl.map((c) => c.name), S7.adapters.map((x) => 'ctl.box.' + x));
-        for (const c of r.bulkCtl) assert.ok(typeof c.perCall === 'number' && !(c.perCall < 8), c.name + ' must FAIL perCall < 8, read ' + c.perCall);
+        for (const c of r.bulkCtl) assert.ok(typeof c.perCall === 'number' && c.perCall >= 8, c.name + ' must FAIL perCall < 8, read ' + c.perCall);
         // JSON carries NaN (no gated window) as null: a non-number reading fails closed. Both floors: per call < 16 B
         // AND per event < 1 B (the division alone hid a ~900 B interpreted-boxing call behind 4000 events).
         for (const l of r.lanes) {
@@ -1039,15 +1074,111 @@ describe('A3 / A4: the --expose-gc child (BA-7a precedent)', () => {
     test('A3: the cursorWalkSum lanes (every adapter, views 0..2) read < 1 B/op', () => {
         const r = runChild();
         for (const l of r.walk) console.log('# walk ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
-        assert.equal(r.walk.length, 15);
+        assert.equal(r.walk.length, 18);
         for (const l of r.walk) assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
     });
     test('A4: 100 cycles of createViews(C, d, 3) -> fill -> phase -> clear -> drop, every adapter: tracker.size() 0; retaining control >= 1', () => {
         const r = runChild();
         console.log('# leak ' + JSON.stringify(r.leak) + ' ctl ' + JSON.stringify(r.ctlRetain));
-        assert.equal(r.leak.tracked, 5 * 100 * 3 * 2);
+        assert.equal(r.leak.tracked, 6 * 100 * 3 * 2);
         assert.deepEqual([r.leak.size, r.leak.alive, r.leak.fin, r.leak.notReset], [0, 0, 0, 0]);
         assert.ok(r.ctlRetain.size >= 1, 'retaining control must leave size() >= 1');
         assert.ok(r.ctlRetain.alive >= 1, 'retaining control must keep views alive');
     });
+    test('g2b-3a A5: BlockedArray.twin runScript, S7 + S7b every phase at n 4096, K = 16 calls / window: < 1 B/event, -2 < B/call < 8, maxMajor 0; one-box control >= 8', () => {
+        const r = runChild();
+        assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
+        for (const l of r.twin) console.log('# twin ' + l.name + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' calls=' + l.calls + ' [' + l.wins + ']');
+        for (const c of r.twinCtl) console.log('# twin control ' + c.name + ' perCall=' + String(c.perCall) + ' [' + c.wins + ']');
+        const names = ['seek', 'reweight', 'blend', 'S7b.seek', 'S7b.reweight', 'S7b.blend'];
+        assert.deepEqual(r.twin.map((l) => l.name), names.map((x) => 'BlockedArray.twin.k16.' + x));
+        assert.deepEqual(r.twinCtl.map((c) => c.name), names.map((x) => 'ctl.box.BlockedArray.twin.' + x));
+        for (const l of r.twin) {
+            assert.equal(l.k, 16, l.name + ' calls per window');
+            assert.ok(l.calls >= 60 && l.warmEvents >= 1e5, l.name + ' warmed ' + l.calls + ' calls / ' + l.warmEvents + ' events (BA-26 floor)');
+            assert.ok(typeof l.perCall === 'number' && l.perCall > -2 && l.perCall < 8, l.name + ' perCall ' + l.perCall);
+            assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+        }
+        for (const c of r.twinCtl) assert.ok(typeof c.perCall === 'number' && c.perCall >= 8, c.name + ' must FAIL perCall < 8, read ' + c.perCall);
+        assert.equal(r.gc.ok, true, 'gc region: ' + JSON.stringify(r.gc));
+        assert.equal(r.gc.major, 0);
+    });
+    test('g2b-3a A5: 100 cycles resolve twin -> create -> fill -> runScript -> clear -> drop: tracker.size() 0; retaining control >= 1', () => {
+        const r = runChild();
+        console.log('# twin leak ' + JSON.stringify(r.twinLeak) + ' ctl ' + JSON.stringify(r.twinRetain));
+        assert.equal(r.twinLeak.tracked, 100 * 1 * 2);
+        assert.deepEqual(r.twinLeak.cycles, { 'BlockedArray.twin': 100 });
+        assert.deepEqual([r.twinLeak.size, r.twinLeak.alive, r.twinLeak.fin, r.twinLeak.notReset], [0, 0, 0, 0]);
+        assert.ok(r.twinRetain.size >= 1, 'retaining control must leave size() >= 1');
+        assert.ok(r.twinRetain.alive >= 1, 'retaining control must keep the handle alive');
+    });
+});
+
+// ---- g2b-3a A3: the BlockedArray.twin A/A control ---------------------------------------------------------------
+
+describe('g2b-3a A3: BlockedArray.twin = BlockedArray.js + one comment line, a separately compiled copy', () => {
+    test('variantSource("twin") differs from BlockedArray.js by exactly 1 added line (a comment), nothing else', () => {
+        const base = readFileSync(join(PKG, 'benchmark', 'rivals', 'BlockedArray.js'), 'utf8').split('\n');
+        const twin = variantSource('twin').split('\n');
+        assert.equal(twin.length, base.length + 1);
+        let i = 0;
+        while (i < base.length && base[i] === twin[i]) i++;
+        assert.ok(i < base.length, 'no differing line');
+        assert.deepEqual(twin.slice(i + 1), base.slice(i), 'everything after the added line is BlockedArray.js');
+        assert.match(twin[i], /^ \* A\/A twin \(BA-29\)/, 'the added line is a comment line inside the header block');
+        assert.notEqual(variantSource('twin'), variantSource('unrolled'));
+    });
+    test('loadVariant("twin") is its own module: its BlockedArray class is neither the registered one nor a second load of plain', async () => {
+        const t = (await loadVariant('twin')).BlockedArray;
+        assert.equal(typeof t, 'function');
+        assert.notEqual(t, BlockedArrayAdapter.Class);
+        assert.notEqual(t, (await loadVariant('plain')).BlockedArray);
+        assert.notEqual(t, (await loadVariant('unrolled')).BlockedArray);
+        const a = await resolveLabel('BlockedArray.twin');
+        assert.equal(a.name, 'BlockedArray.twin');
+        assert.equal(a.params.variant, 'twin');
+    });
+    test('cells(Sid, { exclude }) (BA-34): a valid entry removes exactly that cell; every malformed entry throws (fail closed)', () => {
+        const all = cells('S7');
+        assert.ok(all.some((c) => c.member === 'FenwickRebuild.full' && c.n === 10000), 'S7 has FenwickRebuild.full@10000');
+        const key = (c) => c.member + '/' + c.scenario + '@' + c.n;
+        for (const ex of ['FenwickRebuild.full/S7@10000', { label: 'FenwickRebuild.full', n: 10000 }]) {
+            const got = cells('S7', { exclude: [ex] });
+            assert.equal(got.length, all.length - 1, JSON.stringify(ex));
+            assert.ok(!got.map(key).includes('FenwickRebuild.full/S7@10000'), JSON.stringify(ex));
+            assert.deepEqual(got.map(key), all.map(key).filter((k) => k !== 'FenwickRebuild.full/S7@10000'), JSON.stringify(ex));
+        }
+        assert.deepEqual(cells('S7', { exclude: [] }), all);
+        assert.throws(() => cells('S7', { exclude: ['FenwickRebuild.full/S7b@10000'] }), /names scenario S7b/);
+        assert.throws(() => cells('S7', { exclude: [{ label: 'Nope', n: 10000 }] }), /names no cell/);
+        assert.throws(() => cells('S7', { exclude: ['FenwickRebuild.full/S7@4096'] }), /names no cell/);
+        assert.throws(() => cells('S7', { exclude: 'x' }), /must be an array/);
+        assert.throws(() => cells('S7', { exclude: [{ label: 'SumSequence', n: 10000, extra: 1 }] }), /unknown key extra/);
+        assert.throws(() => cells('S7', { exclude: [Object.create({ label: 'SumSequence', n: 10000 })] }), /plain/);
+        assert.throws(() => cells('S7', { exclude: ['SumSequence/S7@10000', { label: 'SumSequence', n: 10000 }] }), /listed twice/);
+        assert.throws(() => cells(undefined, { exclude: [] }), /needs a scenario id/);
+    });
+    test('every scenario lists BlockedArray.twin right after BlockedArray.plain; cells() carries it at every n', () => {
+        for (const sc of SCENARIOS) {
+            const i = sc.adapters.indexOf('BlockedArray.plain');
+            assert.ok(i >= 0, sc.id);
+            assert.equal(sc.adapters[i + 1], 'BlockedArray.twin', sc.id);
+            const c = cells(sc.id, { quick: true });
+            assert.equal(c.filter((x) => x.member === 'BlockedArray.twin').length, new Set(c.map((x) => x.n)).size, sc.id);
+        }
+    });
+    for (const sc of [S7, S7B]) {
+        test('A3 twin parity: ' + sc.id + ' --quick @ 4096: twin checksum / endState / traceHash equal BlockedArray in every phase', async () => {
+            const a = await runScenario('BlockedArray', sc, 4096, { seed: SEED, quick: true, samples: 1 });
+            const b = await runScenario('BlockedArray.twin', sc, 4096, { seed: SEED, quick: true, samples: 1 });
+            assert.deepEqual(b.phases.map((p) => p.phase), a.phases.map((p) => p.phase));
+            assert.ok(a.phases.length >= 3);
+            for (let k = 0; k < a.phases.length; k++) {
+                const p = a.phases[k];
+                const q = b.phases[k];
+                assert.deepEqual([q.checksum, q.endState, q.traceHash], [p.checksum, p.endState, p.traceHash], sc.id + ' ' + p.phase);
+            }
+            assert.equal(b.chunkCap, a.chunkCap);
+        });
+    }
 });

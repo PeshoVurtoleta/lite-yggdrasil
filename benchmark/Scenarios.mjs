@@ -1042,7 +1042,7 @@ function buildEditor(id, mask, salt) {
     };
 }
 
-const S7_ADAPTERS = ['SumSequence', 'BlockedArray', 'BlockedArray.plain', 'FenwickRebuild.suffix',
+const S7_ADAPTERS = ['SumSequence', 'BlockedArray', 'BlockedArray.plain', 'BlockedArray.twin', 'FenwickRebuild.suffix',
     'FenwickRebuild.full'];
 const S1_SIZES = [1024, 2048, 4096, 8192, 16384, 32768, 65536, 100000, 131072, 262144, 524288, 1000000];
 const S1_PER_BLOCK = '920 cursorWalkSum(0, y, 30) + 50 setMeasure(i, 0, h) + 30 structural (15 insertAt + 15 ' +

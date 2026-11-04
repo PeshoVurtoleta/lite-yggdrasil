@@ -161,7 +161,7 @@ const d1Ok = (d0, d1) => d1 === d0 || (d1 > d0 && d1 <= Math.min(255, 2 * d0));
 // ---- registry ---------------------------------------------------------------------------------------------------
 
 describe('S2 registry (R-BA17 / R-BA22): shape of the three entries', () => {
-    test('S2, S2a, S2b are registered after S1b and before S7: dims 2, views 3 / 1 / 3, the five S7 adapters, the ruled sizes, phases in order', () => {
+    test('S2, S2a, S2b are registered after S1b and before S7: dims 2, views 3 / 1 / 3, the six S7 adapters, the ruled sizes, phases in order', () => {
         const ids = SCENARIOS.map((s) => s.id);
         assert.ok(ids.indexOf('S1b') >= 0 && ids.indexOf('S2') > ids.indexOf('S1b'));
         assert.ok(ids.indexOf('S2a') > ids.indexOf('S2') && ids.indexOf('S2b') > ids.indexOf('S2a') && ids.indexOf('S2b') < ids.indexOf('S7'));
@@ -175,7 +175,7 @@ describe('S2 registry (R-BA17 / R-BA22): shape of the three entries', () => {
             assert.deepEqual([...s.sizes].sort((x, y) => x - y), sizes, id + ' sizes');
             assert.equal(new Set(s.sizes).size, s.sizes.length, id + ' sizes unique');
             assert.deepEqual([...s.adapters], [...sc('S7').adapters], id + ' adapters');
-            assert.equal(s.adapters.length, 5);
+            assert.equal(s.adapters.length, 6);
             assert.deepEqual(build(id, 1024, BLOCK_EVENTS).phases.map((p) => p.name), PHASE_NAMES[id], id + ' phases');
         }
     });
@@ -791,13 +791,13 @@ describe('A4: exact fill replay (plan TASK 5 salts 0x52 / 0x52a / 0x52b, S1 draw
     }
 });
 
-// ---- A4: all five labels and the oracle agree --------------------------------------------------------------------
+// ---- A4: all six labels and the oracle agree --------------------------------------------------------------------
 
-describe('A4: all five labels and the 3-view oracle replay agree per phase (n 1024 and 4096, full stream)', () => {
+describe('A4: all six labels and the 3-view oracle replay agree per phase (n 1024 and 4096, full stream)', () => {
     for (const id of IDS) {
         for (const n of [1024, 4096]) {
             test('A4: ' + id + ' @ ' + n + ': checksum + endState + traceHash identical across labels and equal to the oracle', async () => {
-                assert.equal(sc(id).adapters.length, 5);
+                assert.equal(sc(id).adapters.length, 6);
                 const built = build(id, n);
                 const w = wants(id, n, false);
                 for (const label of sc(id).adapters) {
@@ -1009,13 +1009,37 @@ function runChild(over) {
 }
 
 describe('A5: the --expose-gc child (BA-26), S2 + S2a + S2b', () => {
-    test('A5: runScript phase lanes, 3 scenarios x 5 labels at n 4096 / --quick 2,000 events: < 8 B per call (K = 16, > -2) AND < 1 B per record, maxMajor 0; controls fail', () => {
-        const r = runChild();
+    // g2b-3a B2: the lanes run in TWO children -- the five pre-twin labels exactly as before, and BlockedArray.twin
+    // alone under the same gates. One 6-label child reads gc major 1 in the lanes region (3 / 3 runs); the 6-label
+    // set with BlockedArray.plain listed twice (no third compiled BlockedArray copy) and the 5-label set with the twin in
+    // place of plain both read major 0 (one run each, PRELIMINARY host): heap growth from a third separately compiled
+    // BlockedArray module next to six labels' lanes, not a twin defect. maxMajor stays 0 in both children.
+    const TWIN = 'BlockedArray.twin';
+    const PRE_TWIN = sc('S2').adapters.filter((l) => l !== TWIN);
+    // one child per label set, memoized: the lanes test and the retention test read the SAME two children
+    const CHILDREN = new Map();
+    const childFor = (labels) => {
+        const k = JSON.stringify(labels);
+        if (!CHILDREN.has(k)) CHILDREN.set(k, runChild({ labels }));
+        return CHILDREN.get(k);
+    };
+    test('A5: the two lane children cover the six S2 labels exactly once (five pre-twin + the twin)', () => {
+        assert.equal(PRE_TWIN.length, 5);
+        assert.equal(PRE_TWIN.length + 1, sc('S2').adapters.length);
+        assert.deepEqual([...PRE_TWIN, TWIN].sort(), [...sc('S2').adapters].sort());
+    });
+    test('A5: runScript phase lanes, 3 scenarios x 5 pre-twin labels at n 4096 / --quick 2,000 events: < 8 B per call (K = 16, > -2) AND < 1 B per record, maxMajor 0; controls fail', () => {
+        lanesGate(childFor(PRE_TWIN), PRE_TWIN);
+    });
+    test('A5: runScript phase lanes, 3 scenarios x BlockedArray.twin alone at n 4096 / --quick 2,000 events: the same gates (< 8 B per call, > -2, < 1 B per record, maxMajor 0; controls fail)', () => {
+        lanesGate(childFor([TWIN]), [TWIN]);
+    });
+    function lanesGate(r, labels) {
         assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
         for (const l of r.lanes) console.log('# lane ' + l.name + ' ops=' + l.ops + ' calls=' + l.calls + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
         for (const l of r.controls) console.log('# control ' + l.name + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
-        // 5 labels x (5 + 4 + 1 phases)
-        assert.equal(r.lanes.length, 5 * (5 + 4 + 1));
+        // labels x (5 + 4 + 1 phases): 5 x 10 = 50 pre-twin + 1 x 10 = 10 twin = 6 x 10 over both children
+        assert.equal(r.lanes.length, labels.length * (5 + 4 + 1));
         const exactOps = { S2: { seek: 200, edit: 600, bulk: 300 }, S2a: { seek: 200, reweight: 2400, edit: 600, blend: 3200 }, S2b: { bulk: 300 } }; // --quick = /10
         const build4096 = (sid) => build(sid, 4096, scenarioEvents(true));
         for (const l of r.lanes) {
@@ -1042,27 +1066,31 @@ describe('A5: the --expose-gc child (BA-26), S2 + S2a + S2b', () => {
         assert.equal(r.controls.length, 1);
         assert.ok(typeof r.controls[0].bop === 'number' && r.controls[0].bop > 8, 'allocating runScript must read > 8 B per record, read ' + r.controls[0].bop);
         // must-fail control: ONE 16 B box per runScript CALL on EVERY label reads < 1 B/record but must FAIL the per-call floor (>= 8)
-        assert.equal(r.pcControls.length, 5);
-        assert.deepEqual(r.pcControls.map((x) => x.name), sc('S2').adapters.map((l) => 'ctl.allocPerCall.' + l));
+        assert.equal(r.pcControls.length, labels.length);
+        assert.deepEqual(r.pcControls.map((x) => x.name), labels.map((l) => 'ctl.allocPerCall.' + l));
         for (const pc of r.pcControls) {
             console.log('# control ' + pc.name + ' perCall=' + String(pc.perCall) + ' bop=' + String(pc.bop) + ' [' + pc.wins + ']');
             assert.ok(typeof pc.bop === 'number' && pc.bop < 1, pc.name + ' must read < 1 B per record, read ' + pc.bop);
             assert.ok(typeof pc.perCall === 'number' && pc.perCall >= 8, pc.name + ' window has no teeth: one box per call must read >= 8, read ' + pc.perCall);
         }
-    });
+    }
 
     // A5 retention: the proof is the WeakRef `alive` count; size() reaches 0 because the test untracks after clear().
-    test('A5: 100 cycles per label of createViews(n + 1, 2, 3) -> fill -> S2 blend at n 256 -> clear -> drop: tracker.size() 0; retaining control >= 1', () => {
-        const r = runChild();
-        console.log('# leak ' + JSON.stringify(r.leak) + ' ctl ' + JSON.stringify(r.ctlRetain));
-        // 5 labels x 100 cycles x 3 views x (handle + instance)
-        assert.equal(r.leak.tracked, 5 * 100 * 3 * 2);
-        assert.deepEqual([r.leak.size, r.leak.alive, r.leak.fin, r.leak.notReset], [0, 0, 0, 0]);
-        assert.equal(r.ctlRetain.tracked, 5 * 100 * 3 * 2);
-        assert.ok(r.ctlRetain.size >= 1, 'retaining control must leave size() >= 1');
-        assert.ok(r.ctlRetain.alive >= 1, 'retaining control must keep handles alive');
-        assert.equal(r.ctlRetain.held, 5 * 100, 'the retaining control kept every cycle');
-    });
+    // The retention rows read the leak / ctlRetain results of the two lane children (no third, 6-label child); the
+    // retaining control runs per label, so the twin-only child carries it too.
+    for (const [name, labels] of [['5 pre-twin labels', PRE_TWIN], ['BlockedArray.twin alone', [TWIN]]]) {
+        test('A5: 100 cycles per label of createViews(n + 1, 2, 3) -> fill -> S2 blend at n 256 -> clear -> drop, ' + name + ': tracker.size() 0; retaining control >= 1', () => {
+            const r = childFor(labels);
+            console.log('# leak ' + name + ' ' + JSON.stringify(r.leak) + ' ctl ' + JSON.stringify(r.ctlRetain));
+            // labels x 100 cycles x 3 views x (handle + instance)
+            assert.equal(r.leak.tracked, labels.length * 100 * 3 * 2);
+            assert.deepEqual([r.leak.size, r.leak.alive, r.leak.fin, r.leak.notReset], [0, 0, 0, 0]);
+            assert.equal(r.ctlRetain.tracked, labels.length * 100 * 3 * 2);
+            assert.ok(r.ctlRetain.size >= 1, 'retaining control must leave size() >= 1');
+            assert.ok(r.ctlRetain.alive >= 1, 'retaining control must keep handles alive');
+            assert.equal(r.ctlRetain.held, labels.length * 100, 'the retaining control kept every cycle');
+        });
+    }
 });
 
 // ---- review r1 rows: R-BA19 block counts + shuffle, R-BA23 column end, R-BA25 mid start, R-BA27 caret locality, sumBefore window ----

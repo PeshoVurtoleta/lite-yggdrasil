@@ -601,3 +601,166 @@ describe('B3: Bench / Readme', () => {
         assert.equal(r.status, 2);
     });
 });
+
+// ---- g2b-3a B2: cellKey / RESULT_KEY ~c tag, parseArgs sweep flags, the cell plan (PLAN g2b-3a TASK 3 / 7, A3 / A4)
+describe('g2b-3a B2: sweep keys, flags and the cell plan', () => {
+    let B;
+    before(async () => { B = await import('../benchmark/Bench.mjs'); });
+    const bench = (args) => spawnSync(process.execPath, [PKG + 'benchmark/Bench.mjs', ...args], { encoding: 'utf8', timeout: 60000 });
+
+    test('cellKey: untagged and tagged keys; bad parts throw', () => {
+        assert.equal(B.cellKey('BlockedArray', 'S7', 1024), 'BlockedArray/S7@1024');
+        assert.equal(B.cellKey('BlockedArray.twin', 'S1a', 4096), 'BlockedArray.twin/S1a@4096');
+        assert.equal(B.cellKey('BlockedArray', 'S7', 1024, 36), 'BlockedArray/S7@1024~c36');
+        for (const bad of [['', 'S7', 1], ['X', 'D1', 1], ['X', 'S7', 0], ['X', 'S7', 1.5], ['X', 'S7', 1, 0], ['X', 'S7', 1, 3.5], ['X', 'S7', 1, '36']]) {
+            assert.throws(() => B.cellKey(...bad), /cellKey/, JSON.stringify(bad));
+        }
+    });
+    test('RESULT_KEY: accepts X/S7@1024~c36 (group 5 = 36); rejects ~c0, ~c036, ~c, ~cx and a tag on a D-row', () => {
+        const m = B.RESULT_KEY.exec('X/S7@1024~c36');
+        assert.ok(m);
+        assert.deepEqual([m[1], m[3], m[4], m[5]], ['X', 'S7', '1024', '36']);
+        assert.equal(B.RESULT_KEY.exec('X/S7@1024')[5], undefined);
+        assert.ok(B.RESULT_KEY.test('SumSequence/D2'));
+        for (const k of ['X/S7@1024~c0', 'X/S7@1024~c036', 'X/S7@1024~c', 'X/S7@1024~cx', 'X/D1~c36', 'X/S7@1024~c36~c36', 'X/S7~c36']) {
+            assert.equal(B.RESULT_KEY.test(k), false, k);
+        }
+    });
+    // an untimed sweep cell (no nsPerOp: walkRow needs no counts record) inside a PENDING payload
+    function sweepCell(cc, chunkCap) {
+        return { member: 'BlockedArray', scenario: 'S7', n: 1024, chunkCap, tune: { chunkCap: cc },
+            phases: [{ phase: 'blend', checksum: 5, endState: 1, traceHash: 9 }] };
+    }
+    const validFixture = () => ({
+        schema: 'yggdrasil-bench/1', status: 'PENDING',
+        meta: { seed: SEED, node: 'v22.0.0', arch: 'arm64', platform: 'darwin', cpuModel: 'Fixture CPU', cpuCount: 8,
+            date: '2026-10-31T12:00:00.000Z', sentinel: null, loadAvgStart: [0.5, 0.5, 0.5], loadAvgEnd: [0.6, 0.6, 0.6],
+            hostState: 'PRELIMINARY', quietLockWhy: 'fixture', commit: 'abcdef0', mainFileSha: '0123abcd', runCount: 1,
+            command: 'node benchmark/Bench.mjs --sweep chunkCap --scenario S7', rivals: {} },
+        subjects: ['SumSequence'], dimensions: [], titles: {}, scenarios: ['S7'], results: {}, lossTable: [],
+    });
+    test('validateResults: a tagged cell whose chunkCap equals its tag passes; tag != chunkCap throws (fail closed)', () => {
+        const base = JSON.parse(JSON.stringify(validFixture()));
+        const ok = { ...base, results: { 'BlockedArray/S7@1024~c36': sweepCell(36, 36) } };
+        assert.equal(B.validateResults(ok), true);
+        const bad = { ...base, results: { 'BlockedArray/S7@1024~c36': sweepCell(36, 40) } };
+        assert.throws(() => B.validateResults(bad), /chunkCap must equal its key tag ~c36/);
+        const na = { ...base, results: { 'BlockedArray/S7@1024~c36': sweepCell(36, 'n/a') } };
+        assert.throws(() => B.validateResults(na), /chunkCap must equal its key tag/);
+        const drow = { ...base, results: { 'SumSequence/D2~c36': { member: 'SumSequence' } } };
+        assert.throws(() => B.validateResults(drow), /key must be/);
+    });
+    test('crossCheck: sweep cells join their (Sid, n) group; a differing chunkCap cell throws naming <label>~c<cc>', () => {
+        const row = (c) => ({ phases: [{ phase: 'blend', checksum: c, endState: 1, traceHash: 9 }] });
+        assert.equal(B.crossCheck({ 'BlockedArray/S7@1024~c16': row(5), 'BlockedArray/S7@1024~c32': row(5) }), 1);
+        assert.throws(() => B.crossCheck({ 'BlockedArray/S7@1024~c16': row(5), 'BlockedArray/S7@1024~c32': row(6) }),
+            /checksum mismatch S7@1024 phase blend: BlockedArray~c16 5 vs BlockedArray~c32 6/);
+    });
+    test('parseArgs: --sweep chunkCap, --all, --picks <path> parse; defaults are null / false / null', () => {
+        const d = B.parseArgs([]);
+        assert.deepEqual([d.sweep, d.all, d.picks], [null, false, null]);
+        const o = B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S7', '--quick', '--picks', 'benchmark/chunkcap.json']);
+        assert.deepEqual([o.sweep, o.scenario, o.quick, o.picks], ['chunkCap', 'S7', true, 'benchmark/chunkcap.json']);
+        assert.equal(B.parseArgs(['--all']).all, true);
+        assert.equal(B.parseArgs(['--all', '--sweep', 'chunkCap']).sweep, 'chunkCap');
+        assert.deepEqual(B.SWEEP_AXES, ['chunkCap']);
+    });
+    test('parseArgs exits 2: --sweep leafSize, --sweep without a value / a scenario, --picks without a value, --all with --scenario, --sweep with --cell', () => {
+        const rows = [
+            [['--sweep', 'leafSize', '--scenario', 'S7'], '--sweep must be one of chunkCap'],
+            [['--sweep'], '--sweep needs a value'],
+            [['--sweep', 'chunkCap'], 'give --scenario <Sid> or --all'],
+            [['--picks'], '--picks needs a value'],
+            [['--picks', '--all'], '--picks needs a path'],
+            [['--picks', ''], '--picks needs a path'],
+            [['--all', '--scenario', 'S7'], '--all runs every scenario'],
+            [['--cell', '--sweep', 'chunkCap'], 'is an orchestrator flag'],
+            [['--alll'], "did you mean '--all'"],
+        ];
+        for (const [args, msg] of rows) {
+            const r = bench(args);
+            assert.equal(r.status, 2, args.join(' ') + ': ' + r.stderr);
+            assert.ok(r.stderr.includes(msg), args.join(' ') + ' stderr: ' + r.stderr);
+        }
+    });
+    test('planCells: --sweep chunkCap --scenario S7 --quick = BlockedArray x 5 distinct ~c keys, d from the built capacity (A4)', () => {
+        const p = B.planCells(B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S7', '--quick']));
+        assert.equal(p.groups.length, 1);
+        // hand: S7 builds capacity n = 4096; ceil(sqrt(4096)) = 64 -> d 64; grid 64 x {1/4, 1/2, 1, 2, 4}
+        assert.deepEqual(p.sweep, [{ sid: 'S7', n: 4096, capacity: 4096, d: 64, grid: [16, 32, 64, 128, 256] }]);
+        const keys = p.groups[0].map((c) => B.cellKey(c.member, c.scenario, c.n, c.chunkCap));
+        assert.deepEqual(keys, [16, 32, 64, 128, 256].map((cc) => 'BlockedArray/S7@4096~c' + cc));
+        for (const c of p.groups[0]) assert.deepEqual(c.tune, { chunkCap: c.chunkCap });
+        // S1a builds capacity n + 1 = 1025 at 1024: d = 36 (ceil(sqrt(1025)) = 33 -> 36), not sqrt(n) = 32
+        const q = B.planCells(B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S1a', '--quick']));
+        assert.deepEqual(q.sweep[0], { sid: 'S1a', n: 1024, capacity: 1025, d: 36, grid: [12, 20, 36, 72, 144] });
+        assert.equal(q.groups.length, 3);
+        for (const g of q.groups) assert.equal(new Set(g.map((c) => c.chunkCap)).size, 5);
+    });
+    test('planCells: one group per (Sid, n) in registry label order; --all = 16 D-rows + every scenario; --all --sweep has no D-row', () => {
+        const S7 = selectScenario('S7');
+        const p = B.planCells(B.parseArgs(['--scenario', 'S7']));
+        assert.deepEqual(p.groups.map((g) => g[0].n), [10000, 100000, 1000000]);
+        for (const g of p.groups) assert.deepEqual(g.map((c) => c.member), [...S7.adapters]);
+        const a = B.planCells(B.parseArgs(['--all', '--quick']));
+        const flat = a.groups.flat();
+        assert.equal(flat.filter((c) => c.scenario === undefined).length, 16);
+        assert.deepEqual([...new Set(flat.filter((c) => c.scenario).map((c) => c.scenario))], SCENARIOS.map((s) => s.id));
+        const w = B.planCells(B.parseArgs(['--all', '--sweep', 'chunkCap', '--quick']));
+        assert.ok(w.groups.flat().every((c) => c.scenario !== undefined && c.member === 'BlockedArray'));
+        assert.equal(w.sweep.length, w.groups.length);
+    });
+    test('rotation (BA-28): pass p runs each group rotated left by p; pass 1 starts at the second label', async () => {
+        const { rotateLabels } = await import('../benchmark/Compare.mjs');
+        const plan = B.planCells(B.parseArgs(['--scenario', 'S7', '--quick']));
+        const g = plan.groups[0];
+        assert.equal(rotateLabels(g, 1)[0].member, g[1].member);
+        assert.equal(rotateLabels(g, g.length)[0].member, g[0].member);
+        // runOrder (the pass loop's order): pass 0 = registry order, pass 1 = every group rotated left by one
+        const L = [...selectScenario('S7').adapters];
+        const rot1 = [...L.slice(1), L[0]];
+        assert.deepEqual(B.runOrder(plan, 0).map((c) => c.member), L);
+        assert.deepEqual(B.runOrder(plan, 1).map((c) => c.member + '@' + c.n), rot1.map((m) => m + '@4096'));
+        const full = B.planCells(B.parseArgs(['--scenario', 'S7']));
+        assert.deepEqual(B.runOrder(full, 1).map((c) => c.member + '@' + c.n),
+            [10000, 100000, 1000000].flatMap((n) => rot1.map((m) => m + '@' + n)));
+        const src = readFileSync(PKG + 'benchmark/Bench.mjs', 'utf8');
+        assert.equal(src.split('for (const c of runOrder(plan, pass))').length, 2, 'the pass loop must run runOrder');
+    });
+    test('planCells refuses --picks and --sweep --publish until g2b-3a B3 (pure: a spawned --publish could write results.json)', () => {
+        assert.throws(() => B.planCells(B.parseArgs(['--scenario', 'S7', '--picks', 'benchmark/chunkcap.json'])), /--picks/);
+        assert.throws(() => B.planCells(B.parseArgs(['--all', '--quick', '--picks', 'x.json'])), /--picks lands with publishGuard/);
+        assert.throws(() => B.planCells(B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S7', '--publish'])), /--sweep --publish/);
+        // the sweep alone and --publish alone still plan
+        assert.equal(B.planCells(B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S7', '--quick'])).sweep.length, 1);
+        assert.ok(B.planCells(B.parseArgs(['--scenario', 'S7', '--publish'])).groups.length > 0);
+    });
+    test('EXCLUDED (BA-34): empty today (census max 105.25 s); planted rows: SumSequence / BlockedArray family throw; a valid row prints the ruled wording and leaves the cell out', () => {
+        assert.deepEqual(B.EXCLUDED, []);
+        assert.ok(Object.isFrozen(B.EXCLUDED));
+        const row = { label: 'FenwickRebuild.full', sid: 'S1b', n: 1000000, censusS: 312.5, reason: B.EXCLUDE_REASON };
+        assert.equal(B.exclusionLine(row), 'FenwickRebuild.full S1b@1000000 excluded: census 312.5 s per pass (O(n) rebuild per structural op)');
+        const p = B.planCells(B.parseArgs(['--scenario', 'S1b']), [row]);
+        assert.deepEqual(p.excluded, [row]);
+        const g = p.groups.find((x) => x[0].n === 1000000);
+        assert.deepEqual(g.map((c) => c.member), selectScenario('S1b').adapters.filter((l) => l !== 'FenwickRebuild.full'));
+        assert.equal(B.planCells(B.parseArgs(['--scenario', 'S7']), [row]).excluded.length, 0);
+        // a full-run n is no cell of a --quick run: the row drops out, it never throws "names no cell"
+        const qrow = { label: 'FenwickRebuild.full', sid: 'S1b', n: 1000000, censusS: 312.5, reason: B.EXCLUDE_REASON };
+        for (const args of [['--scenario', 'S1b', '--quick'], ['--all', '--quick']]) {
+            const q = B.planCells(B.parseArgs(args), [qrow]);
+            assert.deepEqual(q.excluded, [], args.join(' '));
+            for (const grp of q.groups.filter((x) => x[0].scenario !== undefined)) {
+                assert.deepEqual(grp.map((c) => c.member), [...selectScenario(grp[0].scenario).adapters], args.join(' ') + ' ' + grp[0].scenario + '@' + grp[0].n);
+            }
+        }
+        assert.deepEqual(B.planCells(B.parseArgs(['--scenario', 'S1b', '--quick']), [qrow]).groups.map((x) => x[0].n), [1024, 2048, 4096]);
+        for (const label of ['SumSequence', 'BlockedArray', 'BlockedArray.plain', 'BlockedArray.twin']) {
+            assert.throws(() => B.validateExcluded([{ ...row, label }]), /is never excluded/, label);
+        }
+        assert.throws(() => B.validateExcluded([{ ...row, censusS: 300 }]), /censusS/);
+        assert.throws(() => B.validateExcluded([{ ...row, n: 4096 + 1 }]), /is not a size of S1b/);
+        assert.throws(() => B.validateExcluded([{ ...row, reasn: 'x' }]), /unknown key reasn/);
+        assert.throws(() => B.validateExcluded([row, row]), /listed twice/);
+    });
+});

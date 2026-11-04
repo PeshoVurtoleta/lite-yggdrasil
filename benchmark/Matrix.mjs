@@ -16,6 +16,7 @@
  */
 
 import { selectScenario, scenarioSizes } from './Scenarios.mjs';
+import { didYouMean } from './Adapters.mjs';
 
 /** Sentinel for a cell that does not apply. NEVER 0. */
 export const NA = 'n/a';
@@ -69,9 +70,11 @@ export function baselineFor(member, dim) {
  * baseline, and a dimension that does not apply to it returns its n/a reason). A scenario id: that
  * scenario's adapter labels x sizes, sizes capped at QUICK_SIZE and deduped when opts.quick
  * (results.json keys '<label>/<Sid>@<n>'; selectScenario throws "unknown scenario <id>" on an id
- * the registry does not hold).
+ * the registry does not hold). opts.exclude (scenario only, g2b-3 BA-34): cells left out, each a
+ * key '<label>/<Sid>@<n>' or a plain {label, n}; fail closed -- an entry of another shape, an
+ * unknown object key, another scenario's key or an entry that names no cell of this run throws.
  * @param {string} [scenarioId]
- * @param {{quick?: boolean}} [opts]
+ * @param {{quick?: boolean, exclude?: (string|{label:string, n:number})[]}} [opts]
  * @returns {{member:string, dim:string, baseline:string, n?:number, scenario?:string}[]}
  */
 export function cells(scenarioId, opts = {}) {
@@ -79,13 +82,55 @@ export function cells(scenarioId, opts = {}) {
     if (scenarioId !== undefined) {
         const s = selectScenario(scenarioId);
         const sizes = scenarioSizes(s, opts.quick === true);
+        const drop = excludeSet(s.id, opts.exclude);
+        const hit = new Set();
         for (const n of sizes) {
-            for (const member of s.adapters) out.push({ member, dim: s.id, baseline: NA, n, scenario: s.id });
+            for (const member of s.adapters) {
+                const k = member + '/' + s.id + '@' + n;
+                if (drop.has(k)) { hit.add(k); continue; }
+                out.push({ member, dim: s.id, baseline: NA, n, scenario: s.id });
+            }
         }
+        for (const k of drop) if (!hit.has(k)) throw new Error('[matrix] exclude: ' + k + ' names no cell of this run');
         return out;
     }
+    if (opts.exclude !== undefined) throw new Error('[matrix] exclude: needs a scenario id (D-row cells are never excluded)');
     for (const member of [...SUBJECTS, FOIL]) {
         for (const dim of DIMENSIONS) out.push({ member, dim, baseline: baselineFor(member, dim) });
+    }
+    return out;
+}
+
+const EXCLUDE_KEY = /^([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)?)\/(S\d+[a-z]?)@([1-9]\d*)$/;
+const EXCLUDE_FIELDS = ['label', 'n'];
+
+// cold: the set of '<label>/<Sid>@<n>' keys an exclude list names (fail closed on any malformed entry)
+function excludeSet(sid, list) {
+    const out = new Set();
+    if (list === undefined) return out;
+    if (!Array.isArray(list)) throw new TypeError('[matrix] exclude: must be an array of cell keys or {label, n}');
+    for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        const w = '[matrix] exclude[' + i + ']';
+        let k;
+        if (typeof e === 'string') {
+            const m = EXCLUDE_KEY.exec(e);
+            if (!m) throw new TypeError(w + ": key '" + e + "' is not '<label>/<Sid>@<n>'");
+            if (m[2] !== sid) throw new Error(w + ": key '" + e + "' names scenario " + m[2] + ', not ' + sid);
+            k = e;
+        } else if (e !== null && typeof e === 'object' && !Array.isArray(e) && Object.getPrototypeOf(e) === Object.prototype &&
+            Object.getOwnPropertySymbols(e).length === 0) {
+            for (const f of Object.keys(e)) {
+                if (!EXCLUDE_FIELDS.includes(f)) throw new TypeError(w + ': unknown key ' + f + didYouMean(f, EXCLUDE_FIELDS));
+            }
+            if (typeof e.label !== 'string' || e.label.length === 0) throw new TypeError(w + '.label: must be a non-empty string');
+            if (!Number.isInteger(e.n) || e.n < 1) throw new TypeError(w + '.n: must be an integer >= 1');
+            k = e.label + '/' + sid + '@' + e.n;
+        } else {
+            throw new TypeError(w + ': must be a cell key string or a plain {label, n}');
+        }
+        if (out.has(k)) throw new Error(w + ': ' + k + ' listed twice');
+        out.add(k);
     }
     return out;
 }

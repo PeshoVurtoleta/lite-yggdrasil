@@ -819,7 +819,11 @@ const BA_IDX = "    if (typeof globalIndex !== 'number' || (globalIndex | 0) !==
 const BA_ENT = "    if (typeof entity !== 'number' || (entity & MAX_ENTITY) !== entity) {\n      baFail('entity', 'must be an integer in [0, 2^30 - 1]');\n    }\n";
 const BA_GETM = '    return this._arena.poolMeasures[(dim * this.maxChunks + cIdx) * this.chunkCap + this._locLocal];';
 
-// [id, what, battery, hunks]; batteries: diff (the differential), throws, split, retention.
+// [id, what, battery, hunks, expectThrow?]; batteries: diff (the differential), throws, split, retention.
+// expectThrow (RegExp) names the ONE throw that may ESCAPE a battery and count as a kill; any other escaping throw
+// fails the test. optionRows catches every row, runDiff its op loop, throwRows its op call (a mutant throw there is a
+// bad row); a throw while building / filling / reading counters in diff / throws escapes here, as does any throw in
+// split / retention / default.
 const BA_MUTANTS = [
   ['P1', 'getMeasure(i, 1) reads the dim-0 column', 'diff', [[BA_GETM, BA_GETM.replace('(dim * this', '((dim === 1 ? 0 : dim) * this')]]],
   ['P2', 'next() does not reset local at a chunk end', 'diff', [['      st[CU_LOCAL] = 0;\n', '']]],
@@ -829,7 +833,8 @@ const BA_MUTANTS = [
   ['BM3', 'always 1/2 (the HEAD rule)', 'split', [[BA_SPLIT, 'this._split(dirIdx, B >>> 1);']]],
   ['BM4', '_split copies entities from keep, not cut', 'diff', [['    a.poolEntities.copyWithin(newCIdx * B, oldCIdx * B + cut, oldCIdx * B + sz);', '    a.poolEntities.copyWithin(newCIdx * B, oldCIdx * B + keep, oldCIdx * B + sz);']]],
   ['BM5', 'prepend split keyed on index 1', 'split', [[BA_SPLIT, BA_SPLIT.replace('globalIndex === 0', 'globalIndex === 1')]]],
-  ['BM6', 'clear() keeps its chunks', 'retention', [['      a.freeList[a.freeTop++] = this.dir[i];\n', '']]],
+  ['BM6', 'clear() keeps its chunks', 'retention', [['      a.freeList[a.freeTop++] = this.dir[i];\n', '']], /pool exhausted/],
+  // BM6 expectThrow: leaked chunks make a later fill throw baFail('pool', ...) = 'chunk pool exhausted' (measured: the only throwing row).
 ];
 
 const FW_SUFFIX_APPEND = '      if (this._sfx) fwSuffix(this, n);';
@@ -863,11 +868,16 @@ const FW_MUTANTS = [
 const MUT_KIND_BA = baKind('BlockedArray.mutant');
 const MUT_KIND_FW = fwKind('FenwickRebuild.mutant', ['suffix', 'full']);
 
-function batteryFailures(family, battery, K) {
+// A throw that escapes the battery counts as a kill ONLY when the row names an expected throw and the message matches
+// it; any other escaping throw is rethrown so the test fails instead of reading "killed". optionRows (every row),
+// runDiff (its op loop) and throwRows (its op call) catch inside and count a throw as a bad row (a broken diff-row
+// splice that throws in the op loop still reads killed); a throw building or filling their views escapes here.
+function batteryFailures(family, battery, K, expectThrow) {
   try {
     return batteryRun(family, battery, K);
   } catch (e) {
-    return 1; // a battery that throws on a mutant has found it (e.g. the pool exhausted by a leaking clear())
+    if (expectThrow instanceof RegExp && e instanceof Error && expectThrow.test(e.message)) return 1;
+    throw e;
   }
 }
 
@@ -1155,18 +1165,36 @@ describe('BlockedArray split points (R5, BA-14), retention (A4), space (A5)', ()
 });
 
 describe('mutants: each fails its battery (a survivor fails this file)', () => {
-  for (const [id, what, battery, hunks] of BA_MUTANTS) {
+  for (const [id, what, battery, hunks, thr] of BA_MUTANTS) {
     test('BlockedArray ' + id + ' ' + what + ' -> ' + battery, async () => {
       const K = (await loadVariant('unrolled', hunks)).BlockedArray;
-      assert.ok(batteryFailures('BA', battery, K) >= 1, id + ' SURVIVED battery ' + battery);
+      assert.ok(batteryFailures('BA', battery, K, thr) >= 1, id + ' SURVIVED battery ' + battery);
     });
   }
-  for (const [id, what, battery, hunks] of FW_MUTANTS) {
+  for (const [id, what, battery, hunks, thr] of FW_MUTANTS) {
     test('FenwickRebuild ' + id + ' ' + what + ' -> ' + battery, async () => {
       const K = await fwLoad(hunks, id);
-      assert.ok(batteryFailures('FW', battery, K) >= 1, id + ' SURVIVED battery ' + battery);
+      assert.ok(batteryFailures('FW', battery, K, thr) >= 1, id + ' SURVIVED battery ' + battery);
     });
   }
+  test('teeth (a): BM6 is killed by the /pool exhausted/ throw itself, not by some other crash', async () => {
+    const row = BA_MUTANTS.find((r) => r[0] === 'BM6');
+    assert.ok(row[4] instanceof RegExp, 'BM6 must name its expected throw');
+    const K = (await loadVariant('unrolled', row[3])).BlockedArray;
+    let err = null;
+    try { retentionRows(K); } catch (e) { err = e; }
+    assert.ok(err !== null, 'BM6 retention battery did not throw');
+    assert.match(err.message, /pool exhausted/);
+    assert.ok(row[4].test(err.message), 'the row regex does not match the real throw: ' + err.message);
+    assert.equal(batteryFailures('BA', 'retention', K, row[4]), 1);
+  });
+  test('teeth (b): an unexpected throw is rethrown, never counted as a kill', () => {
+    const boom = { arena() { throw new TypeError('harness crash'); } }; // retentionRows calls K.arena first
+    assert.throws(() => batteryFailures('BA', 'retention', boom), TypeError);
+    assert.throws(() => batteryFailures('BA', 'retention', boom, /pool exhausted/), TypeError); // regex mismatch
+    assert.throws(() => batteryFailures('BA', 'no-such-battery', BlockedArray), /unknown battery/);
+    assert.equal(batteryFailures('BA', 'retention', boom, /harness crash/), 1); // a matching expectation is the only kill
+  });
   test('every battery reads 0 on the real classes (the mutant rows are not vacuous)', () => {
     for (const b of ['throws', 'split', 'retention']) assert.equal(batteryFailures('BA', b, BlockedArray), 0, 'BA ' + b);
     for (const b of ['throws', 'options', 'default']) assert.equal(batteryFailures('FW', b, FenwickRebuild), 0, 'FW ' + b);

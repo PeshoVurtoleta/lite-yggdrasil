@@ -496,6 +496,19 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
   with the LiteO1 benchmark harness; sweep chunkCap and leafSize; add a net-growth edit phase (its edit cells almost never split or merge).
 - Inlining gate for every member that edits a hot function: LiteUtils/inlining-budget-diff.sh, driver mode,
   frozen before build vs the live file, both tiers; STATISTICAL, run under the quiet lock, never in npm test.
+- LiteUtils tools -- RULED (maintainer 2026-11-04; option text quoted verbatim; LiteUtils is private 0.0.0,
+  so a tool arrives as a copy, never a dependency):
+  R-LU1 "bb + ibd now, dd later (Recommended)": "Copy bytecode-budget.sh and inlining-budget-diff.sh into
+  test/tools/, byte-identical to the LiteUtils root copy at a named commit + sha256/8, never imported (as in
+  LiteLogLogN and LiteSignal). bytecode-budget becomes a DETERMINISTIC npm-test gate: --max per hot function,
+  pinned on node v26.8.2, plus --self-test and must-fail mutant rows. inlining-budget-diff gets the same
+  self-test and mutant test; its real runs (benchmark/inl drivers, the hot-function edit rule at ROADMAP :490)
+  stay STATISTICAL, under the quiet lock. deopt-diff.sh is copied the same way once LiteUtils Phase 3 closes."
+  R-LU2 "SumMap key-compare gate (Recommended)": "ROADMAP's 'Not planned: a --trace-deopt gate (not
+  deterministic)' is replaced: deopt-diff.sh, in file mode against the frozen before build, gates SumMap's hot
+  functions with keys >= 2^31 (the RESEARCH 16.1 compare-form finding). A `>>> 0` compare variant is the
+  must-fail control and must read DIFF. The gate is STATISTICAL, run once per release under the quiet lock,
+  never in npm test."
 - Competent rivals -- RULED (unlike the notes above, which are not ruled): maintainer 2026-10-31, RESEARCH 14;
   option text quoted verbatim:
   R-BA9 "Mode in FenwickRebuild.js (Recommended)": "The bit-straddle suffix rebuild is added as a 'suffix' mode of
@@ -671,7 +684,8 @@ epoch persistence. Each needs a measured case before a session.
   planner pass; R-8 would also make RangeError 'pool' reachable from setMeasure / removeAt; R-9 only as a
   get(k) leaf-hint table after SumMap ships; R-7 needs the pull op count measured as time.
 - Not planned (RESEARCH 11.7): an Euler tour facade (LiteLogN EulerTourTree / LinkCutTree), a wavelet
-  matrix (LiteLogN WaveletTree), timing wheels (LiteO1), a --trace-deopt gate (not deterministic).
+  matrix (LiteLogN WaveletTree), timing wheels (LiteO1). (A --trace-deopt gate was here; R-LU2, 2026-11-04,
+  replaced it with the deopt-diff.sh SumMap key-compare gate; R-LU2 is quoted beside R-LU1.)
 
 ---
 

@@ -11,6 +11,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - README: "How an operation runs", three Mermaid diagrams (positional ops with the finger test and the cold
   split / repair paths; append, splitAt, the seeks and the cursor; the arena and view storage), checked against the
   engine source.
+- GitHub Actions CI: .github/workflows/ci.yml runs npm test and npm run test:types on every push and pull request
+  (node 22, 24 and 26 on ubuntu-latest and macos-latest, plus node 26.8.2 on each OS), and
+  .github/workflows/nightly.yml runs the full npm run verify every night (node latest and 22 on both OSes). Both
+  install the declared devDependency ranges with npm install (no lockfile, no cache) and record the versions they
+  tested with npm ls --depth=0. Deterministic gates only; no timing or statistical claim is gated in CI. Neither
+  workflow had run on GitHub when it was committed.
 
 ## [0.1.1] - 2026-10-27
 

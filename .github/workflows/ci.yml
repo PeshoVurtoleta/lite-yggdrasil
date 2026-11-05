@@ -1,0 +1,92 @@
+# ci.yml -- lite-yggdrasil per-push / per-PR gate (.handoff/PLAN-ci.md, burst 42; rulings Y-CI-1..4).
+# Y-CI-1 (tier): DETERMINISTIC gates only. Gated here: `npm test` (correctness, exact counts, the B/op allocation
+# lanes, the kernel-lane via test/Bench.test.mjs A5, the `git show HEAD:README.md` parity row) and
+# `npm run test:types`. NOT gated: any timing / statistical claim (RULED Y-13 "none: statistical claims are REPORTED
+# only"; a hosted runner is not a decisions/0003 G-3 host), the bench scripts; no quiet lock, no timing threshold or
+# statistical gate. npm test does carry watchdog timeouts (EditorFeed 1800 s, ScenarioFeed 540 s, Bench A5 330 s) and
+# one conditional timing assert (test/Finger.test.mjs:1095, mayHang mutants only).
+# Y-CI-2 (jobs): the standalone test:lanes / torture / kernel-lane scripts run in nightly.yml (`npm run verify`).
+# Y-CI-3 (matrix): node 22 / 24 / 26 x ubuntu-latest + macos-latest, plus one node 26.8.2 leg per OS: 8 legs.
+# 26.8.2 is the calibration version of the allocation, --print-bytecode and --allow-natives-syntax rows (the version
+# the measured comments and REPORTED numbers name); on 22 / 24 / 26.x those rows may disagree. A red leg is
+# recorded (leg / row / observed vs expected), never skipped, trimmed or re-run for green without a ruling.
+# Expected on 26.8.2: tests 1348, pass 1347, skipped 1, fail 0. The one skip is R-A9 at
+# test/AuditFixes3.test.mjs:344: its frozen before build sits at a hard-coded, gitignored .handoff path (:21).
+# No Windows. engines ">=18" is untested in CI: the floor leg is node 22 (the devDependency tree's lite-leak and
+# lite-cleanup declare >=20); a FILLERS item asks whether to raise it.
+# Y-CI-4 (deps): no lockfile is committed (package-lock.json is gitignored), so no clean-install step and no npm
+# cache: `npm install --no-audit --no-fund` resolves the declared ^ ranges, and the deps provenance step
+# `npm ls --depth=0` (MUST exit 0) records every devDependency version this run tested. A floating ^ range can turn
+# a leg red with no repo change; that npm ls output is the evidence.
+# fetch-depth 0: no current row reads an older commit (the only git read is test/Bench.test.mjs:485, HEAD:README.md);
+# depth 0 keeps a future row that reads an older commit from breaking on a shallow clone.
+# timeout-minutes 120 is nominal: local npm test 184 s wall / 465 s user CPU on 12 cores (node 26.8.2, 1 run,
+# .handoff/evidence/b42-ci/npmtest-head.log); the EditorFeed child ceiling is 1800 s (test/EditorFeed.test.mjs);
+# lite-utils' npm test took 57.7 min on macOS node 22.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    # nominal, see the header
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['22', '24', '26']
+        include:
+          - os: ubuntu-latest
+            node: '26.8.2'
+          - os: macos-latest
+            node: '26.8.2'
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # no lockfile: no clean-install step, no npm cache (Y-CI-4)
+      - name: setup node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: provenance
+        run: |
+          node --version
+          npm --version
+          git --version
+          uname -a
+          git rev-parse HEAD
+          node -p "'availableParallelism ' + os.availableParallelism() + ', loadavg ' + os.loadavg().join(' ')"
+      - name: npm install
+        run: npm install --no-audit --no-fund
+      # deps provenance: the devDependency versions this run tested; MUST exit 0
+      - name: deps provenance (npm ls --depth=0)
+        run: npm ls --depth=0
+      # informational only, not a gate: the full tree may exit non-zero on peer / optional noise
+      - name: deps tree (npm ls --all, informational)
+        run: npm ls --all || echo "npm ls --all exited $? (informational only, not a gate)"
+      - name: npm test
+        run: npm test
+      - name: npm run test:types
+        run: npm run test:types
+      # R-LU1 slot: the lite-utils tools' --self-test rows land here after the LiteUtils release (FILLERS item);
+      # none run yet.

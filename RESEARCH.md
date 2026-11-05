@@ -125,7 +125,7 @@ gated in COUNTS, not time:
   touches(op) <= p(op) * H(Lmax(n)) + k(op), all integers (ADR 0003 G-11; the slope
   c = 2.409 of log2 L is REPORTED only), k(op) = 0 (0005 C-25) -- an exact, host-independent line. The foil's count (elements moved) is n-linear.
 - REPORTED (docs only, with provenance): ns/op vs log2 n, fitted with lite-logn's frozen family fit
-  (r2 floor 0.958) for display. Never a gate (no hosted CI; sibling convention).
+  (r2 floor 0.958) for display. Never a gate (D-host = none, Y-13; sibling convention).
 
 A second, family-specific anchor: the **shape-independence witness**. The same multiset inserted in
 k different orders (different tree shapes) answers every seek bit-identically. It exists only
@@ -1218,14 +1218,12 @@ gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"; recorded 2026-11-0
   and reports their median; a (label, scenario, n, phase) value is the median of its K child medians. The sweep uses
   the same K."
 - R-BA29 (Q-WIN, 2026-11-01, burst 36) = "0.95 band + A/A twin (Recommended)". Option text: "At one (scenario, n,
-  phase),
-  A wins when its median-of-K is below 0.95 x B's, B wins the same way, else TIE, which is neither a win nor a loss.
-  The A/A control BlockedArray.twin (BlockedArray.js plus one comment line, a separately compiled copy) runs beside
-  BlockedArray in every pass; if twin vs BlockedArray reads other than TIE at any (scenario, n), every comparison of
-  that run prints INCONCLUSIVE."
+  phase), A wins when its median-of-K is below 0.95 x B's, B wins the same way, else TIE, which is neither a win nor a
+  loss. The A/A control BlockedArray.twin (BlockedArray.js plus one comment line, a separately compiled copy) runs
+  beside BlockedArray in every pass; if twin vs BlockedArray reads other than TIE at any (scenario, n), every
+  comparison of that run prints INCONCLUSIVE."
 - R-BA30 (Q-XOVER, 2026-11-01, burst 36) = "Wins at every larger n (Recommended)". Option text: "Crossovers read the
-  blend
-  phase. A scenario's crossover vs a rival label is the smallest measured n from which SumSequence wins at every
+  blend phase. A scenario's crossover vs a rival label is the smallest measured n from which SumSequence wins at every
   larger measured n; a TIE or a rival win breaks the run; no such n -> 'none up to <largest n>'. S1's crossover = the
   larger of S1a's and S1b's; S2's is the S2 id's (S2a / S2b are reported, not GO inputs). 'vs BlockedArray' = the
   larger crossover of BlockedArray and BlockedArray.plain. A loss row is written for every (scenario, rival label
@@ -1238,13 +1236,11 @@ gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"; recorded 2026-11-0
   BlockedArray label runs the run of record at that pick. Only a QUIET `--sweep chunkCap --publish` writes the
   committed benchmark/chunkcap.json; a QUIET run of record refuses a missing or non-QUIET table (exit 2)."
 - R-BA32 (Q-LEAF, 2026-11-01, burst 36) = "Shipped leafSize 16 only (Recommended)". Option text: "SumSequence runs
-  every
-  scenario at its shipped leafSize 16; the leafSize sweep stays in D4 and is not a scenario axis (closes RESEARCH 12.3
-  'sweep both')."
+  every scenario at its shipped leafSize 16; the leafSize sweep stays in D4 and is not a scenario axis (closes
+  RESEARCH 12.3 'sweep both')."
 - R-BA33 (Q-ROR, 2026-11-01, burst 36) = "One --publish --all run (Recommended)". Option text: "The run of record is
-  one
-  `--publish --all` run: the 16 D-rows plus every registered scenario's cells in one results.json; --publish without
-  --all exits 2."
+  one `--publish --all` run: the 16 D-rows plus every registered scenario's cells in one results.json; --publish
+  without --all exits 2."
 - R-BA34 (Q-HEAVY, 2026-11-01, burst 36, asked with the B0 census) = "Exclude > 300 s (Recommended)". Option text: "A
   scenario cell whose census wall time exceeds 300 s per pass is left out of the sweep and the run of record, printed
   as '<label> <Sid>@<n> excluded: census <s> s per pass (O(n) rebuild per structural op)'; an excluded cell is never
@@ -1256,8 +1252,7 @@ gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"; recorded 2026-11-0
   honesty design failed, not that SumSequence won everywhere."
 - R-BA36 (Q-CMPREQ, 2026-11-04, burst 39, asked after the B3 r2 review) = "Require comparison (Recommended)". Option
   text: "validateResults requires results.comparison { inconclusive, twin } whenever status is MEASURED and any
-  results
-  key is an untagged scenario key (<label>/<Sid>@<n> with no ~c tag); a missing record throws (fail closed: an
+  results key is an untagged scenario key (<label>/<Sid>@<n> with no ~c tag); a missing record throws (fail closed: an
   unmeasured twin control is never treated as TIE). Every MEASURED fixture with scenario cells gains its
   comparisonOf(results).comparison, including the fixtures in test/Compare.test.mjs and the Readme rows of
   test/Bench.test.mjs (B3 r3 owns those test files)."
@@ -1378,10 +1373,9 @@ S2 is implemented as ruled (R-BA23..R-BA27); writes are d0 then d1, so d0 <= d1 
 record. The 15.3 table is the proposal; the ruled mix is R-BA17 (ROADMAP section 6) and benchmark/METHODOLOGY.md.
 Cell `events` = the stream's event count (S2 20,000, S2a 16,000, S2b 1,000; --quick /10), never the build parameter.
 Deterministic generator facts at n 131072 with the default seed (seeded-generator outputs, not measurements;
-DETERMINISTIC:
-test/EditorFeed.test.mjs gates the fill bands and the reweight-ops band, not these exact values): fill fractions
-d0 = 1 / d0 > 81 / d1 > d0 are S2 0.10068 / 0.04962 / 0.10043, S2a 0.09982 / 0.04993 / 0.09810, S2b 0.10024 / 0.05083 /
-0.09974; S2 reweight ops at n 1024 are 204,332 (the band R-BA17 / R-BA25 imply: [84,000, 324,000]).
+DETERMINISTIC: test/EditorFeed.test.mjs gates the fill bands and the reweight-ops band, not these exact values): fill
+fractions d0 = 1 / d0 > 81 / d1 > d0 are S2 0.10068 / 0.04962 / 0.10043, S2a 0.09982 / 0.04993 / 0.09810, S2b 0.10024
+/ 0.05083 / 0.09974; S2 reweight ops at n 1024 are 204,332 (the band R-BA17 / R-BA25 imply: [84,000, 324,000]).
 
 ### 15.4 S7 -- weighted pick, fixed n
 

@@ -197,7 +197,8 @@ R-BA8):
 The expected losses are hypotheses to be MEASURED and printed with their
 crossover n (or "none up to n = <max measured>"): static data (a prefix-sum array
 + binary search), resize-only (Fenwick, S7), the blocked array below its
-crossover (S1 / S2), point lookup by key (`Map`), tiny n (a plain array splice), split / join on a 2-element sequence (overhead dominates).
+crossover (S1 / S2), point lookup by key (`Map`), tiny n (a plain array splice), split / join on a 2-element
+sequence (overhead dominates).
 A report with no loss rows fails the honesty review, and a MEASURED QUIET results.json
 with zero loss rows is rejected by the generator.
 
@@ -232,13 +233,17 @@ number.
 - A/A twin control (BA-29): `BlockedArray.twin` (BlockedArray.js plus one comment line, separately compiled) runs
   beside `BlockedArray` in every pass. Twin vs BlockedArray other than TIE at any (scenario, n) makes every comparison
   of that run INCONCLUSIVE (results.json `comparison { inconclusive, twin }`; each loss row's reason then starts
-  INCONCLUSIVE).
-- Crossover (BA-30): read on the blend phase. The crossover vs a rival label is the smallest measured n from which
-  SumSequence wins at every larger measured n; a TIE or a rival win breaks the run; none -> 'none up to <largest n>'.
-  S1 = the larger of S1a / S1b; S2 = the S2 id (S2a / S2b are reported, not GO inputs); "vs BlockedArray" = the
-  larger of BlockedArray and BlockedArray.plain. A loss row exists per (scenario, rival label except twin) with a
-  rival win at >= 1 measured n; the S7 Fenwick row reads S7's blend against FenwickRebuild.suffix. The tooling never
-  prints GO / NO-GO (the verdict is the maintainer's, RESEARCH 14.4).
+  INCONCLUSIVE). A missing twin cell beside a BlockedArray cell also reads INCONCLUSIVE (verdict 'MISSING'). Every
+  phase the two labels share is checked, not only blend (Compare.mjs twinControl).
+- Crossover (BA-30): read on the blend phase (S2b, a one-phase scenario, on its only phase, bulk; Compare.mjs blendOf,
+  so its crossover and chunkCap pick read bulk, not blend). The crossover vs a rival label is the smallest measured n
+  from which SumSequence wins at every larger measured n; a TIE or a rival win breaks the run; none -> 'none up to
+  <largest n>'. S1 = the larger of S1a / S1b; S2 = the S2 id (S2a / S2b are reported, not GO inputs); "vs
+  BlockedArray" = the larger of BlockedArray and BlockedArray.plain. The maintainer combines these (Compare.mjs
+  combineS1 is the helper; no pipeline code calls it, and Report's crossover table prints one row per scenario and
+  rival). A loss row exists per (scenario, rival label except twin) with a rival win at >= 1 measured n; the S7
+  Fenwick row reads S7's blend against FenwickRebuild.suffix. The tooling never prints GO / NO-GO (the verdict is
+  the maintainer's, RESEARCH 14.4).
 - chunkCap sweep (BA-31): `--sweep chunkCap` runs the registered BlockedArray at every (Sid, n) over d x {1/4, 1/2, 1,
   2, 4}, d = defaultChunkCap(capacity) (max(16, ceil(sqrt(C))) rounded up to a multiple of 4, C the capacity the
   scenario builds at that n, computed cold in the parent). Each grid member is rounded up to a multiple of 4, clamped

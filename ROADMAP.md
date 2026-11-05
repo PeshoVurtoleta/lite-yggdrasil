@@ -24,6 +24,16 @@
 > NO-GO (section 5). SumMap settle input: RESEARCH.md 13
 > (PROPOSED) and RESEARCH.md 16 (PROPOSED: compare-form probe, Smi top, sorted-btree, S4-depth); rivals and GO /
 > NO-GO: RESEARCH.md 14; scenario mixes: RESEARCH.md 15 (RULED, R-BA15..R-BA27).**
+>
+> **UPDATE (2026-11-05; supersedes "Left: the chunkCap sweep, unroll A/B, loss rows, run of record ..." of the
+> 2026-10-31 line): g2b-3a landed; g2b-3b ran (the chunkCap sweep wrote benchmark/chunkcap.json, committed 6b70f54;
+> the run of record was INCONCLUSIVE on the twin A/A control and is archived, not committed, rulings R-BA39 /
+> R-BA40; the GO / NO-GO (BA-16) has no verdict yet). Next is the SumMap research burst, twin A/A noise first.
+> Hosted CI (burst 42): .github/workflows/ci.yml runs npm test + npm run test:types on every push / PR (node 22 /
+> 24 / 26 x ubuntu-latest + macos-latest, plus node 26.8.2 per OS: 8 legs), and .github/workflows/nightly.yml runs
+> the full npm run verify daily (node latest and 22 x both OSes: 4 legs). DETERMINISTIC tier only; Y-13 stands (no
+> timing threshold or statistical gate). Neither workflow has run on GitHub yet: the first push run and the first
+> nightly are pending (Y-CI-5: the first run is a census of rows that fail only off node 26.8.2).**
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -106,6 +116,11 @@ Each settled call becomes a `decisions/NNNN-*.md` ADR in the session that owns i
 | **Y-13** | S3 | Statistical host. | "none: statistical claims are REPORTED only" (sibling convention, as lite-loglogn). | **RULED 2026-10-25** (0003) |
 | **Y-14** | S3 | Day-1 scaffolding and `files[]`. | Mirror `LiteLogN/` (6 shipped files: Yggdrasil.js, .d.ts, llms.txt, README.md, CHANGELOG.md, LICENSE); test/, benchmark/, decisions/, demo/ repo-only. | S0 |
 | **Y-15** | **S1** | Arena ownership for split / join | ADR 0004 option (a): one internal shared arena, `SumSequence.arena(C, o, k)` views at setup, cross-arena split / append = RangeError | **RULED 2026-10-25** (0004) |
+| **Y-CI-1** | S3 | Hosted CI: verification tier. | "Deterministic only (Recommended)": Hosted CI runs the DETERMINISTIC tier only: npm test plus verify's untimed parts (types, allocation / GC count lanes, torture). RULED Y-13 "none: statistical claims are REPORTED only" stands; CI carries no timing threshold and no statistical gate. | **RULED 2026-11-05** (burst 42) |
+| **Y-CI-2** | S3 | Hosted CI: push / PR vs nightly jobs. | "Split (Recommended)": ci.yml (push / PR): npm test + npm run test:types. nightly.yml (cron + workflow_dispatch): the full npm run verify (adds test:lanes, torture, kernel-lane). A nightly failure in a count gate is a DETERMINISTIC-tier test bug to fix, never re-run for green. | **RULED 2026-11-05** (burst 42) |
+| **Y-CI-3** | S3 | Hosted CI: OS x Node matrix. | "LiteUtils matrix (Recommended)": ci.yml: node 22 / 24 / 26 x ubuntu-latest + macos-latest, plus one node 26.8.2 leg per OS (the version the measured comments and REPORTED numbers name); nightly.yml: node 'latest' and 22 (check-latest) x both OSes. No Windows. engines ">=18" stays as is but untested in CI: a FILLERS item asks whether to raise it. | **RULED 2026-11-05** (burst 42) |
+| **Y-CI-4** | S3 | Hosted CI: devDependency install. | "npm install, log versions (Recommended)": CI runs `npm install --no-audit --no-fund` against the declared ^ ranges (no lockfile, no npm cache) and a provenance step prints `npm ls --depth=0`, so every run records the devDependency versions it tested. | **RULED 2026-11-05** (burst 42) |
+| **Y-CI-5** | S3 | Hosted CI: rows failing only off node 26.8.2. | "Census, then rule per row (Recommended)": The first CI run is a census: each row that fails only off node 26.8.2 is logged in .handoff/evidence/b42-ci/ with leg, file:row and observed vs expected; nothing in test/ changes; each such row comes back to the maintainer as its own question (skip-with-reason below node N as in LiteUtils A1, recalibrate per version, or fix the engine). | **RULED 2026-11-05** (burst 42) |
 
 ---
 
@@ -123,6 +138,11 @@ AS BUILT (2026-10-27): the scripts are `test`, `test:types`, `test:lanes`, `tort
 tier, Y-13).
 AS BUILT (2026-10-31, HEAD fb09e6f): the scripts `bench` (node benchmark/Bench.mjs), `bench:report` (Report.mjs),
 `bench:readme` (Readme.mjs --check) and `kernel-lane` exist, and `verify` ends with `npm run kernel-lane`.
+AS BUILT (2026-11-05, burst 42; Y-CI-1..5): .github/workflows/ci.yml (push / PR: npm install --no-audit --no-fund,
+npm ls --depth=0 as deps provenance, npm test, npm run test:types; 8 legs) and .github/workflows/nightly.yml (cron +
+workflow_dispatch: the same steps with npm run verify; 4 legs). No lockfile, no npm cache, no Windows, no quiet lock,
+no bench script in CI; engines ">=18" is untested (floor leg node 22). The R-LU1 tools --self-test rows are a
+commented slot in both files.
 Ruled 2026-10-25 (R-SC): S0 ships `npm test`, `test:types`, `verify` only; `torture` / `test:perf` arrive with SumSequence and `bench` with Bench-ADOPT, so no script is ever green on nothing. (`test:lanes` and `torture` arrived with SumSequence; `bench` arrived with Bench-ADOPT, 7b4187b; `test:perf` has not.)
 
 ### 3.2 Oracle gate (DETERMINISTIC)

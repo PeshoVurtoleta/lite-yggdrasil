@@ -18,11 +18,12 @@ Contents
 11. Post-0.1.1 review notes (2026-10-28) -- Zed tests, sibling patterns, positioning claims, caching,
     external reviews #2 and #3 assessed, the maintainer's learning guides
 12. Tier 2 / Tier 3 detail and the blocked-array rival (maintainer notes, 2026-10-31)
-13. SumMap 0.2.0 settle brief (maintainer research, checked 2026-10-31; PROPOSED)
+13. SumMap 0.2.0 settle brief (maintainer research, checked 2026-10-31; PROPOSED; ruled in 17.2)
 14. Competent rivals and the pre-registered GO / NO-GO (maintainer research, 2026-10-31)
 15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; RULED R-BA15..R-BA18, 2026-11-01)
 16. SumMap settle evidence: compare-form probe, Smi top, sorted-btree, absent keys, R-7, S4-depth (maintainer
-    research, checked 2026-11-01; PROPOSED)
+    research, checked 2026-11-01; PROPOSED; superseded by 17)
+17. SumMap research findings and rulings (research bursts 43 + 45, 2026-11-05; RULED)
 
 ---
 
@@ -147,7 +148,7 @@ the foils below.
 | Facade        | Primary foil (fair, O(n))                         | Strong rival (fair, competent)           | Counter-foil (where WE should lose) |
 |---------------|---------------------------------------------------|------------------------------------------|-------------------------------------|
 | SumSequence   | `Array.splice` + prefix-sum rebuild               | blocked array (sqrt decomposition, below); Fenwick + rebuild on insert (LiteVirtual today) | Fenwick on a FIXED-length, resize-only workload (S7) |
-| SumMap        | sorted typed array + binary search + shift        | `sorted-btree` (npm), lite-logn Treap / Scapegoat (count seek only) | native `Map` for point get / set |
+| SumMap        | sorted typed array + binary search + shift        | lite-logn Treap (count seek only) and a tail-best sorted array (R-SM1; `sorted-btree` documented, not installed; Scapegoat not a rival) | native `Map` for point get / set |
 | IntervalMap   | linear scan of an interval array                  | `@flatten-js/interval-tree`, lite-logn IntervalTree once shipped | static sorted-by-start array for read-only data |
 | Yggdrasil pool| `Map` + k sorted arrays synced by hand            | k independent SumMaps + a `Map` id index | a single SumMap when only one order is needed |
 
@@ -238,7 +239,10 @@ A benchmark page with no loss rows is a red flag; the suite treats it as a faile
   a hot path.
 - I-8 **Height**: height <= spine-stack size = H(Lmax), Lmax = ceil(C / m) + K (ADR 0001 T-9 /
   T-10, ADR 0004 A-5).
-- I-9 **Finger**: positional only, per-view path stack, no epoch (0005 C-1..C-5).
+- I-9 **Finger**: SumSequence: positional only, per-view path stack, no epoch (0005 C-1..C-5). SumMap (R-SM4, 17.2):
+  the inclusive fence-key finger [_flo, _fhi] (bit pattern -1 = 2^32 - 1 on the rightmost leaf) for get / has /
+  getMeasure / set / setMeasure / delete, with the tail-delete shrink of 13.2; rank / select / sumBelow / keyAtSum
+  always descend from the root.
 
 ---
 
@@ -1008,10 +1012,11 @@ Gaps before it is a fair Bench-ADOPT rival:
 
 ## 13. SumMap 0.2.0 settle brief (maintainer research, checked 2026-10-31)
 
-Status: PROPOSED. Nothing in this section is ruled; the SumMap settle burst (ROADMAP section 5) turns each item into
-a maintainer ruling or rejects it. "Gate" below means a gate to be built, not one that exists. Checked against
-I-1..I-9 (section 5), B-17 / B-23 (section 6), 11.3 / 11.8, ADR 0005 C-1..C-6 / C-13 / C-25, Yggdrasil.js and
-lite-logn's Treap (LogN.js:1912).
+Status: PROPOSED. Nothing in this section is ruled; the SumMap settle burst (ROADMAP section 5) turns each item into a
+maintainer ruling or rejects it. Superseded in part by section 17: the 13.7 decisions are RULED R-SM1..R-SM9
+(2026-11-05, burst 43, quoted in 17.2); where 13 and 17.2 differ, 17.2 rules. "Gate" below means a gate to be built,
+not one that exists. Checked against I-1..I-9 (section 5), B-17 / B-23 (section 6), 11.3 / 11.8, ADR 0005 C-1..C-6 /
+C-13 / C-25, Yggdrasil.js and lite-logn's Treap (LogN.js:1912).
 
 ### 13.1 Keys: uint32 domain, int32 storage, unsigned order
 
@@ -1148,7 +1153,7 @@ The brief's Hyndman-Fan citation belongs only to the Tier 2 quantile helper (12.
 
 ### 13.7 Decisions for the settle burst
 
-An I-9 amendment (I-9 says "positional only"; SumMap's finger is keyed by [_flo, _fhi], 13.2); absent-key convention (13.3); per-op check order; the unsigned-compare form (measured); the big-key lane's b per op;
+An I-9 amendment (I-9 said "positional only" until R-SM4 amended it, 17.2; SumMap's finger is keyed by [_flo, _fhi], 13.2); absent-key convention (13.3); per-op check order; the unsigned-compare form (measured); the big-key lane's b per op;
 the sorted-btree cells; whether Scapegoat stays a rival.
 
 ## 14. Competent rivals and the pre-registered GO / NO-GO (maintainer research, 2026-10-31)
@@ -1209,6 +1214,8 @@ crossover is <= 32k and SumSequence wins at 100k, AND the S7 loss row shows the 
 reweighting. PAUSE and evaluate R-7 (B+ fanout) if BlockedArray beats SumSequence at n >= 100k on S1 or S2. Any
 other outcome (for example an S1 crossover between 64k and 100k) has no automatic verdict: the maintainer decides
 from the table. "Wins" = the median of K interleaved runs on a QUIET host; a PRELIMINARY log decides nothing.
+Note (2026-11-05, burst 45, R-BA45, quoted in RESEARCH 17.6): R-BA41 amends 'Wins' -- a win in this reading is the
+BA-29 verdict (min-of-K, 0.95 band) on a QUIET host; amended before any CONCLUSIVE run of record was read.
 
 Pre-registered additions (maintainer, AskUserQuestion; option text quoted verbatim from the maintainer-local,
 gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"; recorded 2026-11-04, before any timed run of g2b-3b):
@@ -1396,15 +1403,16 @@ mixes above stay labelled assumptions in the report header.
 
 ---
 
-## 16. SumMap settle evidence (maintainer research, checked 2026-11-01; PROPOSED)
+## 16. SumMap settle evidence (maintainer research, checked 2026-11-01; PROPOSED; superseded by 17)
 
 Covers: the compare-form probe, the Smi top, sorted-btree 2.1.0, absent-key precedent, R-7 at average occupancy,
 the S4-depth mix and draft settle options.
 
 Status: PROPOSED input for the SumMap 0.2.0 settle burst. Nothing here is ruled; it corrects and extends 13.1, 13.3,
 13.4, 13.7 and 12.2 R-7 without replacing them. Draft proposals R-SM1..R-SM5 (16.7) are option text for that burst's
-questions, not rulings. "The earlier draft" below means the maintainer's research as pasted in chat on 2026-11-01
-(its probe script and tables; not kept in the repo).
+questions, not rulings. Superseded by section 17: R-SM1..R-SM9 RULED 2026-11-05 (burst 43, quoted in 17.2). "The
+earlier draft" below means the maintainer's research as pasted in chat on 2026-11-01 (its probe script and tables;
+not kept in the repo).
 
 ### 16.1 Unsigned compare forms: the probe (13.1, 13.7)
 
@@ -1548,3 +1556,217 @@ hand-written in benchmark/rivals/) are the live rivals, gated in verify under R-
   [_flo, _fhi] (bit pattern -1 = 2^32 - 1 on the rightmost leaf) for the six key-point ops, with the tail-delete
   shrink of 13.2.
 - R-SM5 S4-depth: S4a and S4b per 16.6, with a decision on the bid-side walk direction.
+
+---
+
+## 17. SumMap research findings and rulings (research bursts 43 + 45, 2026-11-05; RULED)
+
+Covers: the SumMap 0.2.0 surface and sequencing rulings (R-SM1..R-SM9), the twin A/A noise probes (P1a, P1b), the
+chunkCap grid probe (P2), what SumMap changes about the S2 PAUSE reading, and the bench rulings R-BA41..R-BA44.
+Evidence tags: DETERMINISTIC = a count or a fact of the code; REPORTED = a timing from a QUIET run with provenance;
+nominal = arithmetic, not measured.
+
+### 17.1 Status and record
+
+- The SumMap surface (Part B of the proposal) and its sequencing are RULED R-SM1..R-SM9 (maintainer, AskUserQuestion,
+  burst 43, 2026-11-05; 17.2). The twin A/A and chunkCap grid questions are RULED R-BA41..R-BA44 (burst 45,
+  2026-11-05; 17.6).
+- The record is .handoff/PROPOSAL-summap.md (not shipped) and this section. Section 16's draft options R-SM1..R-SM5
+  (16.7) are superseded by 17.2.
+- Review status (honest): the burst 43 claims were reviewed (r1 REJECTED, r2 REJECTED, r3 APPROVED). The burst 45
+  claims went r1 REJECTED (7 LITERAL + 1 DESIGN, fixed) -> r2 REJECTED (5 LITERAL); the reviewer's r2 literal
+  replacements were applied verbatim (PROPOSAL sha256/8 c43cd7a1) and no third round was allowed in the burst, so the
+  r2 fix diff is UNREVIEWED until a fresh reviewer reads it in the next burst. Maintainer Q-RV1 = "Ask them now
+  (Recommended)": "The four Part A Q-ids (Q-N1, Q-N2, Q-N3, Q-G1) are asked now on the text carrying the reviewer's r2
+  replacements (PROPOSAL sha256/8 c43cd7a1); NEXT.md records that the r2 fix diff is unreviewed and a fresh reviewer
+  reads it in the next burst; a finding there that changes a ruled option's meaning re-asks that Q-id."
+
+### 17.2 The surface rulings R-SM1..R-SM9 (burst 43; option text quoted verbatim, all "(Recommended)")
+
+- R-SM3 (Q-S1 absent-key) = "-1 / NaN / false (Recommended)": "get / delete (entity) and successor / predecessor /
+  minKey / maxKey / keyAtSum (key) return -1 for "none"; getMeasure returns NaN (key and dim checked first); has /
+  setMeasure return false; no throw."
+- R-SM2 (Q-S2 keys) = "Int32Array + xor-bias (Recommended)": "Keys stored as k | 0, every compare `(a ^ -2147483648) <
+  (b ^ -2147483648)`, `>>> 0` only at a public key return; a QUIET X / S / U run of the 16.1 probe may revisit the
+  form before the compare rung lands, never after."
+- R-SM6 (Q-S3 set) = "this (Recommended)": "set returns this (Map.set style); whether k was new is length's change."
+- R-SM4 (Q-S4 finger) = "Fence-key finger (Recommended)": "I-9 is amended so SumSequence keeps its positional finger
+  and SumMap uses the inclusive fence-key finger [_flo, _fhi] (bit pattern -1 = 2^32 - 1 on the rightmost leaf) for
+  get / has / getMeasure / set / setMeasure / delete, with the tail-delete shrink of RESEARCH 13.2; rank / select /
+  sumBelow / keyAtSum always descend from the root; fingerHits / fingerMisses count it; the standing gate finger on ==
+  finger off covers SumMap."
+- R-SM1 (Q-S5 rivals) = "Treap + sorted array (Recommended)": "\"Treap + tail-best sorted array, Map timing-only\":
+  lite-logn Treap and a tail-best sorted array (lite-logn SortedArray, else hand-written in benchmark/rivals/) are the
+  live rivals, gated in verify under BA-7 / BA-7a; each must read 0 B/op on its lanes before it is wired in, and one
+  that allocates is replaced by a hand-written form in benchmark/rivals/ or left out with its reason printed; Map
+  stays the counter-foil for get / set / delete as a timing-only row outside kernel-lane and the Rivals child (exempts
+  Map from BA-7 / BA-7a: no B/op lane, its rows labelled 'not allocation-gated'; it allocates by design); sorted-btree
+  is documented (RESEARCH 16.3), not installed; lite-logn Scapegoat is not a rival (Treap covers the balanced-BST
+  class); lite-logn arrives as a devDependency with SumMap (R-BA4)."
+- R-SM7 (Q-S6 big-key lane) = "Straddle Smi top (Recommended)": "\"Straddle the Smi top, b per op\": the big-key B/op
+  lane draws keys straddling 2^31 (2^31 - 1, 2^31, 2^31 + 1, 2^32 - 1 and a band in [2^31, 2^32)), reads the build
+  flag (pointer compression -> Smi top 2^30, else 2^31) to set its expectation, and is bounded <= 16 x b + 1 B/op
+  where b = key returns + measure returns of that op (C-13 form); the lane must also read >= 1 B/op (above R-G2's 0
+  B/op threshold; a floor: a lane that never returns a key at or above the Smi top fails, DB-8); its control is a lane
+  whose keys stay below the build's Smi top and must read 0 B/op."
+- R-SM8 (Q-S7 check order) = "Argument order (Recommended)": "\"Argument order, then state\": every op checks its
+  arguments in argument order (set: 'key', 'entity', 'measure' / 'extra'; getMeasure / setMeasure: 'key', 'dim', then
+  the value; sumBelow: 'dim', then 'key'), then state (capacity / headroom / pool); join: 'operand' before 'order',
+  then headroom / pool; getMeasure checks key and dim BEFORE presence (absent -> NaN only for valid arguments); the
+  planner states it per op as an ASSERTION row."
+- R-SM5 (Q-S8 prev) = "No prev() in 0.2.0 (Recommended)": "The cursor has next() only; the bid side walks
+  deepest-first with seekIndex(max(0, length - w)) + next(); S4a and S4b per RESEARCH 16.6 with that walk stated;
+  prev() is a later rung if S4 shows the need."
+- R-SM9 (Q-P1 sequencing) = "Surface now, engine waits (Recommended)": "\"Rule the surface now, engine waits for
+  BA-16\": this PROPOSAL's Part B is ruled now; the SumMap engine planner waits for the GO / NO-GO decision on a
+  CONCLUSIVE run of record; if that run fires PAUSE, an R-7 research burst (F = 4 and F = 8 first, RESEARCH 16.5) runs
+  before any SumMap engine work."
+- R-SM10 (Q-DB5, burst 45, 2026-11-05) = "lite-logn Treap + model (Recommended)": "DB-5's keyed-order references for
+  SumMap are the naive sorted-array model (3.2) plus lite-logn Treap (the R-SM1 live rival, a devDependency with
+  SumMap per R-BA4); sorted-btree stays documented, not installed (R-SM1 unchanged); ROADMAP DB-5's text says so."
+
+### 17.3 Twin A/A noise (P1a, P1b)
+
+Question: why does BlockedArray.twin (BlockedArray.js + one comment line) read non-TIE against BlockedArray at 28 of
+204 (scenario, n, phase) cells of the g2b-3b run of record (5 on the crossover phase)?
+
+P1a (UNTIMED analysis of the archived INCONCLUSIVE run; every number REPORTED-from-an-INCONCLUSIVE-run; the drift
+sentinel read 14% and load15 reached 12.0): the 0.95 band held at 176 of 204 cells; 28 of 204 cells read non-TIE
+(21 of the 28 on the short phases: edit, and reweight at 1,000 events; 3 of 72 on the long phases walk / blend). Log
+.handoff/research/summap/p1a.out.
+
+P1b (TIMED, QUIET, ONE run; REPORTED): 2026-11-05 22:45:52Z -> 22:47:17Z, 84.7 s; `quiet-lock run --strict`, host
+QUIET at start: load1 1.94 / load5 11.23 / load15 15.97 (the load5 / load15 tail of an earlier LiteSignal test run,
+finished), load1 1.71 at end; no other busy node; node v26.8.2, Apple M4 Pro 12 cores; HEAD b76f3cc, porcelain 0,
+Yggdrasil.js e0618227, BlockedArray.js 1066ac31; 273 / 273 cells, 0 errors; K = 7. Logs
+.handoff/research/summap/p1b.jsonl, p1b.read.txt, p1b-rules.out, p1c.out. Every timing is REPORTED (one QUIET run;
+load5 / load15 still elevated at start).
+
+Readings (a pair-cell = one (Sid@n, phase) x one A/A pair; 51 cells x 3 pairs = 153, 39 on the crossover phase):
+
+- (b) dominates, (c) not seen: BA#2/BA#1 (the SAME file module, a second process) reads non-TIE under BA-29 at 8 of
+  51 cells (K = 7), twin/BA#1 at 7, twin/BA#2 at 5. The twin is no noisier than a second copy of BlockedArray itself;
+  no module-origin effect is separable at this size.
+- The mechanism is child-level bimodality, not a drift: S2a@1024 blend (16,000 events per sample) children sit near
+  39 or near 55 ns/event (BA#1 per pass: 56.3 57.9 52.7 57.2 39.4 38.6 40.4; BA#2 all 38.3-40.5; twin 37.6 53.5 41.0
+  38.4 40.7 39.4 56.9). A median of K child medians flips when >= ceil(K/2) children land in the slow mode
+  (BA#2/BA#1 0.739 at K = 7); a wider band cannot absorb a ~40% mode gap.
+- walk / seek / bulk and every blend except S2a@1024 read TIE for all 3 pairs, abs(ratio - 1) p90 <= 0.032. The
+  other phases do not: at K = 7, reweight (1,000 events, S1 / S7b) and edit (600 events) give 13 of the 20 BA-29
+  non-TIE pair-cells, S2 reweight (15,000 events) 5 (twin/BA#1 S2@100000 0.867), S2a@1024 blend 2; some at 0.90 too
+  (S1a@4096 edit twin/BA#2 1.46, S7b@100000 reweight BA#2/BA#1 0.84). Edit at 2,000 events gives 0 at K = 7.
+- K: 7 passes do not help median-of-K (non-TIE 18 / 153 at K = 5, 20 / 153 at K = 7).
+- A twin-vs-BA#1 run-level trip (BA-29 as ruled: any twin non-TIE -> the whole run INCONCLUSIVE) fires on this QUIET
+  run: 7 cells every phase, 1 (S2a@1024 blend) on the crossover phase. BA-29 as ruled made this QUIET run
+  INCONCLUSIVE (one run).
+
+Rules scored on the same data (false positives = non-TIE A/A pair-cells; "real changed" = SumSequence-vs-rival
+crossover-phase verdicts that differ from BA-29 on the archived g2b-3b run (K = 5, noisy night, P1c) -- the cost):
+
+| Rule | P1b K=7 every / xo | P1b K=5 every / xo | twin trip (K=7, xo) | archive twin FP every / xo | archive changed |
+|---|---|---|---|---|---|
+| R0 BA-29: 0.95, median-of-K | 20 / 2 | 18 / 2 | INCONCLUSIVE | 28 / 5 | 0 / 228 (reference) |
+| R1 0.90, median-of-K | 9 / 2 | 6 / 2 | INCONCLUSIVE | 7 / 0 | 3 |
+| R2 0.95 at >= 10,000 events, else 0.90 | 13 / 2 | 8 / 2 | INCONCLUSIVE | n/a | n/a |
+| R3 0.95 + every per-pass ratio on the winner side | 0 / 0 | 3 / 1 | conclusive | 1 / 0 | 14 |
+| R4 0.95 on the median of paired per-pass ratios | 15 / 2 | 13 / 2 | INCONCLUSIVE | 19 / 4 | 2 |
+| R5 0.95, min-of-K (min of the K child medians) | 13 / 0 | 12 / 0 | conclusive | 27 / 1 | 5 |
+| R6 0.90, min-of-K | 1 / 0 | 2 / 0 | conclusive | 5 / 1 | 5 |
+
+(xo = crossover phase; twin trip = twin vs BA#1, the run-of-record pairing.)
+
+- Reasoning, not measured: min-of-K reads the fast mode (a child can be slowed by its JIT / GC / host luck, not sped
+  up below its true cost). The data fit it on the crossover phase only: every phase, R5 still reads 13 / 153 (QUIET,
+  K = 7) and 27 / 204 on the archive (BA-29 28). On the crossover phase R5 has 0 A/A false positives at K = 5 and at
+  K = 7 on the QUIET run, and 1 on the noisy archive night. Its cost on the archive: 5 of 228 real verdicts change
+  (FenwickRebuild.suffix S1b@2048 TIE -> rival, BlockedArray.plain S2@100000 TIE -> rival, BlockedArray S2@131072 TIE
+  -> SumSequence, BlockedArray.plain S2b@8192 SumSequence -> TIE, BlockedArray S7b@10000 rival -> TIE).
+- R6 (0.90, min-of-K) has the fewest A/A false positives of every rule except R3 (QUIET K = 7: R3 0, R6 1 / 153;
+  archive: R3 1, R6 5 / 204) and its twin check does not trip even with every phase in scope (0 cells at K = 5 and
+  K = 7). Its cost is resolution: a 0.90 band cannot call a 5-10% win. Its 5 archive changes include BlockedArray
+  S2@100000 rival -> TIE, the 17.5 PAUSE cell (P2, one run, K = 3: BlockedArray / SumSequence 0.911 median-of-K,
+  0.948 min-of-K at the 4 x d pick: a win under 0.95 by 0.2%, a TIE under 0.90); the others are BlockedArray.plain
+  S2@131072 SumSequence -> TIE, BlockedArray.plain S2a@65536 rival -> TIE, BlockedArray.plain S2b@8192 SumSequence ->
+  TIE, BlockedArray S7b@10000 rival -> TIE.
+- R1 (0.90, median-of-K) is worse than R6 on every QUIET P1b column (crossover 2 / 39, trips this QUIET run) and is
+  not offered; on the archive crossover twin it reads 0 vs R6's 1.
+- R3 (paired sign) is 0 / 0 only at K = 7 and turns 14 archive verdicts to TIE (it needs all K passes to agree, which
+  is K = 7's cost plus a stricter win).
+
+### 17.4 chunkCap grid (P2)
+
+Fact (DETERMINISTIC, benchmark/chunkcap.json 921c2b86): 22 of 57 picks are 'edge', all at the TOP of the grid (4 x d):
+every S2 and S2a n (1024..131072) and S2b at n <= 8192. The sweep stored only the argmin per cell.
+
+P2 (TIMED, QUIET, ONE run, K = 3; REPORTED): p1-drive.mjs --part grid --passes 3; S2 / S2a at n 8192 / 32768 / 100000,
+S2b at 1024 / 8192, BlockedArray at chunkCap {2, 4, 8, 16, 32, 64} x d (BA-31 rounding, clamp [8, 65536]) beside
+SumSequence. Burst 45, 22:47:17Z -> 22:48:07Z, 49.6 s; `run --strict`, QUIET at start: load1 1.71 / load15 14.59;
+same build provenance as P1b (node v26.8.2, HEAD b76f3cc, Yggdrasil.js e0618227, BlockedArray.js 1066ac31); 168 / 168
+cells, 0 errors; p2.jsonl, p2.read.txt. Crossover phase median-of-K ns/event, 4 x d = the committed 'edge' pick,
+x = argmin:
+
+| Cell | 2d | 4d (pick) | 8d | 16d | 32d | 64d | argmin / 4d | best / SumSequence (4d / SS) |
+|---|---|---|---|---|---|---|---|---|
+| S2@8192 blend | 402.9 | 308.2 x | 312.5 | 432.7 | 677.7 | 1090.5 | 4d | 0.407 (0.407) |
+| S2@32768 blend | 785.8 | 553.4 | 544.4 x | 760.7 | 1325.6 | 2393.8 | 8d, 0.984 | 0.578 (0.587) |
+| S2@100000 blend | 1339.3 | 941.3 | 895.3 x | 1265.1 | 2199.3 | 4148.8 | 8d, 0.951 | 0.867 (0.911) |
+| S2a@8192 blend | 62.5 | 60.2 x | 70.5 | 99.9 | 163.9 | 299.6 | 4d | 0.352 (0.352) |
+| S2a@32768 blend | 100.2 | 89.6 x | 110.4 | 174.2 | 798.2 | 1532.2 | 4d | 0.459 (0.459) |
+| S2a@100000 blend | 152.5 | 140.9 x | 182.8 | 293.8 | 560.9 | 1075.9 | 4d | 0.636 (0.636) |
+| S2b@1024 bulk | 712.4 | 690.7 x | 796.5 | 1000.5 | 1420.3 | 4904.0 | 4d | 0.567 (0.567) |
+| S2b@8192 bulk | 1727.7 | 1311.0 x | 2690.3 | 5695.1 | 10460.0 | 18031.8 | 4d | 0.996 (0.996) |
+
+Readings: the curve turns at 4-8 x d. 6 of the 8 measured edge cells keep 4 x d as argmin; 2 move to 8 x d, by 1.6%
+(S2@32768, inside the A/A spread) and 4.9% (S2@100000), both TIE under the 0.95 band; 16 x d is 1.4-4.3 x slower than
+the argmin at every cell (32 x d 2.1-8.9 x, 64 x d 3.5-17.1 x), never an argmin. The S2@100000 reading (BlockedArray
+below SumSequence) holds at either pick (median-of-K 0.911 at 4d, 0.867 at 8d; min-of-K 0.948, 0.906), so the PAUSE
+question (17.5) does not turn on the grid. 14 of the 22 edge cells were not measured (S2 / S2a at 1024 / 2048 / 4096 /
+16384 / 65536 / 131072, S2b at 2048 / 4096).
+
+### 17.5 What SumMap changes about the S2 PAUSE reading
+
+The g2b-3b REPORTED readings (INCONCLUSIVE, R-BA40: decide nothing) have BlockedArray beating SumSequence on the S2
+blend at every n <= 100,000 (0.31 at 1024 .. 0.895 at 100,000; TIE 1.05 at 131,072) and on S2a at every n. If a
+CONCLUSIVE run confirms S2@100000, R-BA12's PAUSE branch fires ("BlockedArray beats SumSequence at n >= 100k on S1 or
+S2" -> evaluate R-7). SumMap changes nothing about it directly:
+
+- S2 / S2a / S2b are POSITIONAL workloads (an editor line index). SumMap is a KEY-addressed map (uint32 keys, unsigned
+  order); no S2 op becomes a SumMap op, and SumMap does not enter S2's table.
+- SumMap reuses SumSequence's trunk (binary BB<3,2> over leaf runs, Y-01; I-1 weight = leaf count). R-7 (B+ fanout
+  F = 4 / 8 / 16 internal nodes) is a TRUNK change: if the PAUSE fires and R-7 wins, both members change. Building
+  SumMap's keyed routing (I-6 maxKey caches, the fence-key finger) on the binary trunk and then moving the trunk would
+  redo the routing and finger rungs (16.5: at F = 8 the pull adds are ~1.9 x, nominal).
+- The SumMap public surface does not depend on the trunk (every contract holds for a binary or a fanout-F trunk,
+  except what the binary-trunk counters (equalizes, rotSingle, rotDouble) mean), so the surface is ruled now; the
+  engine planner waits for BA-16 (R-SM9).
+
+### 17.6 Bench rulings R-BA41..R-BA44 (burst 45; option text quoted verbatim, all "(Recommended)")
+
+- R-BA41 (Q-N1) = "Min-of-K, 0.95 band (Recommended)": "BA-29 reads: a win = the label's min-of-K (the minimum of its
+  K child medians) below 0.95 x the other label's min-of-K, else TIE; the stored and printed cell value stays the
+  median-of-K (BA-28) and the min-of-K is printed beside it; every BA-29 verdict (the BA-30 crossover and loss rows,
+  the unrolled vs plain A/B rows and the twin A/A check) uses this rule; the BA-31 sweep pick is unchanged (lowest
+  median-of-K). Evidence: QUIET P1b (one run) crossover-phase A/A false positives 0 / 39 at K = 5 and K = 7, every
+  phase 12 / 153 (K = 5) and 13 / 153 (K = 7); the archived g2b-3b night keeps 1 crossover-phase twin non-TIE (still
+  INCONCLUSIVE); 5 of 228 archive verdicts change (3 TIE -> win, 2 win -> TIE)."
+- R-BA42 (Q-N2) = "Crossover phase only (Recommended)": "The twin A/A check that sets INCONCLUSIVE reads only the
+  twin's crossover phase (blend; S2b bulk), the phase BA-30 reads; the twin's other phases are printed as a noise row,
+  never a gate. Evidence: QUIET P1b (one run, K = 7), 18 of the 20 BA-29 non-TIE pair-cells are non-crossover phases
+  (13 reweight / edit of 600-1,000 events, 5 S2 reweight of 15,000 events)."
+- R-BA43 (Q-N3) = "K = 5 kept (Recommended)": "BA-28's K = 5 stays for the run of record and the sweep (unless Q-N1 is
+  ruled option 3). Evidence: QUIET P1b (one run), K = 7 does not lower the false positives under median-of-K (18 -> 20
+  / 153) or min-of-K (crossover 0 -> 0 / 39); it does under paired sign (3 -> 0 / 153)."
+- R-BA44 (Q-G1) = "Add 8 x d to every grid (Recommended)": "BA-31 reads: the sweep grid = d x {1/4, 1/2, 1, 2, 4, 8}
+  per (scenario, n), same rounding, clamp and dedupe; an argmin at the grid's first or last chunkCap prints 'edge';
+  the sweep is re-run QUIET and re-publishes chunkcap.json before the next run of record. Evidence: P2 (one run, K =
+  3), 2 of the 8 measured edge cells have their argmin at 8 x d, by 1.6% and 4.9% (both TIE under the 0.95 band); 6
+  keep 4 x d; 16 x d and above never won (1.4-17.1 x slower); 14 of the 22 edge cells were not measured; the sweep
+  gains one grid point per (scenario, n) (~+20% sweep time, nominal)."
+- R-BA45 (Q-BA16a, burst 45, 2026-11-05) = "Yes, GO reads min-of-K (Recommended)": "R-BA41 amends R-BA12's 'Wins': a
+  win in the pre-registered GO / NO-GO reading (BA-16) is the BA-29 verdict (min-of-K, 0.95 band, R-BA41) on a QUIET
+  host; a PRELIMINARY log still decides nothing; the R-BA12 quotes stay verbatim, and a dated note after each
+  (RESEARCH 14.4, ROADMAP section 5) and a BA-16 CURRENT note state the amendment, made before any CONCLUSIVE run of
+  record was read."
+
+Next: a Bench tooling code unit (BA-29 min-of-K beside median-of-K + crossover-only twin check; BA-31 grid + 8 x d),
+then a QUIET re-sweep, then the run of record for BA-16; the SumMap engine planner waits for that decision (R-SM9).

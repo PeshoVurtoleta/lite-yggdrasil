@@ -37,6 +37,18 @@
 > nightly 'latest' (a node 27 alpha) red; macOS node 24 (push) and macOS node 22 (nightly) cancelled before a runner
 > (Y-CI-9, PENDING); verify's tails ran on no nightly leg. Burst 44 answers the red rows with Y-CI-6a / Y-CI-7a /
 > Y-CI-8 (expected green, unobserved: the next runs are pending).**
+>
+> **UPDATE (2026-11-05, burst 45; supersedes the older 'Next' sentences and 'Y-CI-9, PENDING' / 'expected green,
+> unobserved' of the earlier 2026-11-05 lines): census check 3 and the SumMap research continuation. Push run
+> 42101258088 of b76f3cc: 8 / 8 legs green (the node 22 legs print the Y-CI-6a REPORTED meter lines; ubuntu 26.13.0
+> green; macOS node 24 ran). Dispatched nightly 42117882541: the node 26 legs are green with verify's tails observed
+> (torture alloc gc major 0 (engine windows; whole-window major 1, REPORTED), retention ok, jit 5/5, kernel-lane 63
+> lanes worst 0.000 B/op); the node 22 legs are red on the torture jit nil-guard gate (C-5, Y-CI-10: probe first).
+> Rows C-1..C-4 are closed by observation. SumMap research continuation: the QUIET P1b / P2 probes ran; R-BA41..R-BA44
+> are ruled (BA-29 min-of-K 0.95, the twin check on the crossover phase only, K = 5 kept, sweep grid + 8 x d); R-BA45
+> (GO reads the BA-29 min-of-K verdict) and R-SM10 (DB-5 references) are ruled; R-SM1..R-SM9 (burst 43) are in the
+> table below and in RESEARCH.md 17. Next: a Bench tooling code unit for BA-29 / BA-31, a QUIET re-sweep, the run of
+> record (BA-16); the SumMap engine planner waits for BA-16 (R-SM9).**
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -130,6 +142,17 @@ Each settled call becomes a `decisions/NNNN-*.md` ADR in the session that owns i
 | **Y-CI-7a** | S3 | Hosted CI: EditorFeed A5 child split (Q-CI-2a). | "One variant per child (Recommended)": Y-CI-7 reads: the A5 lanes run in one child per BlockedArray variant (BlockedArray + the non-BlockedArray labels in one child, BlockedArray.plain alone, BlockedArray.twin alone), so no alloc child compiles more than 1 BlockedArray variant; every lane, control and maxMajor 0 kept on every version; the same rule is applied to the other 3 alloc children of Y-CI-6 only if a census shows a major GC there. | **RULED 2026-11-05** (burst 43) |
 | **Y-CI-8** | S3 | Hosted CI: nightly node spec (Q-CI-3). | "Pin newest stable major (Recommended)": The nightly 'latest' legs become node 26 (setup-node resolves the newest 26.x release), bumped by hand to 27 once 27 ships a stable release; no prerelease node in CI; workflow-only change + review (validate-workflows.mjs updated). | **RULED 2026-11-05** (burst 43) |
 | **Y-CI-9** | S3 | Hosted CI: legs cancelled before a runner (Q-CI-4). | "Wait for next runs (Recommended)": No re-run now; the next push run and the 04:17Z cron show those legs; the census records them PENDING (runner, not code). | **RULED 2026-11-05** (burst 43; the cancelled legs are PENDING on runners, not code) |
+| **Y-CI-10** | S3 | Hosted CI: node 22 nightly jit nil-guard (Q-CI-11, census row C-5). | "Probe the reason first (Recommended)": "C-5 stays red, nothing changes now; a later burst runs `node test/torture-jit.mjs` (it prints the failing rule R1..R4 and the signature per row) on a node 22.23.4 binary obtained with the maintainer's approval at that time (download or another package's copy, asked then), and the fix is asked as its own Q-id with that reason in its option text. This burst continues with the SumMap research (b)." | **RULED 2026-11-05** (burst 45; C-5 stays red until the probe + its own Q-id) |
+| **R-SM1** | S2 | SumMap rivals (Q-S5). | "Treap + sorted array (Recommended)": "\"Treap + tail-best sorted array, Map timing-only\": lite-logn Treap and a tail-best sorted array (lite-logn SortedArray, else hand-written in benchmark/rivals/) are the live rivals, gated in verify under BA-7 / BA-7a; each must read 0 B/op on its lanes before it is wired in, and one that allocates is replaced by a hand-written form in benchmark/rivals/ or left out with its reason printed; Map stays the counter-foil for get / set / delete as a timing-only row outside kernel-lane and the Rivals child (exempts Map from BA-7 / BA-7a: no B/op lane, its rows labelled 'not allocation-gated'; it allocates by design); sorted-btree is documented (RESEARCH 16.3), not installed; lite-logn Scapegoat is not a rival (Treap covers the balanced-BST class); lite-logn arrives as a devDependency with SumMap (R-BA4)." | **RULED 2026-11-05** (burst 43) |
+| **R-SM2** | S2 | SumMap key storage and compare form (Q-S2). | "Int32Array + xor-bias (Recommended)": "Keys stored as k \| 0, every compare `(a ^ -2147483648) < (b ^ -2147483648)`, `>>> 0` only at a public key return; a QUIET X / S / U run of the 16.1 probe may revisit the form before the compare rung lands, never after." | **RULED 2026-11-05** (burst 43) |
+| **R-SM3** | S2 | SumMap absent-key results (Q-S1). | "-1 / NaN / false (Recommended)": "get / delete (entity) and successor / predecessor / minKey / maxKey / keyAtSum (key) return -1 for "none"; getMeasure returns NaN (key and dim checked first); has / setMeasure return false; no throw." | **RULED 2026-11-05** (burst 43) |
+| **R-SM4** | S1 | SumMap finger; amends invariant I-9 (Q-S4). | "Fence-key finger (Recommended)": "I-9 is amended so SumSequence keeps its positional finger and SumMap uses the inclusive fence-key finger [_flo, _fhi] (bit pattern -1 = 2^32 - 1 on the rightmost leaf) for get / has / getMeasure / set / setMeasure / delete, with the tail-delete shrink of RESEARCH 13.2; rank / select / sumBelow / keyAtSum always descend from the root; fingerHits / fingerMisses count it; the standing gate finger on == finger off covers SumMap." | **RULED 2026-11-05** (burst 43) |
+| **R-SM5** | S2 | SumMap cursor prev() (Q-S8). | "No prev() in 0.2.0 (Recommended)": "The cursor has next() only; the bid side walks deepest-first with seekIndex(max(0, length - w)) + next(); S4a and S4b per RESEARCH 16.6 with that walk stated; prev() is a later rung if S4 shows the need." | **RULED 2026-11-05** (burst 43) |
+| **R-SM6** | S2 | SumMap set return value (Q-S3). | "this (Recommended)": "set returns this (Map.set style); whether k was new is length's change." | **RULED 2026-11-05** (burst 43) |
+| **R-SM7** | S2 | SumMap big-key B/op lane (Q-S6). | "Straddle Smi top (Recommended)": "\"Straddle the Smi top, b per op\": the big-key B/op lane draws keys straddling 2^31 (2^31 - 1, 2^31, 2^31 + 1, 2^32 - 1 and a band in [2^31, 2^32)), reads the build flag (pointer compression -> Smi top 2^30, else 2^31) to set its expectation, and is bounded <= 16 x b + 1 B/op where b = key returns + measure returns of that op (C-13 form); the lane must also read >= 1 B/op (above R-G2's 0 B/op threshold; a floor: a lane that never returns a key at or above the Smi top fails, DB-8); its control is a lane whose keys stay below the build's Smi top and must read 0 B/op." | **RULED 2026-11-05** (burst 43) |
+| **R-SM8** | S2 | SumMap argument check order (Q-S7). | "Argument order (Recommended)": "\"Argument order, then state\": every op checks its arguments in argument order (set: 'key', 'entity', 'measure' / 'extra'; getMeasure / setMeasure: 'key', 'dim', then the value; sumBelow: 'dim', then 'key'), then state (capacity / headroom / pool); join: 'operand' before 'order', then headroom / pool; getMeasure checks key and dim BEFORE presence (absent -> NaN only for valid arguments); the planner states it per op as an ASSERTION row." | **RULED 2026-11-05** (burst 43) |
+| **R-SM9** | S1 | SumMap sequencing under the PAUSE risk: the engine planner waits for BA-16 (Q-P1). | "Surface now, engine waits (Recommended)": "\"Rule the surface now, engine waits for BA-16\": this PROPOSAL's Part B is ruled now; the SumMap engine planner waits for the GO / NO-GO decision on a CONCLUSIVE run of record; if that run fires PAUSE, an R-7 research burst (F = 4 and F = 8 first, RESEARCH 16.5) runs before any SumMap engine work." | **RULED 2026-11-05** (burst 43) |
+| **R-SM10** | S2 | DB-5 keyed-order references for SumMap (Q-DB5). | "lite-logn Treap + model (Recommended)": "DB-5's keyed-order references for SumMap are the naive sorted-array model (3.2) plus lite-logn Treap (the R-SM1 live rival, a devDependency with SumMap per R-BA4); sorted-btree stays documented, not installed (R-SM1 unchanged); ROADMAP DB-5's text says so." | **RULED 2026-11-05** (burst 45) |
 
 ---
 
@@ -168,7 +191,7 @@ equalize, rotation single / double, join, splitAt) asserted to fire > 0 times pe
 ### 3.3 Invariant walker (DETERMINISTIC)
 Runs after EVERY op in the fuzz and the exhaustive small-scope runs (section 4 DB-2, DB-3): I-1
 balance at every node, I-2 summaries recompute exactly, I-3 totals bound, I-5 leaf occupancy, I-6
-fences, I-7 id signs, I-8 height <= spine size, I-9 finger (0005 C-28).
+fences, I-7 id signs, I-8 height <= spine size, I-9 finger (0005 C-28; SumMap's fence-key finger per R-SM4).
 
 ### 3.4 Count gates (DETERMINISTIC) -- the splice witness
 touches / pulls / moves per op against exact formulas from the spec (RESEARCH section 3); finger
@@ -212,9 +235,11 @@ What makes it public and honest:
   (benchmark/Bench.mjs,
   Compare.mjs, Report.mjs; benchmark/METHODOLOGY.md "Sweep, A/B, crossover").
 - RAN (g2b-3b, 2026-11-05): the QUIET chunkCap sweep wrote benchmark/chunkcap.json (committed 6b70f54); the run of
-  record at 6b70f54 read INCONCLUSIVE (R-BA29: twin A/A not TIE at 28 of 204 (scenario, n, phase) cells), so it is
-  not committed and the README keeps its PENDING form (R-BA39), and BA-16 takes no verdict from it (R-BA40); rulings
-  and the REPORTED readings: RESEARCH 14.4. Next: the twin A/A noise research, then a new run of record.
+  record at 6b70f54 read INCONCLUSIVE (R-BA29: twin A/A not TIE at 28 of 204 (scenario, n, phase) cells), so it is not
+  committed and the README keeps its PENDING form (R-BA39), and BA-16 takes no verdict from it (R-BA40); rulings and
+  the REPORTED readings: RESEARCH 14.4. The twin A/A noise research ran (burst 45, RESEARCH 17.3 / 17.4) and is ruled
+  R-BA41..R-BA44 (17.6). Next: the Bench tooling code unit for BA-29 / BA-31, a QUIET re-sweep, then a new run of
+  record (BA-16).
 - Benchmark rulings R-BA1..R-BA8 -- RULED (maintainer, AskUserQuestion, 2026-10-31; cited by benchmark/METHODOLOGY.md;
   option text quoted verbatim from the maintainer-local, gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings";
   R-BA9..R-BA11 are quoted in section 6 (Bench-ADOPT notes, "Competent rivals -- RULED"), R-BA12 in section 5,
@@ -277,8 +302,8 @@ capacity n + 1; A6 cells S2@131072, S2@100000, S2b@131072 pass on 4 labels (Fenw
   time). No timing is
   of record (S2 quick cells ran PRELIMINARY). The S2 generator law is gated in
   test/EditorFeed.test.mjs, an independent oracle (38 tests, review APPROVED).
-- **Rivals at a pinned version** (`sorted-btree`, `@flatten-js/interval-tree`, lite-logn) as
-  devDependencies, their versions printed in the header; a rival that cannot answer a query gets
+- **Rivals at a pinned version** (`@flatten-js/interval-tree`, lite-logn; `sorted-btree` documented, not installed,
+  R-SM1) as devDependencies, their versions printed in the header; a rival that cannot answer a query gets
   `n/a` with the reason.
 - **Hand-written rivals** with no npm package (the blocked array for SumSequence, RESEARCH 4.1) live
   in benchmark/, follow the same fairness rules (typed arrays, tuned parameters printed, zero allocation
@@ -311,7 +336,8 @@ before any engine code; DB-5..DB-12 become gates in the member's session.
   proof with an unchecked assumption is an open design call, not a settled one.
 - **DB-5 Differential oracles.** At least two independent references per facade: the naive model
   (3.2) plus a second real implementation (lite-logn Treap for rank / select, Fenwick for static
-  sums, `sorted-btree` for keyed order). Three-way disagreement localizes the bug.
+  sums, for SumMap's keyed order the naive sorted-array model plus lite-logn Treap (R-SM10; `sorted-btree`
+  documented, not installed, R-SM1)). Three-way disagreement localizes the bug.
 - **DB-6 Metamorphic relations** (section 3.5). Shape independence catches B-2 (float measures);
   identity round-trips catch split / join seam bugs; seek-of-sumBefore catches the strict / non-strict
   boundary (I-4).
@@ -371,6 +397,8 @@ What blocks what:
   fixed-n reweighting. PAUSE and evaluate R-7 if BlockedArray beats SumSequence at n >= 100k on S1 or S2. Any other
   outcome has no automatic verdict: the maintainer decides from the table. 'Wins' = median of K interleaved runs on a
   QUIET host; a PRELIMINARY log decides nothing."
+  Note (2026-11-05, burst 45, R-BA45, quoted in RESEARCH 17.6): R-BA41 amends 'Wins' -- a win in this reading is the
+  BA-29 verdict (min-of-K, 0.95 band) on a QUIET host; amended before any CONCLUSIVE run of record was read.
 - The pool (0.4) needs SumMap and IntervalMap realms to be worth shipping.
 
 Estimate to SumMap 0.2.0 (2026-10-28, est., from .handoff/HISTORY.md: 28 burst sessions S0 -> 0.1.1 (S0, the
@@ -653,15 +681,17 @@ Planner notes for Bench-ADOPT (2026-10-28, not ruled; RESEARCH 11.6):
 
 ### Queued -- SumMap 0.2.0, IntervalMap 0.3.0, Yggdrasil pool 0.4.0 (one full brief each at greenlight)
 
-- **SumMap 0.2.0**: uint32 keys (Y-03), routing I-6, fence-key finger, rank / select / sumBelow /
-  keyAtSum / splitAt / join; the >= 2^30 boxing lane as a first-class torture lane; S4-depth
-  scenario; rivals `sorted-btree`, lite-logn Treap / Scapegoat (`n/a` for sum seek), `Map` counter-foil.
-  Settle input (PROPOSED, not ruled): RESEARCH 13 -- keys and boxing bands, fence-key finger rules, API contracts,
-  rival matrix, DB-4 table, K-1..K-15 boundary rows, and the decisions the settle burst must take (13.7).
-  Settle evidence (PROPOSED, not ruled): RESEARCH 16 -- the compare-form probe (all forms 0 B/op inside the engine;
-  only xor-bias survives the first key >= 2^31 without a deopt), the build-dependent Smi top (node default: a
-  returned key boxes from 2^31, so the big-key lane needs keys >= 2^31), sorted-btree 2.1.0 checked, absent-key
-  precedent, R-7 at average occupancy, the S4-depth mix (S4a / S4b), and draft settle options R-SM1..R-SM5.
+- **SumMap 0.2.0**: uint32 keys (Y-03), routing I-6, fence-key finger, rank / select / sumBelow / keyAtSum / splitAt /
+  join; the >= 2^30 boxing lane as a first-class torture lane; S4-depth scenario; rivals lite-logn Treap and a
+  tail-best sorted array, `Map` a timing-only counter-foil (R-SM1: sorted-btree documented, not installed; Scapegoat
+  not a rival). Surface RULED R-SM1..R-SM9 (2026-11-05, burst 43; RESEARCH 17.2); the engine planner waits for BA-16
+  (R-SM9). Settle input (PROPOSED; 17.2 rules where it differs): RESEARCH 13 -- keys and boxing bands, fence-key
+  finger rules, API contracts, rival matrix, DB-4 table, K-1..K-15 boundary rows, and the decisions the settle burst
+  must take (13.7). Settle evidence (PROPOSED; superseded by RESEARCH 17): RESEARCH 16 -- the compare-form probe (all
+  forms 0 B/op inside the engine; only xor-bias survives the first key >= 2^31 without a deopt), the build-dependent
+  Smi top (node default: a returned key boxes from 2^31, so the big-key lane needs keys >= 2^31), sorted-btree 2.1.0
+  checked, absent-key precedent, R-7 at average occupancy, the S4-depth mix (S4a / S4b), and draft settle options
+  R-SM1..R-SM5 (superseded by RESEARCH 17.2).
 - **IntervalMap 0.3.0**: (start, entityId) order, maxEnd summary, stab / overlap into caller typed
   arrays, split / join; S3 active-at-t and S5 booking; rivals `@flatten-js/interval-tree` and
   lite-logn's IntervalTree once shipped (Y-07: both exist; the benchmark compares, neither replaces).

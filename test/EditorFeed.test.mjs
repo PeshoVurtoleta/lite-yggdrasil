@@ -38,6 +38,7 @@ import {
     SCENARIOS, OP, REC, PHASE_CLASS, selectScenario, runScenario, scenarioEvents, BLOCK_EVENTS, STREAM_EVENTS,
 } from '../benchmark/Scenarios.mjs';
 import { DEFAULT_SEED, prng } from '../benchmark/Harness.mjs';
+import { meter, METER_REASON } from './meter-gate.mjs';
 
 const PKG = fileURLToPath(new URL('..', import.meta.url));
 const SEED = DEFAULT_SEED;
@@ -1009,36 +1010,54 @@ function runChild(over) {
 }
 
 describe('A5: the --expose-gc child (BA-26), S2 + S2a + S2b', () => {
-    // g2b-3a B2: the lanes run in TWO children -- the five pre-twin labels exactly as before, and BlockedArray.twin
-    // alone under the same gates. One 6-label child reads gc major 1 in the lanes region (3 / 3 runs); the 6-label
-    // set with BlockedArray.plain listed twice (no third compiled BlockedArray copy) and the 5-label set with the twin in
-    // place of plain both read major 0 (one run each, PRELIMINARY host): heap growth from a third separately compiled
-    // BlockedArray module next to six labels' lanes, not a twin defect. maxMajor stays 0 in both children.
-    const TWIN = 'BlockedArray.twin';
-    const PRE_TWIN = sc('S2').adapters.filter((l) => l !== TWIN);
-    // one child per label set, memoized: the lanes test and the retention test read the SAME two children
+    // Y-CI-7a (burst 44): the lanes run in THREE children, one per BlockedArray variant -- BlockedArray with the
+    // non-BlockedArray labels, BlockedArray.plain alone, BlockedArray.twin alone -- so no alloc child compiles more than
+    // one BlockedArray module. Measured before: one 6-label child read gc major 1 in the lanes region (g2b-3a, 3 / 3 runs),
+    // and node 26.13.0 ubuntu read major 1 in the 5-label child that compiled BlockedArray + .plain (census b43 C-2).
+    // maxMajor stays 0 in every child. Y-CI-6a: every B/op lane row and per-call / per-op must-fail control row goes
+    // through test/meter-gate.mjs (asserted on node >= 24, REPORTED on < 24); semi, counts, names, ops, warm calls, end
+    // lengths, field presence, gc and retention rows are asserted on every version.
+    const S2_LABELS = [...sc('S2').adapters];
+    const BASE = ['SumSequence', 'BlockedArray', 'FenwickRebuild.suffix', 'FenwickRebuild.full'];
+    const SETS = [
+        ['SumSequence + BlockedArray + FenwickRebuild suffix / full', BASE],
+        ['BlockedArray.plain alone', ['BlockedArray.plain']],
+        ['BlockedArray.twin alone', ['BlockedArray.twin']],
+    ];
+    // one child per label set, memoized: the lanes test, the retention test and the replay read the SAME children
     const CHILDREN = new Map();
     const childFor = (labels) => {
         const k = JSON.stringify(labels);
         if (!CHILDREN.has(k)) CHILDREN.set(k, runChild({ labels }));
         return CHILDREN.get(k);
     };
-    test('A5: the two lane children cover the six S2 labels exactly once (five pre-twin + the twin)', () => {
-        assert.equal(PRE_TWIN.length, 5);
-        assert.equal(PRE_TWIN.length + 1, sc('S2').adapters.length);
-        assert.deepEqual([...PRE_TWIN, TWIN].sort(), [...sc('S2').adapters].sort());
+    test('A5 (Y-CI-7a): the three lane children cover the six S2 labels exactly once; no child holds > 1 BlockedArray variant', () => {
+        assert.deepEqual(SETS.map(([, s]) => s.length), [4, 1, 1]);
+        const union = SETS.flatMap(([, s]) => s);
+        assert.equal(new Set(union).size, union.length, 'a label in two children');
+        assert.deepEqual([...union].sort(), [...S2_LABELS].sort());
+        for (const [name, s] of SETS) {
+            const ba = s.filter((l) => /^BlockedArray/.test(l));
+            assert.ok(ba.length <= 1, name + ' compiles ' + ba.length + ' BlockedArray variants: ' + ba.join(', '));
+        }
     });
-    test('A5: runScript phase lanes, 3 scenarios x 5 pre-twin labels at n 4096 / --quick 2,000 events: < 8 B per call (K = 16, > -2) AND < 1 B per record, maxMajor 0; controls fail', () => {
-        lanesGate(childFor(PRE_TWIN), PRE_TWIN);
-    });
-    test('A5: runScript phase lanes, 3 scenarios x BlockedArray.twin alone at n 4096 / --quick 2,000 events: the same gates (< 8 B per call, > -2, < 1 B per record, maxMajor 0; controls fail)', () => {
-        lanesGate(childFor([TWIN]), [TWIN]);
-    });
-    function lanesGate(r, labels) {
-        assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
+    const printLanes = (r) => {
         for (const l of r.lanes) console.log('# lane ' + l.name + ' ops=' + l.ops + ' calls=' + l.calls + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
         for (const l of r.controls) console.log('# control ' + l.name + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
-        // labels x (5 + 4 + 1 phases): 5 x 10 = 50 pre-twin + 1 x 10 = 10 twin = 6 x 10 over both children
+        for (const pc of r.pcControls) console.log('# control ' + pc.name + ' perCall=' + String(pc.perCall) + ' bop=' + String(pc.bop) + ' [' + pc.wins + ']');
+    };
+    for (const [name, labels] of SETS) {
+        test('A5: runScript phase lanes, 3 scenarios x ' + name + ' at n 4096 / --quick 2,000 events: < 8 B per call (K = 16, > -2) AND < 1 B per record, maxMajor 0; controls fail', () => {
+            const r = childFor(labels);
+            printLanes(r);
+            lanesGate(r, labels);
+        });
+    }
+    // meter rows (m.ok): 2 per lane (labels x 10) + controls[0] + 2 per pcControl = 22 x labels + 1
+    function lanesGate(r, labels, ver = process.versions.node, log = console.log) {
+        const m = meter(ver, log);
+        assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
+        // labels x (5 + 4 + 1 phases): 4 x 10 = 40 + 1 x 10 plain + 1 x 10 twin = 6 x 10 over the three children
         assert.equal(r.lanes.length, labels.length * (5 + 4 + 1));
         const exactOps = { S2: { seek: 200, edit: 600, bulk: 300 }, S2a: { seek: 200, reweight: 2400, edit: 600, blend: 3200 }, S2b: { bulk: 300 } }; // --quick = /10
         const build4096 = (sid) => build(sid, 4096, scenarioEvents(true));
@@ -1056,29 +1075,36 @@ describe('A5: the --expose-gc child (BA-26), S2 + S2a + S2b', () => {
             assert.ok(l.warmRecords >= 100000, l.name + ' warmed only ' + l.warmRecords + ' records');
             // every call ends at length n with clip and tail empty (exact)
             assert.deepEqual(l.end, l.sid === 'S2a' ? [4096] : [4096, 0, 0], l.name + ' end lengths [main, clip, tail]');
-            // JSON carries NaN (no gated window) as null: a non-number reading fails closed
-            assert.ok(typeof l.perCall === 'number' && l.perCall > -2 && l.perCall < 8, // 8: one 16 B box per call reads ~15 at K = 16 (BA-26)
+            // a missing reading fails on every version; JSON carries NaN (no gated window) as null: a non-number
+            // reading fails closed on the meter tier
+            assert.ok(Object.hasOwn(l, 'perCall') && Object.hasOwn(l, 'bop'), l.name + ' has no perCall / bop field');
+            m.ok(typeof l.perCall === 'number' && l.perCall > -2 && l.perCall < 8, // 8: one 16 B box per call reads ~15 at K = 16 (BA-26)
                 l.name + ' perCall ' + l.perCall);
-            assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+            m.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
         }
         assert.equal(r.gc.ok, true, 'gc region: ' + JSON.stringify(r.gc));
-        assert.equal(r.gc.major, 0);
+        assert.equal(r.gc.major, 0, 'lanes-region gc major');
         assert.equal(r.controls.length, 1);
-        assert.ok(typeof r.controls[0].bop === 'number' && r.controls[0].bop > 8, 'allocating runScript must read > 8 B per record, read ' + r.controls[0].bop);
+        assert.ok(Object.hasOwn(r.controls[0], 'perCall') && Object.hasOwn(r.controls[0], 'bop'), r.controls[0].name + ' has no perCall / bop field');
+        m.ok(typeof r.controls[0].bop === 'number' && r.controls[0].bop > 8, r.controls[0].name + ': allocating runScript must read > 8 B per record, read ' + r.controls[0].bop);
         // must-fail control: ONE 16 B box per runScript CALL on EVERY label reads < 1 B/record but must FAIL the per-call floor (>= 8)
         assert.equal(r.pcControls.length, labels.length);
         assert.deepEqual(r.pcControls.map((x) => x.name), labels.map((l) => 'ctl.allocPerCall.' + l));
         for (const pc of r.pcControls) {
-            console.log('# control ' + pc.name + ' perCall=' + String(pc.perCall) + ' bop=' + String(pc.bop) + ' [' + pc.wins + ']');
-            assert.ok(typeof pc.bop === 'number' && pc.bop < 1, pc.name + ' must read < 1 B per record, read ' + pc.bop);
-            assert.ok(typeof pc.perCall === 'number' && pc.perCall >= 8, pc.name + ' window has no teeth: one box per call must read >= 8, read ' + pc.perCall);
+            assert.ok(Object.hasOwn(pc, 'perCall') && Object.hasOwn(pc, 'bop'), pc.name + ' has no perCall / bop field');
+            m.ok(typeof pc.bop === 'number' && pc.bop < 1, pc.name + ' must read < 1 B per record, read ' + pc.bop);
+            m.ok(typeof pc.perCall === 'number' && pc.perCall >= 8, pc.name + ' window has no teeth: one box per call must read >= 8, read ' + pc.perCall);
         }
+        const rep = m.report();
+        assert.equal(rep.asserted + rep.reported, 22 * labels.length + 1, 'meter rows');
+        assert.equal(rep.gated ? rep.reported : rep.asserted, 0, 'every meter row on one tier');
+        return rep;
     }
 
     // A5 retention: the proof is the WeakRef `alive` count; size() reaches 0 because the test untracks after clear().
-    // The retention rows read the leak / ctlRetain results of the two lane children (no third, 6-label child); the
-    // retaining control runs per label, so the twin-only child carries it too.
-    for (const [name, labels] of [['5 pre-twin labels', PRE_TWIN], ['BlockedArray.twin alone', [TWIN]]]) {
+    // The retention rows read the leak / ctlRetain results of the three lane children (no extra child); the retaining
+    // control runs per label, so every child carries it.
+    for (const [name, labels] of SETS) {
         test('A5: 100 cycles per label of createViews(n + 1, 2, 3) -> fill -> S2 blend at n 256 -> clear -> drop, ' + name + ': tracker.size() 0; retaining control >= 1', () => {
             const r = childFor(labels);
             console.log('# leak ' + name + ' ' + JSON.stringify(r.leak) + ' ctl ' + JSON.stringify(r.ctlRetain));
@@ -1091,6 +1117,40 @@ describe('A5: the --expose-gc child (BA-26), S2 + S2a + S2b', () => {
             assert.equal(r.ctlRetain.held, labels.length * 100, 'the retaining control kept every cycle');
         });
     }
+
+    // Y-CI-6a replay: the census b43 node 22.23.4 readings written into a clone of the real 4-label child. On HEAD's
+    // gates (no meter) every one of them fails; here they are REPORTED on 22.23.4 and still fail on 26.8.2, and the
+    // always-gated rows (gc major, field presence, lane count) still fail on 22.23.4.
+    test('Y-CI-6a replay: census readings in a clone of the 4-label child are REPORTED on 22.23.4 (each named outside), fail on 26.8.2; gc major 1 / a deleted perCall / a popped lane fail on 22.23.4', () => {
+        const real = childFor(BASE);
+        const injected = [];
+        const lane = (c, name) => { const l = c.lanes.find((x) => x.name === name); assert.ok(l, 'no lane ' + name); return l; };
+        const inject = () => {
+            const c = structuredClone(real);
+            injected.length = 0;
+            const e = lane(c, 'S2.BlockedArray.edit'); e.perCall = 316.5; e.bop = 316.5 / e.ops; injected.push(e.name);
+            const s = lane(c, 'S2a.SumSequence.blend'); s.perCall = -55; s.bop = -55 / s.ops; injected.push(s.name);
+            c.pcControls[0].perCall = -648; c.pcControls[0].bop = -648 / 600; injected.push(c.pcControls[0].name);
+            const n = lane(c, 'S2b.FenwickRebuild.full.bulk'); n.bop = null; injected.push(n.name);
+            return c;
+        };
+        const lines = [];
+        const rep = lanesGate(inject(), BASE, '22.23.4', (x) => lines.push(x));
+        console.log('# replay 22.23.4 ' + JSON.stringify({ reported: rep.reported, outside: rep.outside }));
+        assert.equal(rep.gated, false);
+        assert.equal(rep.reported, 22 * BASE.length + 1);
+        for (const name of injected) assert.ok(rep.outside.some((o) => o.startsWith(name + ' ')), name + ' is not an outside row: ' + JSON.stringify(rep.outside));
+        assert.ok(lines[0].startsWith('# REPORTED ' + METER_REASON + ' [node 22.23.4: '), lines[0]);
+        const quiet = () => {};
+        assert.throws(() => lanesGate(inject(), BASE, '26.8.2', quiet),
+            (err) => err instanceof assert.AssertionError && injected.some((name) => err.message.startsWith(name + ' ')));
+        const g = inject(); g.gc.major = 1;
+        assert.throws(() => lanesGate(g, BASE, '22.23.4', quiet), (err) => err instanceof assert.AssertionError && /lanes-region gc major/.test(err.message));
+        const d = inject(); delete d.lanes[0].perCall;
+        assert.throws(() => lanesGate(d, BASE, '22.23.4', quiet), (err) => err instanceof assert.AssertionError && /has no perCall \/ bop field/.test(err.message));
+        const p = inject(); p.lanes.pop();
+        assert.throws(() => lanesGate(p, BASE, '22.23.4', quiet), assert.AssertionError);
+    });
 });
 
 // ---- review r1 rows: R-BA19 block counts + shuffle, R-BA23 column end, R-BA25 mid start, R-BA27 caret locality, sumBefore window ----

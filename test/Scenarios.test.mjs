@@ -30,6 +30,7 @@ import {
 } from '../benchmark/Adapters.mjs';
 import { cells } from '../benchmark/Matrix.mjs';
 import { DEFAULT_SEED } from '../benchmark/Harness.mjs';
+import { meter, METER_REASON } from './meter-gate.mjs';
 import { variantSource, loadVariant } from '../benchmark/rivals/variant.mjs';
 
 const PKG = fileURLToPath(new URL('..', import.meta.url));
@@ -1025,57 +1026,116 @@ function runChild(over) {
 }
 
 describe('A3 / A4: the --expose-gc child (BA-7a precedent)', () => {
-    test('A3: runScript, every phase x every adapter x view 0..2 at n 4096: < 1 B/event, maxMajor 0; control reads > 8', () => {
-        const r = runChild();
+    // Y-CI-6a (burst 44): every lane B/op row and every per-call / per-op must-fail control row goes through
+    // test/meter-gate.mjs (asserted on node >= 24, REPORTED on < 24); semi, counts, names, k, calls, warm counts, field
+    // presence, gc and retention rows stay asserted on every version. Prints live in the test bodies.
+    // meter rows: 6 bulk perCall + 6 bulkCtl + 150 lanes x (perCall + bop) + controls[0] + pc (bop + perCall) = 315
+    function a3Gate(r, ver = process.versions.node, log = console.log) {
+        const m = meter(ver, log);
         assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
-        for (const l of r.lanes) console.log('# lane ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
-        for (const l of r.controls) console.log('# control ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
         // 6 adapters x 3 views x 8 scripts (S7 seek / reweight / blend, S7b the same, walk, edit) + 1 bulk lane per adapter
         assert.equal(r.lanes.length, 150);
+        for (const l of r.lanes) assert.ok(Object.hasOwn(l, 'perCall') && Object.hasOwn(l, 'bop'), l.name + ' has no perCall / bop field');
         // g2b-2b bulk lane: one per label on views[0], 16 calls per window, warm >= 60 calls (108,000 records)
         const bulk = r.lanes.filter((l) => l.name.endsWith('.v0.bulk'));
         assert.deepEqual(bulk.map((l) => l.name), S7.adapters.map((x) => x + '.v0.bulk'));
         for (const l of bulk) {
             assert.equal(l.k, 16, l.name + ' calls per window');
             assert.ok(l.calls >= 60 && l.warmRecords >= 108000, l.name + ' warmed ' + l.calls + ' calls / ' + l.warmRecords + ' records');
-            assert.ok(typeof l.perCall === 'number' && l.perCall > -2 && l.perCall < 8, l.name + ' perCall ' + l.perCall);
+            m.ok(typeof l.perCall === 'number' && l.perCall > -2 && l.perCall < 8, l.name + ' perCall ' + l.perCall);
         }
-        for (const l of bulk) console.log('# bulk ' + l.name + ' perCall=' + String(l.perCall) + ' fresh=' + String(l.fresh));
         // must-fail control: one 16 B box per bulk call, every label, must FAIL the < 8 B per call floor
-        for (const c of r.bulkCtl) console.log('# control ' + c.name + ' perCall=' + String(c.perCall) + ' fresh=' + String(c.fresh) + ' [' + c.wins + ']');
         assert.deepEqual(r.bulkCtl.map((c) => c.name), S7.adapters.map((x) => 'ctl.box.' + x));
-        for (const c of r.bulkCtl) assert.ok(typeof c.perCall === 'number' && c.perCall >= 8, c.name + ' must FAIL perCall < 8, read ' + c.perCall);
+        for (const c of r.bulkCtl) {
+            assert.ok(Object.hasOwn(c, 'perCall'), c.name + ' has no perCall field');
+            m.ok(typeof c.perCall === 'number' && c.perCall >= 8, c.name + ' must FAIL perCall < 8, read ' + c.perCall);
+        }
         // JSON carries NaN (no gated window) as null: a non-number reading fails closed. Both floors: per call < 16 B
         // AND per event < 1 B (the division alone hid a ~900 B interpreted-boxing call behind 4000 events).
         for (const l of r.lanes) {
-            assert.ok(typeof l.perCall === 'number' && l.perCall < 16, l.name + ' perCall ' + l.perCall);
-            assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+            m.ok(typeof l.perCall === 'number' && l.perCall < 16, l.name + ' perCall ' + l.perCall);
+            m.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
         }
         assert.equal(r.gc.ok, true, 'gc region: ' + JSON.stringify(r.gc));
-        assert.equal(r.gc.major, 0);
+        assert.equal(r.gc.major, 0, 'A3 lanes-region gc major');
         assert.equal(r.controls.length, 2);
-        assert.ok(typeof r.controls[0].bop === 'number' && r.controls[0].bop > 8, 'control must read > 8 B/event, read ' + r.controls[0].bop);
+        assert.ok(Object.hasOwn(r.controls[0], 'bop'), r.controls[0].name + ' has no bop field');
+        m.ok(typeof r.controls[0].bop === 'number' && r.controls[0].bop > 8, r.controls[0].name + ': control must read > 8 B/event, read ' + r.controls[0].bop);
         // must-fail control: one allocation per runScript CALL reads < 1 B/event but must FAIL the per-call floor
         const pc = r.controls[1];
-        console.log('# control ' + pc.name + ' perCall=' + String(pc.perCall));
         assert.equal(pc.name, 'ctl.allocPerCall');
-        assert.ok(typeof pc.bop === 'number' && pc.bop < 1, 'per-call control must read < 1 B/event, read ' + pc.bop);
-        assert.ok(typeof pc.perCall === 'number' && !(pc.perCall < 16), 'per-call control must FAIL perCall < 16, read ' + pc.perCall);
+        assert.ok(Object.hasOwn(pc, 'perCall') && Object.hasOwn(pc, 'bop'), pc.name + ' has no perCall / bop field');
+        m.ok(typeof pc.bop === 'number' && pc.bop < 1, pc.name + ' per-call control must read < 1 B/event, read ' + pc.bop);
+        m.ok(typeof pc.perCall === 'number' && !(pc.perCall < 16), pc.name + ' per-call control must FAIL perCall < 16, read ' + pc.perCall);
+        const rep = m.report();
+        assert.equal(rep.asserted + rep.reported, 315, 'meter rows');
+        assert.equal(rep.gated ? rep.reported : rep.asserted, 0, 'every meter row on one tier');
+        return rep;
+    }
+    // meter rows: 18 walk lanes
+    function walkGate(r, ver = process.versions.node, log = console.log) {
+        const m = meter(ver, log);
+        assert.equal(r.walk.length, 18);
+        for (const l of r.walk) {
+            assert.ok(Object.hasOwn(l, 'bop'), l.name + ' has no bop field');
+            m.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+        }
+        const rep = m.report();
+        assert.equal(rep.asserted + rep.reported, 18, 'meter rows');
+        assert.equal(rep.gated ? rep.reported : rep.asserted, 0, 'every meter row on one tier');
+        return rep;
+    }
+    // meter rows: 6 twin lanes x (perCall + bop) + 6 twin controls = 18
+    function twinGate(r, ver = process.versions.node, log = console.log) {
+        const m = meter(ver, log);
+        assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
+        const names = ['seek', 'reweight', 'blend', 'S7b.seek', 'S7b.reweight', 'S7b.blend'];
+        assert.deepEqual(r.twin.map((l) => l.name), names.map((x) => 'BlockedArray.twin.k16.' + x));
+        assert.deepEqual(r.twinCtl.map((c) => c.name), names.map((x) => 'ctl.box.BlockedArray.twin.' + x));
+        for (const l of r.twin) {
+            assert.equal(l.k, 16, l.name + ' calls per window');
+            assert.ok(l.calls >= 60 && l.warmEvents >= 1e5, l.name + ' warmed ' + l.calls + ' calls / ' + l.warmEvents + ' events (BA-26 floor)');
+            assert.ok(Object.hasOwn(l, 'perCall') && Object.hasOwn(l, 'bop'), l.name + ' has no perCall / bop field');
+            m.ok(typeof l.perCall === 'number' && l.perCall > -2 && l.perCall < 8, l.name + ' perCall ' + l.perCall);
+            m.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+        }
+        for (const c of r.twinCtl) {
+            assert.ok(Object.hasOwn(c, 'perCall'), c.name + ' has no perCall field');
+            m.ok(typeof c.perCall === 'number' && c.perCall >= 8, c.name + ' must FAIL perCall < 8, read ' + c.perCall);
+        }
+        assert.equal(r.gc.ok, true, 'gc region: ' + JSON.stringify(r.gc));
+        assert.equal(r.gc.major, 0, 'twin lanes-region gc major');
+        const rep = m.report();
+        assert.equal(rep.asserted + rep.reported, 18, 'meter rows');
+        assert.equal(rep.gated ? rep.reported : rep.asserted, 0, 'every meter row on one tier');
+        return rep;
+    }
+    test('A3: runScript, every phase x every adapter x view 0..2 at n 4096: < 1 B/event, maxMajor 0; control reads > 8', () => {
+        const r = runChild();
+        for (const l of r.lanes) console.log('# lane ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
+        for (const l of r.controls) console.log('# control ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
+        for (const l of r.lanes.filter((x) => x.name.endsWith('.v0.bulk'))) console.log('# bulk ' + l.name + ' perCall=' + String(l.perCall) + ' fresh=' + String(l.fresh));
+        for (const c of r.bulkCtl) console.log('# control ' + c.name + ' perCall=' + String(c.perCall) + ' fresh=' + String(c.fresh) + ' [' + c.wins + ']');
+        if (r.controls[1]) console.log('# control ' + r.controls[1].name + ' perCall=' + String(r.controls[1].perCall));
+        a3Gate(r);
     });
     test('A3: cold check -- with 2 warm calls the BlockedArray edit lane reads >= 16 B per call (the lane reaches the interpreted path)', () => {
         const labels = S7.adapters.filter((l) => l.startsWith('BlockedArray'));
         assert.ok(labels.length >= 1);
         const r = runChild({ warm: 2, only: 'edit', labels });
+        const m = meter(process.versions.node);
         assert.equal(r.semi, true);
         assert.equal(r.lanes.length, labels.length * 3);
         for (const l of r.lanes) console.log('# cold ' + l.name + ' perCall=' + String(l.perCall));
-        assert.ok(r.lanes.some((l) => typeof l.perCall === 'number' && l.perCall >= 16), 'no cold edit lane read >= 16 B per call');
+        for (const l of r.lanes) assert.ok(Object.hasOwn(l, 'perCall'), l.name + ' has no perCall field');
+        m.ok(r.lanes.some((l) => typeof l.perCall === 'number' && l.perCall >= 16), 'no cold edit lane read >= 16 B per call');
+        const rep = m.report();
+        assert.equal(rep.asserted + rep.reported, 1, 'meter rows');
     });
     test('A3: the cursorWalkSum lanes (every adapter, views 0..2) read < 1 B/op', () => {
         const r = runChild();
         for (const l of r.walk) console.log('# walk ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
-        assert.equal(r.walk.length, 18);
-        for (const l of r.walk) assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+        walkGate(r);
     });
     test('A4: 100 cycles of createViews(C, d, 3) -> fill -> phase -> clear -> drop, every adapter: tracker.size() 0; retaining control >= 1', () => {
         const r = runChild();
@@ -1087,21 +1147,9 @@ describe('A3 / A4: the --expose-gc child (BA-7a precedent)', () => {
     });
     test('g2b-3a A5: BlockedArray.twin runScript, S7 + S7b every phase at n 4096, K = 16 calls / window: < 1 B/event, -2 < B/call < 8, maxMajor 0; one-box control >= 8', () => {
         const r = runChild();
-        assert.equal(r.semi, true, 'semi-space flags not pinned in the child');
         for (const l of r.twin) console.log('# twin ' + l.name + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' calls=' + l.calls + ' [' + l.wins + ']');
         for (const c of r.twinCtl) console.log('# twin control ' + c.name + ' perCall=' + String(c.perCall) + ' [' + c.wins + ']');
-        const names = ['seek', 'reweight', 'blend', 'S7b.seek', 'S7b.reweight', 'S7b.blend'];
-        assert.deepEqual(r.twin.map((l) => l.name), names.map((x) => 'BlockedArray.twin.k16.' + x));
-        assert.deepEqual(r.twinCtl.map((c) => c.name), names.map((x) => 'ctl.box.BlockedArray.twin.' + x));
-        for (const l of r.twin) {
-            assert.equal(l.k, 16, l.name + ' calls per window');
-            assert.ok(l.calls >= 60 && l.warmEvents >= 1e5, l.name + ' warmed ' + l.calls + ' calls / ' + l.warmEvents + ' events (BA-26 floor)');
-            assert.ok(typeof l.perCall === 'number' && l.perCall > -2 && l.perCall < 8, l.name + ' perCall ' + l.perCall);
-            assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
-        }
-        for (const c of r.twinCtl) assert.ok(typeof c.perCall === 'number' && c.perCall >= 8, c.name + ' must FAIL perCall < 8, read ' + c.perCall);
-        assert.equal(r.gc.ok, true, 'gc region: ' + JSON.stringify(r.gc));
-        assert.equal(r.gc.major, 0);
+        twinGate(r);
     });
     test('g2b-3a A5: 100 cycles resolve twin -> create -> fill -> runScript -> clear -> drop: tracker.size() 0; retaining control >= 1', () => {
         const r = runChild();
@@ -1111,6 +1159,53 @@ describe('A3 / A4: the --expose-gc child (BA-7a precedent)', () => {
         assert.deepEqual([r.twinLeak.size, r.twinLeak.alive, r.twinLeak.fin, r.twinLeak.notReset], [0, 0, 0, 0]);
         assert.ok(r.twinRetain.size >= 1, 'retaining control must leave size() >= 1');
         assert.ok(r.twinRetain.alive >= 1, 'retaining control must keep the handle alive');
+    });
+
+    // Y-CI-6a replay: the census b43 node 22.23.4 readings written into a clone of the real child. On HEAD's gates (no
+    // meter) every one of them fails except the -880 lane (below); here they are REPORTED on 22.23.4 and still fail on
+    // 26.8.2, and the always-gated rows (gc major, field presence, lane count) still fail on 22.23.4.
+    // FINDING (burst 44): the S7 / S7b / walk / edit lanes carry no lower bound (perCall < 16, bop < 1), so the census
+    // reading SumSequence.v1.* perCall -880 passes the unchanged node >= 24 gate too: it is injected and pinned INSIDE.
+    test('Y-CI-6a replay: census readings in a clone of the child are REPORTED on 22.23.4 (each named outside), fail on 26.8.2; gc major 1 / a deleted perCall / a popped lane fail on 22.23.4', () => {
+        const real = runChild();
+        const injected = [];
+        const find = (list, name) => { const l = list.find((x) => x.name === name); assert.ok(l, 'no row ' + name); return l; };
+        const inject = () => {
+            const c = structuredClone(real);
+            injected.length = 0;
+            const e = find(c.lanes, 'BlockedArray.v0.edit'); e.perCall = 32; e.bop = 32 / 2000; injected.push(e.name);
+            const pc = find(c.controls, 'ctl.allocPerCall'); pc.perCall = -648; pc.bop = -648 / 4000; injected.push(pc.name);
+            const w = find(c.walk, 'SumSequence.v1.cursorWalkSum'); w.bop = 2; injected.push(w.name);
+            const t = find(c.twin, 'BlockedArray.twin.k16.blend'); t.perCall = 316; t.bop = 316 / (t.warmEvents / t.calls); injected.push(t.name);
+            const s = find(c.lanes, 'SumSequence.v1.blend'); s.perCall = -880; s.bop = -880 / 20000;
+            return c;
+        };
+        const lines = [];
+        const log = (x) => lines.push(x);
+        const c = inject();
+        const reps = [a3Gate(c, '22.23.4', log), walkGate(c, '22.23.4', log), twinGate(c, '22.23.4', log)];
+        const outside = reps.flatMap((x) => x.outside);
+        console.log('# replay 22.23.4 ' + JSON.stringify(outside));
+        assert.deepEqual(reps.map((x) => [x.gated, x.reported]), [[false, 315], [false, 18], [false, 18]]);
+        for (const name of injected) assert.ok(outside.some((o) => o.startsWith(name + ' ')), name + ' is not an outside row: ' + JSON.stringify(outside));
+        assert.ok(!outside.some((o) => o.startsWith('SumSequence.v1.blend ')), 'the -880 lane has no lower bound on any version');
+        assert.equal(lines.filter((x) => x.startsWith('# REPORTED ' + METER_REASON + ' [node 22.23.4: ')).length, 3, lines.join('\n'));
+        const quiet = () => {};
+        const named = (err) => err instanceof assert.AssertionError && injected.some((name) => err.message.startsWith(name + ' '));
+        assert.throws(() => a3Gate(inject(), '26.8.2', quiet), named);
+        assert.throws(() => walkGate(inject(), '26.8.2', quiet), named);
+        assert.throws(() => twinGate(inject(), '26.8.2', quiet), named);
+        const g = inject(); g.gc.major = 1;
+        assert.throws(() => a3Gate(g, '22.23.4', quiet), (err) => err instanceof assert.AssertionError && /A3 lanes-region gc major/.test(err.message));
+        assert.throws(() => twinGate(g, '22.23.4', quiet), (err) => err instanceof assert.AssertionError && /twin lanes-region gc major/.test(err.message));
+        const d = inject(); delete find(d.lanes, 'BlockedArray.v0.edit').perCall;
+        assert.throws(() => a3Gate(d, '22.23.4', quiet), (err) => err instanceof assert.AssertionError && /has no perCall \/ bop field/.test(err.message));
+        const dt = inject(); delete dt.twin[0].perCall;
+        assert.throws(() => twinGate(dt, '22.23.4', quiet), (err) => err instanceof assert.AssertionError && /has no perCall \/ bop field/.test(err.message));
+        const p = inject(); p.lanes.pop();
+        assert.throws(() => a3Gate(p, '22.23.4', quiet), assert.AssertionError);
+        const pw = inject(); pw.walk.pop();
+        assert.throws(() => walkGate(pw, '22.23.4', quiet), assert.AssertionError);
     });
 });
 

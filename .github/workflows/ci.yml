@@ -10,7 +10,11 @@
 # 26.8.2 is the calibration version of the allocation, --print-bytecode and --allow-natives-syntax rows (the version
 # the measured comments and REPORTED numbers name); on 22 / 24 / 26.x those rows may disagree. A red leg is
 # recorded (leg / row / observed vs expected), never skipped, trimmed or re-run for green without a ruling.
-# Expected on 26.8.2: tests 1348, pass 1347, skipped 1, fail 0. The one skip is R-A9 at
+# Y-CI-6a (.handoff/PLAN-ci-fix.md, burst 44): on the node 22 legs the B/op lane rows and the per-call / per-op
+# must-fail control rows of the 4 alloc children (EditorFeed, Rivals, ScenarioFeed, Scenarios) are REPORTED
+# (one '# REPORTED' line per test, test/meter-gate.mjs), not asserted; their gc major 0, retention, coverage and
+# lane-count rows stay gated on every leg; node >= 24 asserts every row.
+# Expected on 26.8.2: tests 1357, pass 1356, skipped 1, fail 0 (burst 44 run). The one skip is R-A9 at
 # test/AuditFixes3.test.mjs:344: its frozen before build sits at a hard-coded, gitignored .handoff path (:21).
 # No Windows. engines ">=18" is untested in CI: the floor leg is node 22 (the devDependency tree's lite-leak and
 # lite-cleanup declare >=20); a FILLERS item asks whether to raise it.

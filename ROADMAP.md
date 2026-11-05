@@ -31,9 +31,12 @@
 > R-BA40; the GO / NO-GO (BA-16) has no verdict yet). Next is the SumMap research burst, twin A/A noise first.
 > Hosted CI (burst 42): .github/workflows/ci.yml runs npm test + npm run test:types on every push / PR (node 22 /
 > 24 / 26 x ubuntu-latest + macos-latest, plus node 26.8.2 per OS: 8 legs), and .github/workflows/nightly.yml runs
-> the full npm run verify daily (node latest and 22 x both OSes: 4 legs). DETERMINISTIC tier only; Y-13 stands (no
-> timing threshold or statistical gate). Neither workflow has run on GitHub yet: the first push run and the first
-> nightly are pending (Y-CI-5: the first run is a census of rows that fail only off node 26.8.2).**
+> the full npm run verify daily (node 26 (newest 26.x, Y-CI-8) and 22 x both OSes: 4 legs). DETERMINISTIC tier only;
+> Y-13 stands (no timing threshold or statistical gate). The first push run and first nightly (2026-11-05) were a
+> census (Y-CI-5): node 26.8.2 (both OSes), ubuntu node 24 and macOS 26.13.0 green; node 22, ubuntu 26.13.0 and
+> nightly 'latest' (a node 27 alpha) red; macOS node 24 (push) and macOS node 22 (nightly) cancelled before a runner
+> (Y-CI-9, PENDING); verify's tails ran on no nightly leg. Burst 44 answers the red rows with Y-CI-6a / Y-CI-7a /
+> Y-CI-8 (expected green, unobserved: the next runs are pending).**
 
 One package, `@zakkster/lite-yggdrasil` (folder `LiteYggdrasil`, main `Yggdrasil.js`): a zero-GC
 engine for mutable ordered sequences where "where is X?" is a running total (RESEARCH.md section 1).
@@ -118,9 +121,15 @@ Each settled call becomes a `decisions/NNNN-*.md` ADR in the session that owns i
 | **Y-15** | **S1** | Arena ownership for split / join | ADR 0004 option (a): one internal shared arena, `SumSequence.arena(C, o, k)` views at setup, cross-arena split / append = RangeError | **RULED 2026-10-25** (0004) |
 | **Y-CI-1** | S3 | Hosted CI: verification tier. | "Deterministic only (Recommended)": Hosted CI runs the DETERMINISTIC tier only: npm test plus verify's untimed parts (types, allocation / GC count lanes, torture). RULED Y-13 "none: statistical claims are REPORTED only" stands; CI carries no timing threshold and no statistical gate. | **RULED 2026-11-05** (burst 42) |
 | **Y-CI-2** | S3 | Hosted CI: push / PR vs nightly jobs. | "Split (Recommended)": ci.yml (push / PR): npm test + npm run test:types. nightly.yml (cron + workflow_dispatch): the full npm run verify (adds test:lanes, torture, kernel-lane). A nightly failure in a count gate is a DETERMINISTIC-tier test bug to fix, never re-run for green. | **RULED 2026-11-05** (burst 42) |
-| **Y-CI-3** | S3 | Hosted CI: OS x Node matrix. | "LiteUtils matrix (Recommended)": ci.yml: node 22 / 24 / 26 x ubuntu-latest + macos-latest, plus one node 26.8.2 leg per OS (the version the measured comments and REPORTED numbers name); nightly.yml: node 'latest' and 22 (check-latest) x both OSes. No Windows. engines ">=18" stays as is but untested in CI: a FILLERS item asks whether to raise it. | **RULED 2026-11-05** (burst 42) |
+| **Y-CI-3** | S3 | Hosted CI: OS x Node matrix. | "LiteUtils matrix (Recommended)": ci.yml: node 22 / 24 / 26 x ubuntu-latest + macos-latest, plus one node 26.8.2 leg per OS (the version the measured comments and REPORTED numbers name); nightly.yml: node 'latest' and 22 (check-latest) x both OSes. No Windows. engines ">=18" stays as is but untested in CI: a FILLERS item asks whether to raise it. | **RULED 2026-11-05** (burst 42); nightly node spec amended by Y-CI-8 ('latest' -> '26') |
 | **Y-CI-4** | S3 | Hosted CI: devDependency install. | "npm install, log versions (Recommended)": CI runs `npm install --no-audit --no-fund` against the declared ^ ranges (no lockfile, no npm cache) and a provenance step prints `npm ls --depth=0`, so every run records the devDependency versions it tested. | **RULED 2026-11-05** (burst 42) |
 | **Y-CI-5** | S3 | Hosted CI: rows failing only off node 26.8.2. | "Census, then rule per row (Recommended)": The first CI run is a census: each row that fails only off node 26.8.2 is logged in .handoff/evidence/b42-ci/ with leg, file:row and observed vs expected; nothing in test/ changes; each such row comes back to the maintainer as its own question (skip-with-reason below node N as in LiteUtils A1, recalibrate per version, or fix the engine). | **RULED 2026-11-05** (burst 42) |
+| **Y-CI-6** | S3 | Hosted CI: node 22 rival B/op rows (Q-CI-1). | "Skip rival rows < 24 (Recommended)": On node < 24 the rival (BlockedArray-family) B/op rows of those 4 children skip with the reason 'rival edit path allocates on node < 24 (census b43: 316-365 B per call on 22.23.4)'; every engine lane and every must-fail control stays gated on every version; a test-only change, its own coder batch + review, with a row that fails on the old code. | **SUPERSEDED 2026-11-05** (ruled burst 43) by Y-CI-6a (burst 44: its premise, only rival rows fail on node 22, was false) |
+| **Y-CI-6a** | S3 | Hosted CI: node 22 alloc meter (Q-CI-1a). | "Lanes REPORTED < 24 (Recommended)": Y-CI-6 reads: on node < 24 the 4 alloc children still run; every B/op lane row and every per-call / per-op must-fail control row (engine and rival) is printed, not asserted, with the reason 'alloc meter uncalibrated on node < 24 (census b43: rival edit 316-365 B per call, later lanes -55 / -880, a must-fail control -648)'; the gc major 0, retention, coverage and lane-count rows stay gated on every version (unobserved on 22: a failure there is a new census row); node >= 24 gates every row unchanged; test-only, with a row that fails on the old code. | **RULED 2026-11-05** (burst 44) |
+| **Y-CI-7** | S3 | Hosted CI: node 26.13.0 ubuntu major GC (Q-CI-2). | "Split the child (Recommended)": The A5 child is split so no alloc child compiles more than 2 BlockedArray variants (the known major-GC trigger), keeping every lane and control and maxMajor 0 on every version; test-only change, its own coder batch + review; the next CI run shows whether 26.13.0 ubuntu is green. | **SUPERSEDED 2026-11-05** (ruled burst 43) by Y-CI-7a (same sitting: its "more than 2" was imprecise) |
+| **Y-CI-7a** | S3 | Hosted CI: EditorFeed A5 child split (Q-CI-2a). | "One variant per child (Recommended)": Y-CI-7 reads: the A5 lanes run in one child per BlockedArray variant (BlockedArray + the non-BlockedArray labels in one child, BlockedArray.plain alone, BlockedArray.twin alone), so no alloc child compiles more than 1 BlockedArray variant; every lane, control and maxMajor 0 kept on every version; the same rule is applied to the other 3 alloc children of Y-CI-6 only if a census shows a major GC there. | **RULED 2026-11-05** (burst 43) |
+| **Y-CI-8** | S3 | Hosted CI: nightly node spec (Q-CI-3). | "Pin newest stable major (Recommended)": The nightly 'latest' legs become node 26 (setup-node resolves the newest 26.x release), bumped by hand to 27 once 27 ships a stable release; no prerelease node in CI; workflow-only change + review (validate-workflows.mjs updated). | **RULED 2026-11-05** (burst 43) |
+| **Y-CI-9** | S3 | Hosted CI: legs cancelled before a runner (Q-CI-4). | "Wait for next runs (Recommended)": No re-run now; the next push run and the 04:17Z cron show those legs; the census records them PENDING (runner, not code). | **RULED 2026-11-05** (burst 43; the cancelled legs are PENDING on runners, not code) |
 
 ---
 
@@ -143,6 +152,11 @@ npm ls --depth=0 as deps provenance, npm test, npm run test:types; 8 legs) and .
 workflow_dispatch: the same steps with npm run verify; 4 legs). No lockfile, no npm cache, no Windows, no quiet lock,
 no bench script in CI; engines ">=18" is untested (floor leg node 22). The R-LU1 tools --self-test rows are a
 commented slot in both files.
+AS BUILT (2026-11-05, burst 44; Y-CI-6a / 7a / 8): test/meter-gate.mjs gates the B/op lane and must-fail control rows
+of the 4 alloc children (EditorFeed A5, Rivals child, ScenarioFeed A3, Scenarios A3) on node >= 24 and prints them as
+REPORTED on node < 24 (gc major 0, retention, coverage and count rows gated everywhere); EditorFeed A5 runs 3 lane
+children (BlockedArray + the non-BlockedArray labels, BlockedArray.plain alone, BlockedArray.twin alone); nightly.yml
+node ['26', '22'] with check-latest; npm test on node 26.8.2: 1357 tests, 1356 pass, 1 skip, 0 fail (burst 44 run).
 Ruled 2026-10-25 (R-SC): S0 ships `npm test`, `test:types`, `verify` only; `torture` / `test:perf` arrive with SumSequence and `bench` with Bench-ADOPT, so no script is ever green on nothing. (`test:lanes` and `torture` arrived with SumSequence; `bench` arrived with Bench-ADOPT, 7b4187b; `test:perf` has not.)
 
 ### 3.2 Oracle gate (DETERMINISTIC)

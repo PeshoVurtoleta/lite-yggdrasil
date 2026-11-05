@@ -38,6 +38,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Oracle, MAX } from './oracle.mjs';
 import { SumSequence } from '../Yggdrasil.js';
+import { meter, METER_REASON } from './meter-gate.mjs';
 import { BlockedArray } from '../benchmark/rivals/BlockedArray.js';
 import { FenwickRebuild } from '../benchmark/rivals/FenwickRebuild.js';
 import { loadVariant } from '../benchmark/rivals/variant.mjs';
@@ -1211,36 +1212,106 @@ describe('child (--expose-gc): A4 lite-leak, R7 rival meter lanes + must-fail co
     assert.deepEqual([k.size, k.alive, k.fin, k.notReset, k.leaks, k.findings, k.warns], [0, 0, 0, 0, 0, 0, 0]);
     assert.ok(r.ctlRetain.size >= 1, 'ctl.retain (clear() skipped, views kept) must leave size() >= 1');
   });
-  test('R7 / A3: every rival lane < 1 B/op, maxMajor 0; both controls read >= 1 B/op', () => {
-    const r = runChild();
-    // JSON carries NaN (every window discarded) as null: a non-number reading fails closed, lane or control
-    for (const l of r.lanes) console.log('# lane ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
-    for (const l of r.controls) console.log('# control ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
+  // Y-CI-6a (burst 44): every lane B/op row and every must-fail control row goes through test/meter-gate.mjs
+  // (asserted on node >= 24, REPORTED on < 24); counts, field presence, split / merge / equalize / len and gc stay
+  // asserted on every version. Prints live in the test bodies, so the replay below prints nothing per lane.
+  // meter rows: 24 lanes + 2 controls = 26
+  function r7Gate(r, ver = process.versions.node, log = console.log) {
+    const m = meter(ver, log);
     assert.equal(r.lanes.length, 24);
-    for (const l of r.lanes) assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+    for (const l of r.lanes) {
+      // JSON carries NaN (every window discarded) as null: a non-number reading fails closed, lane or control
+      assert.ok(Object.hasOwn(l, 'bop'), l.name + ' has no bop field');
+      m.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+    }
     assert.equal(r.gc.ok, true, 'gc region: ' + JSON.stringify(r.gc));
-    assert.equal(r.gc.major, 0);
+    assert.equal(r.gc.major, 0, 'lanes-region gc major');
     assert.equal(r.controls.length, 2);
-    for (const l of r.controls) assert.ok(typeof l.bop === 'number' && !(l.bop < 1), l.name + ' must FAIL bop < 1, read ' + l.bop);
-  });
-  test('EDIT: interleaved insertAt / removeAt on arena view 1, both variants, dims 1 / 4: < 16 B per 2000-op call and < 1 B/op; both controls fail', () => {
-    const r = runChild();
-    const shown = (l) => l.name + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' splits=' + l.splits +
-      ' merges=' + l.merges + ' equalizes=' + l.equalizes + ' len=' + l.len + ' [' + l.wins + ']';
-    for (const l of r.edit) console.log('# edit ' + shown(l));
-    for (const l of r.editCtl) console.log('# edit control ' + shown(l));
+    for (const l of r.controls) {
+      assert.ok(Object.hasOwn(l, 'bop'), l.name + ' has no bop field');
+      m.ok(typeof l.bop === 'number' && !(l.bop < 1), l.name + ' must FAIL bop < 1, read ' + l.bop);
+    }
+    const rep = m.report();
+    assert.equal(rep.asserted + rep.reported, 26, 'meter rows');
+    assert.equal(rep.gated ? rep.reported : rep.asserted, 0, 'every meter row on one tier');
+    return rep;
+  }
+  // meter rows: 4 edit lanes x (perCall + bop) + 2 edit controls = 10
+  function editGate(r, ver = process.versions.node, log = console.log) {
+    const m = meter(ver, log);
     assert.equal(r.edit.length, 4);
     for (const l of r.edit) {
       // JSON carries NaN as null: a non-number reading fails closed
-      assert.ok(typeof l.perCall === 'number' && l.perCall < 16, l.name + ' perCall ' + l.perCall);
-      assert.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
+      assert.ok(Object.hasOwn(l, 'perCall') && Object.hasOwn(l, 'bop'), l.name + ' has no perCall / bop field');
+      m.ok(typeof l.perCall === 'number' && l.perCall < 16, l.name + ' perCall ' + l.perCall);
+      m.ok(typeof l.bop === 'number' && l.bop < 1, l.name + ' bop ' + l.bop);
       assert.ok(l.splits > 0 && l.merges > 0 && l.equalizes > 0, l.name + ' did not reach split / merge / equalize');
       assert.equal(l.len, 4096, l.name + ' length');
     }
     assert.equal(r.editCtl.length, 2);
     for (const l of r.editCtl) {
       assert.ok(l.merges > 0 && l.equalizes > 0, l.name + ' did not reach merge / equalize');
-      assert.ok(typeof l.perCall === 'number' && !(l.perCall < 16), l.name + ' must FAIL perCall < 16, read ' + l.perCall);
+      assert.ok(Object.hasOwn(l, 'perCall'), l.name + ' has no perCall field');
+      m.ok(typeof l.perCall === 'number' && !(l.perCall < 16), l.name + ' must FAIL perCall < 16, read ' + l.perCall);
     }
+    const rep = m.report();
+    assert.equal(rep.asserted + rep.reported, 10, 'meter rows');
+    assert.equal(rep.gated ? rep.reported : rep.asserted, 0, 'every meter row on one tier');
+    return rep;
+  }
+  test('R7 / A3: every rival lane < 1 B/op, maxMajor 0; both controls read >= 1 B/op', () => {
+    const r = runChild();
+    for (const l of r.lanes) console.log('# lane ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
+    for (const l of r.controls) console.log('# control ' + l.name + ' bop=' + String(l.bop) + ' [' + l.wins + ']');
+    r7Gate(r);
+  });
+  const shown = (l) => l.name + ' perCall=' + String(l.perCall) + ' bop=' + String(l.bop) + ' splits=' + l.splits +
+    ' merges=' + l.merges + ' equalizes=' + l.equalizes + ' len=' + l.len + ' [' + l.wins + ']';
+  test('EDIT: interleaved insertAt / removeAt on arena view 1, both variants, dims 1 / 4: < 16 B per 2000-op call and < 1 B/op; both controls fail', () => {
+    const r = runChild();
+    for (const l of r.edit) console.log('# edit ' + shown(l));
+    for (const l of r.editCtl) console.log('# edit control ' + shown(l));
+    editGate(r);
+  });
+  // Y-CI-6a replay: the census b43 node 22.23.4 readings written into a clone of the real child. On HEAD's gates (no
+  // meter) every one of them fails; here they are REPORTED on 22.23.4 and still fail on 26.8.2, and the always-gated
+  // rows (gc major, field presence, lane count) still fail on 22.23.4.
+  test('Y-CI-6a replay: census readings in a clone of the child are REPORTED on 22.23.4 (each named outside), fail on 26.8.2; gc major 1 / a deleted perCall / a popped lane fail on 22.23.4', () => {
+    const real = runChild();
+    const injected = [];
+    const inject = () => {
+      const c = structuredClone(real);
+      injected.length = 0;
+      const e = c.edit.find((x) => x.name === 'BlockedArray.unrolled.d1.edit.view1');
+      assert.ok(e, 'no edit lane BlockedArray.unrolled.d1.edit.view1');
+      e.perCall = 11904; injected.push(e.name);
+      const l = c.lanes.find((x) => x.name === 'BlockedArray.d1.seekSum+50next');
+      assert.ok(l, 'no lane BlockedArray.d1.seekSum+50next');
+      l.bop = 1.5; injected.push(l.name);
+      c.editCtl[0].perCall = -648; injected.push(c.editCtl[0].name);
+      return c;
+    };
+    const lines = [];
+    const log = (x) => lines.push(x);
+    const c = inject();
+    const r7 = r7Gate(c, '22.23.4', log);
+    const ed = editGate(c, '22.23.4', log);
+    console.log('# replay 22.23.4 ' + JSON.stringify({ r7: r7.outside, edit: ed.outside }));
+    assert.deepEqual([r7.gated, r7.reported, ed.gated, ed.reported], [false, 26, false, 10]);
+    const outside = [...r7.outside, ...ed.outside];
+    for (const name of injected) assert.ok(outside.some((o) => o.startsWith(name + ' ')), name + ' is not an outside row: ' + JSON.stringify(outside));
+    assert.equal(lines.filter((x) => x.startsWith('# REPORTED ' + METER_REASON + ' [node 22.23.4: ')).length, 2, lines.join('\n'));
+    const quiet = () => {};
+    const named = (err) => err instanceof assert.AssertionError && injected.some((name) => err.message.startsWith(name + ' '));
+    assert.throws(() => r7Gate(inject(), '26.8.2', quiet), named);
+    assert.throws(() => editGate(inject(), '26.8.2', quiet), named);
+    const g = inject(); g.gc.major = 1;
+    assert.throws(() => r7Gate(g, '22.23.4', quiet), (err) => err instanceof assert.AssertionError && /lanes-region gc major/.test(err.message));
+    const d = inject(); delete d.edit[0].perCall;
+    assert.throws(() => editGate(d, '22.23.4', quiet), (err) => err instanceof assert.AssertionError && /has no perCall \/ bop field/.test(err.message));
+    const p = inject(); p.lanes.pop();
+    assert.throws(() => r7Gate(p, '22.23.4', quiet), assert.AssertionError);
+    const q = inject(); q.edit.pop();
+    assert.throws(() => editGate(q, '22.23.4', quiet), assert.AssertionError);
   });
 });

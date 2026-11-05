@@ -1,14 +1,19 @@
-# nightly.yml -- lite-yggdrasil daily run on the newest node and node 22 (.handoff/PLAN-ci.md, burst 42; rulings
-# Y-CI-1..4). Y-CI-2: the full `npm run verify` (npm test + test:types + the standalone test:lanes, torture and
-# kernel-lane scripts). Keep the step list in sync with ci.yml. Y-CI-3: node 'latest' and node 22 (check-latest: the
-# newest 22.x every night) x ubuntu-latest / macos-latest: 4 legs. No Windows.
+# nightly.yml -- lite-yggdrasil daily run on node 26 and node 22 (.handoff/PLAN-ci.md, burst 42; rulings Y-CI-1..4;
+# .handoff/PLAN-ci-fix.md, burst 44: Y-CI-6a, Y-CI-8). Y-CI-2: the full `npm run verify` (npm test + test:types + the
+# standalone test:lanes, torture and kernel-lane scripts). Keep the step list in sync with ci.yml. Y-CI-3 as amended by
+# Y-CI-8: node '26' and node '22' x ubuntu-latest / macos-latest: 4 legs. check-latest resolves the newest 26.x / 22.x
+# release every night; '26' is the newest STABLE major, bumped by hand to '27' once 27 ships a stable release; no
+# prerelease (alpha / nightly) node runs in CI. No Windows.
 # Y-CI-1 (tier): DETERMINISTIC gates only (correctness, exact counts, allocation / GC count lanes, torture zero-GC).
 # NOT gated: any timing / statistical claim (RULED Y-13 "none: statistical claims are REPORTED only"; a hosted
 # runner is not a decisions/0003 G-3 host), the bench scripts; no quiet lock, no timing threshold or statistical gate
 # (npm test's watchdog timeouts and its one conditional timing assert: see ci.yml).
 # A failure in a count gate is a DETERMINISTIC-tier test bug to fix, never re-run for green. The allocation,
-# --print-bytecode and --allow-natives-syntax rows are calibrated on node 26.8.2 (see ci.yml); 'latest' and 22 may
+# --print-bytecode and --allow-natives-syntax rows are calibrated on node 26.8.2 (see ci.yml); 26.x and 22 may
 # disagree: record leg / row / observed vs expected. The npm test part expects the one R-A9 skip of ci.yml.
+# Y-CI-6a: on the node 22 legs the B/op lane rows and the per-call / per-op must-fail control rows of the 4 alloc
+# children are REPORTED (a '# REPORTED' line, test/meter-gate.mjs), not asserted; gc major 0, retention, coverage and
+# lane-count rows stay gated on every leg.
 # A nightly failure turns the nightly red; it is never a required check for a push. GitHub runs a schedule only
 # from the default branch and pauses it after 60 days without repository activity (re-enable in the Actions tab).
 # Y-CI-4 (deps): no lockfile, no npm cache; `npm ls --depth=0` (MUST exit 0) records the devDependency versions
@@ -45,7 +50,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ['latest', '22']
+        node: ['26', '22']
     steps:
       - name: checkout
         uses: actions/checkout@v7

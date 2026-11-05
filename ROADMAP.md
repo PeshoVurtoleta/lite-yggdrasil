@@ -176,7 +176,11 @@ What makes it public and honest:
   CHANGELOG only from a run log of THIS cycle, after the final gate run (suite law).
 - AS-BUILT (g2b-3a, 2026-11-04): the sweep / A/B / crossover / loss-table tooling is built and gated
   (benchmark/Bench.mjs,
-  Compare.mjs, Report.mjs; benchmark/METHODOLOGY.md "Sweep, A/B, crossover"); the timed runs (g2b-3b) are PENDING.
+  Compare.mjs, Report.mjs; benchmark/METHODOLOGY.md "Sweep, A/B, crossover").
+- RAN (g2b-3b, 2026-11-05): the QUIET chunkCap sweep wrote benchmark/chunkcap.json (committed 6b70f54); the run of
+  record at 6b70f54 read INCONCLUSIVE (R-BA29: twin A/A not TIE at 28 of 204 (scenario, n, phase) cells), so it is
+  not committed and the README keeps its PENDING form (R-BA39), and BA-16 takes no verdict from it (R-BA40); rulings
+  and the REPORTED readings: RESEARCH 14.4. Next: the twin A/A noise research, then a new run of record.
 - Benchmark rulings R-BA1..R-BA8 -- RULED (maintainer, AskUserQuestion, 2026-10-31; cited by benchmark/METHODOLOGY.md;
   option text quoted verbatim from the maintainer-local, gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings";
   R-BA9..R-BA11 are quoted in section 6 (Bench-ADOPT notes, "Competent rivals -- RULED"), R-BA12 in section 5,

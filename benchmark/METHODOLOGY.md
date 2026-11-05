@@ -16,8 +16,8 @@ README pin test in B4. Committed in burst 31-32 (5b5f375, bd7faf3): the rival fi
 rival tests and B/op lanes, and the scenario runner with S7 / S7b. S1a / S1b are
 built (3a7a668) and S2 / S2a / S2b are built in the working tree (g2b-2b, R-BA17,
 R-BA19..R-BA27; uncommitted at this edit); the chunkCap sweep / A/B / crossover tooling is built
-(g2b-3a); its timed runs, the unroll A/B and the run of record are g2b-3b (PENDING). The sections below are the
-contract they are built to.
+(g2b-3a); its timed runs ran in g2b-3b (picks in benchmark/chunkcap.json, 6b70f54; the run of record INCONCLUSIVE, not
+committed); a new run of record is PENDING. The sections below are the contract they are built to.
 
 ## The one rule
 
@@ -219,8 +219,9 @@ than 8 samples -> `n/a` (the string), never NaN / Infinity / 0.
 ## Sweep, A/B, crossover
 
 Status: the tooling is built and gated (g2b-3a: Bench.mjs, Compare.mjs, Report.mjs; rulings R-BA28..R-BA36, SPEC
-BA-28..BA-36). The timed runs (the QUIET chunkCap sweep and the run of record, g2b-3b) are PENDING: this section holds
-no measured number.
+BA-28..BA-36). The QUIET chunkCap sweep ran (g2b-3b, benchmark/chunkcap.json at 6b70f54); the run of record read
+INCONCLUSIVE (R-BA29) and is not committed (R-BA39), so a new run of record is PENDING: this section holds no measured
+number.
 
 - Passes (BA-28): K = 5 interleaved passes, pass-major. Inside each (scenario, n) group the label order is rotated
   left by one per pass (Compare.mjs rotateLabels). A child times 5 samples per phase (3 under --quick, never a run

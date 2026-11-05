@@ -948,7 +948,20 @@ pays 0 extra bytes and 0 extra instructions (ROADMAP 3.7).
 
 ### 12.3 The blocked-array rival draft (B-31, section 4.1)
 
-Status (2026-11-04): tooling built (g2b-3a), runs PENDING (g2b-3b).
+Status (2026-11-05): tooling built (g2b-3a); g2b-3b ran the inlining diff (no verdict, below) and the timed A/B
+inside the run of record (INCONCLUSIVE, section 14.4).
+
+Inlining (g2b-3b, 2026-11-05, REPORTED, not gated): LiteUtils/inlining-budget-diff.sh (sha256/8 740da13b) driver mode,
+`--fn _locate,indexAtSum`, benchmark/inl/unrolled.mjs (before) vs plain.mjs (after), 3 runs per side per tier, node
+v26.8.2 (V8 14.6.202.34), commit 2780610, quiet-lock QUIET (load1 1.51). Verdict NO-VERDICT (exit 2): the TurboFan
+guard printed "no trace of indexAtSum in before run 1", although the same report's budget section lists indexAtSum@TF
+as a compile unit (lead, not checked: the guard may count only decision lines naming the function). Run-1 readings:
+bytecode _locate 514 -> 162 bytes, indexAtSum 734 -> 493 bytes; TurboFan rejects the unrolled _locate ("exceeds
+bytecode limit", single-inline limit 460) in 4 compile units (getMeasure, insertAt x 2, removeAt) and inlines the
+plain _locate (162 bytes charged) in the same 4; Maglev inlines neither (unrolled: "exceeds bytecode limit" in all 4;
+plain: size >= max-size 100 in getMeasure / removeAt, call frequency < 0.95 in insertAt x 2). Null control
+(unrolled vs unrolled): identical decision multisets in both tiers, verdict also NO-VERDICT by the same guard. Logs:
+.handoff/evidence/bench-adopt/g2b3b/inl.log, inl-A/, inl-N/ (maintainer-local).
 
 researchNotes/BlockedArray.md holds a BlockedArray class mirroring the SumSequence API (insertAt / removeAt /
 setMeasure / getMeasure / entityAt / sumBefore / indexAtSum / splitAt / append / clear / arena, same error
@@ -1248,6 +1261,49 @@ gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"; recorded 2026-11-0
   unmeasured twin control is never treated as TIE). Every MEASURED fixture with scenario cells gains its
   comparisonOf(results).comparison, including the fixtures in test/Compare.test.mjs and the Readme rows of
   test/Bench.test.mjs (B3 r3 owns those test files)."
+
+Rulings of the g2b-3b runs (maintainer, AskUserQuestion, 2026-11-05; R-BA37 asked before the sweep, R-BA39 / R-BA40
+after the run of record; option text quoted verbatim from the maintainer-local .handoff/SPEC-bench-adopt.md,
+BA-37..BA-40; each covers the g2b-3b runs only):
+
+- R-BA37 (Q-DIRTY, asked before the sweep) = maintainer reply "commited" for option "Commit R-LU first": "The
+  maintainer commits the R-LU1 / R-LU2 ROADMAP hunks before the sweep, so the sweep records a clean short sha; the
+  burst does not start the --strict sweep until HEAD is clean." (landed as 2780610).
+- R-BA38 (Q-SEQ) = "Commit picks between". Option text: "After a QUIET sweep the burst writes
+  COMMIT_MSG-g2b3b-picks.txt; the maintainer commits benchmark/chunkcap.json; the run of record starts only from that
+  clean HEAD, still inside the same quiet window if it lasts." (landed as 6b70f54).
+- R-BA39 (Q-PUBINC, asked after the run of record) = "Keep PENDING (Recommended)". Option text:
+  "benchmark/results.json and report.html are not committed: they are archived under
+  .handoff/evidence/bench-adopt/g2b3b/ as the INCONCLUSIVE run of record, README keeps the PENDING form, no RELEASE
+  DUE from this run. The next run of record runs only after the twin A/A noise research (SumMap research burst
+  probes) rules any band / control change."
+- R-BA40 (Q-BA16) = "No verdict (Recommended)". Option text: "R-BA29 makes every comparison of this run
+  INCONCLUSIVE, so BA-16 takes no GO, NO-GO or PAUSE from it. The readings are recorded as REPORTED evidence only.
+  The twin A/A noise research runs first, then a new run of record decides BA-16."
+
+The g2b-3b runs (REPORTED; INCONCLUSIVE, so they decide nothing: R-BA40). Host: Apple M4 Pro x12, darwin arm64,
+node v26.8.2, quiet-lock QUIET at start (baseline load1 2.21).
+
+- Sweep: `--sweep chunkCap --publish --all --runs 5` at 2780610 (Yggdrasil.js sha256/8 e0618227), 2026-11-05
+  05:17Z, load1 2.78 -> 1.64, 285 cells x 5 passes, 659 s, exit 0 -> benchmark/chunkcap.json (sha256/8 921c2b86):
+  57 (scenario, n) picks, 22 'edge', all at the top of the grid (every S2 / S2a n, S2b at n <= 8192).
+- Run of record: `--publish --all --runs 5 --picks benchmark/chunkcap.json` at 6b70f54 (same main-file sha),
+  2026-11-05 05:39Z -> 08:04Z, load1 1.51 -> 1.24, 358 cells x 5 passes, 8,689 s, exit 0; the checksum / endState /
+  traceHash cross-check agreed in all 57 (scenario, n) groups. Disclosed noise: the drift sentinel read 14%
+  (SumSequence/D2 1543 -> 1329 ns/op; limit 10%), and the 15-minute load average reached 12.0 around 07:39Z
+  (maintainer: WebStorm at ~100% CPU on the same host; an uptime reading taken by the burst, not in record.log).
+  INCONCLUSIVE: twin vs BlockedArray read other than TIE at 28 of 204 (scenario, n, phase) cells, 5 of them on the
+  crossover phase (blend: S2@32768 1.067, S2a@1024 0.921, S2a@8192 1.054; S2b bulk: S2b@8192 1.097, S2b@32768
+  1.063); the widest was S1b@1024 edit at 1.294.
+- Readings (median-of-K blend, S2b bulk; rival / SumSequence, < 0.95 = rival wins; INCONCLUSIVE): vs BlockedArray,
+  SumSequence wins S1a / S1b at every measured n (1.14 / 1.16 at 1024, 14.4 / 14.9 at 1e6); BlockedArray wins S2 at
+  every n <= 100,000 (0.31 at 1024, 0.895 at 100,000), TIE at 131,072 (1.05); S2a: BlockedArray wins at every n;
+  S2b bulk: BlockedArray wins at n <= 4096, TIE at 8192 (1.005), SumSequence from 16,384; S7 / S7b:
+  FenwickRebuild.suffix wins at every n (0.31..0.59). Unrolled vs plain BlockedArray (plain / unrolled blend): plain
+  is faster on S7 / S7b (0.67..0.78), S2@1024 (0.931) and S2a@1024 (0.886); unrolled is faster on S2a at n >= 2048
+  (1.25..1.89), on S2 at 16,384 / 32,768 / 100,000 (1.065 / 1.140 / 1.073) and on S2b@8192 (1.063); S1a / S1b within
+  0.965..1.016; the rest TIE. Table: .handoff/evidence/bench-adopt/g2b3b/blend-table.txt (maintainer-local; from
+  Compare.medianOfK over the archived results.json).
 
 ## 15. Scenario mixes for S1, S2 and S7 (maintainer research, checked 2026-10-31; RULED R-BA15..R-BA18, 2026-11-01)
 

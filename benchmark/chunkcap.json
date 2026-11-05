@@ -1,0 +1,936 @@
+{
+  "schema": "yggdrasil-chunkcap/1",
+  "meta": {
+    "date": "2026-11-05T05:17:29.573Z",
+    "hostState": "QUIET",
+    "commit": "2780610",
+    "mainFileSha": "e0618227",
+    "runCount": 5,
+    "loadAvgStart": [
+      2.77587890625,
+      3.5185546875,
+      7.50927734375
+    ],
+    "loadAvgEnd": [
+      1.64453125,
+      2.00244140625,
+      4.5341796875
+    ],
+    "quietLockWhy": "QUIET (load1 2.78, baseline 2.21, 12 cores)",
+    "command": "node benchmark/Bench.mjs --sweep chunkCap --publish --all --runs 5"
+  },
+  "picks": [
+    {
+      "scenario": "S1a",
+      "n": 1024,
+      "capacity": 1025,
+      "d": 36,
+      "grid": [
+        12,
+        20,
+        36,
+        72,
+        144
+      ],
+      "chunkCap": 36,
+      "edge": false,
+      "nsPerEvent": 270.3479
+    },
+    {
+      "scenario": "S1a",
+      "n": 2048,
+      "capacity": 2049,
+      "d": 48,
+      "grid": [
+        12,
+        24,
+        48,
+        96,
+        192
+      ],
+      "chunkCap": 48,
+      "edge": false,
+      "nsPerEvent": 330.52085
+    },
+    {
+      "scenario": "S1a",
+      "n": 4096,
+      "capacity": 4097,
+      "d": 68,
+      "grid": [
+        20,
+        36,
+        68,
+        136,
+        272
+      ],
+      "chunkCap": 68,
+      "edge": false,
+      "nsPerEvent": 424.54795
+    },
+    {
+      "scenario": "S1a",
+      "n": 8192,
+      "capacity": 8193,
+      "d": 92,
+      "grid": [
+        24,
+        48,
+        92,
+        184,
+        368
+      ],
+      "chunkCap": 92,
+      "edge": false,
+      "nsPerEvent": 553.1
+    },
+    {
+      "scenario": "S1a",
+      "n": 16384,
+      "capacity": 16385,
+      "d": 132,
+      "grid": [
+        36,
+        68,
+        132,
+        264,
+        528
+      ],
+      "chunkCap": 132,
+      "edge": false,
+      "nsPerEvent": 742.77085
+    },
+    {
+      "scenario": "S1a",
+      "n": 32768,
+      "capacity": 32769,
+      "d": 184,
+      "grid": [
+        48,
+        92,
+        184,
+        368,
+        736
+      ],
+      "chunkCap": 184,
+      "edge": false,
+      "nsPerEvent": 989.0896
+    },
+    {
+      "scenario": "S1a",
+      "n": 65536,
+      "capacity": 65537,
+      "d": 260,
+      "grid": [
+        68,
+        132,
+        260,
+        520,
+        1040
+      ],
+      "chunkCap": 260,
+      "edge": false,
+      "nsPerEvent": 1351.9375
+    },
+    {
+      "scenario": "S1a",
+      "n": 100000,
+      "capacity": 100001,
+      "d": 320,
+      "grid": [
+        80,
+        160,
+        320,
+        640,
+        1280
+      ],
+      "chunkCap": 320,
+      "edge": false,
+      "nsPerEvent": 1597.5958
+    },
+    {
+      "scenario": "S1a",
+      "n": 131072,
+      "capacity": 131073,
+      "d": 364,
+      "grid": [
+        92,
+        184,
+        364,
+        728,
+        1456
+      ],
+      "chunkCap": 364,
+      "edge": false,
+      "nsPerEvent": 1791.13545
+    },
+    {
+      "scenario": "S1a",
+      "n": 262144,
+      "capacity": 262145,
+      "d": 516,
+      "grid": [
+        132,
+        260,
+        516,
+        1032,
+        2064
+      ],
+      "chunkCap": 516,
+      "edge": false,
+      "nsPerEvent": 2376.7375
+    },
+    {
+      "scenario": "S1a",
+      "n": 524288,
+      "capacity": 524289,
+      "d": 728,
+      "grid": [
+        184,
+        364,
+        728,
+        1456,
+        2912
+      ],
+      "chunkCap": 728,
+      "edge": false,
+      "nsPerEvent": 3641.51045
+    },
+    {
+      "scenario": "S1a",
+      "n": 1000000,
+      "capacity": 1000001,
+      "d": 1004,
+      "grid": [
+        252,
+        504,
+        1004,
+        2008,
+        4016
+      ],
+      "chunkCap": 1004,
+      "edge": false,
+      "nsPerEvent": 4767.4604
+    },
+    {
+      "scenario": "S1b",
+      "n": 1024,
+      "capacity": 1025,
+      "d": 36,
+      "grid": [
+        12,
+        20,
+        36,
+        72,
+        144
+      ],
+      "chunkCap": 36,
+      "edge": false,
+      "nsPerEvent": 272.6521
+    },
+    {
+      "scenario": "S1b",
+      "n": 2048,
+      "capacity": 2049,
+      "d": 48,
+      "grid": [
+        12,
+        24,
+        48,
+        96,
+        192
+      ],
+      "chunkCap": 48,
+      "edge": false,
+      "nsPerEvent": 339.025
+    },
+    {
+      "scenario": "S1b",
+      "n": 4096,
+      "capacity": 4097,
+      "d": 68,
+      "grid": [
+        20,
+        36,
+        68,
+        136,
+        272
+      ],
+      "chunkCap": 68,
+      "edge": false,
+      "nsPerEvent": 408.94375
+    },
+    {
+      "scenario": "S1b",
+      "n": 8192,
+      "capacity": 8193,
+      "d": 92,
+      "grid": [
+        24,
+        48,
+        92,
+        184,
+        368
+      ],
+      "chunkCap": 92,
+      "edge": false,
+      "nsPerEvent": 556.7771
+    },
+    {
+      "scenario": "S1b",
+      "n": 16384,
+      "capacity": 16385,
+      "d": 132,
+      "grid": [
+        36,
+        68,
+        132,
+        264,
+        528
+      ],
+      "chunkCap": 132,
+      "edge": false,
+      "nsPerEvent": 720.0771
+    },
+    {
+      "scenario": "S1b",
+      "n": 32768,
+      "capacity": 32769,
+      "d": 184,
+      "grid": [
+        48,
+        92,
+        184,
+        368,
+        736
+      ],
+      "chunkCap": 184,
+      "edge": false,
+      "nsPerEvent": 949.07085
+    },
+    {
+      "scenario": "S1b",
+      "n": 65536,
+      "capacity": 65537,
+      "d": 260,
+      "grid": [
+        68,
+        132,
+        260,
+        520,
+        1040
+      ],
+      "chunkCap": 520,
+      "edge": false,
+      "nsPerEvent": 1338.44585
+    },
+    {
+      "scenario": "S1b",
+      "n": 100000,
+      "capacity": 100001,
+      "d": 320,
+      "grid": [
+        80,
+        160,
+        320,
+        640,
+        1280
+      ],
+      "chunkCap": 320,
+      "edge": false,
+      "nsPerEvent": 1613.28125
+    },
+    {
+      "scenario": "S1b",
+      "n": 131072,
+      "capacity": 131073,
+      "d": 364,
+      "grid": [
+        92,
+        184,
+        364,
+        728,
+        1456
+      ],
+      "chunkCap": 364,
+      "edge": false,
+      "nsPerEvent": 1795.88335
+    },
+    {
+      "scenario": "S1b",
+      "n": 262144,
+      "capacity": 262145,
+      "d": 516,
+      "grid": [
+        132,
+        260,
+        516,
+        1032,
+        2064
+      ],
+      "chunkCap": 516,
+      "edge": false,
+      "nsPerEvent": 2587.0667
+    },
+    {
+      "scenario": "S1b",
+      "n": 524288,
+      "capacity": 524289,
+      "d": 728,
+      "grid": [
+        184,
+        364,
+        728,
+        1456,
+        2912
+      ],
+      "chunkCap": 728,
+      "edge": false,
+      "nsPerEvent": 3565.64375
+    },
+    {
+      "scenario": "S1b",
+      "n": 1000000,
+      "capacity": 1000001,
+      "d": 1004,
+      "grid": [
+        252,
+        504,
+        1004,
+        2008,
+        4016
+      ],
+      "chunkCap": 1004,
+      "edge": false,
+      "nsPerEvent": 5006.86665
+    },
+    {
+      "scenario": "S2",
+      "n": 1024,
+      "capacity": 1025,
+      "d": 36,
+      "grid": [
+        12,
+        20,
+        36,
+        72,
+        144
+      ],
+      "chunkCap": 144,
+      "edge": true,
+      "nsPerEvent": 166.43335
+    },
+    {
+      "scenario": "S2",
+      "n": 2048,
+      "capacity": 2049,
+      "d": 48,
+      "grid": [
+        12,
+        24,
+        48,
+        96,
+        192
+      ],
+      "chunkCap": 192,
+      "edge": true,
+      "nsPerEvent": 197.20835
+    },
+    {
+      "scenario": "S2",
+      "n": 4096,
+      "capacity": 4097,
+      "d": 68,
+      "grid": [
+        20,
+        36,
+        68,
+        136,
+        272
+      ],
+      "chunkCap": 272,
+      "edge": true,
+      "nsPerEvent": 244.83335
+    },
+    {
+      "scenario": "S2",
+      "n": 8192,
+      "capacity": 8193,
+      "d": 92,
+      "grid": [
+        24,
+        48,
+        92,
+        184,
+        368
+      ],
+      "chunkCap": 368,
+      "edge": true,
+      "nsPerEvent": 297.49375
+    },
+    {
+      "scenario": "S2",
+      "n": 16384,
+      "capacity": 16385,
+      "d": 132,
+      "grid": [
+        36,
+        68,
+        132,
+        264,
+        528
+      ],
+      "chunkCap": 528,
+      "edge": true,
+      "nsPerEvent": 374.40835
+    },
+    {
+      "scenario": "S2",
+      "n": 32768,
+      "capacity": 32769,
+      "d": 184,
+      "grid": [
+        48,
+        92,
+        184,
+        368,
+        736
+      ],
+      "chunkCap": 736,
+      "edge": true,
+      "nsPerEvent": 534.525
+    },
+    {
+      "scenario": "S2",
+      "n": 65536,
+      "capacity": 65537,
+      "d": 260,
+      "grid": [
+        68,
+        132,
+        260,
+        520,
+        1040
+      ],
+      "chunkCap": 1040,
+      "edge": true,
+      "nsPerEvent": 704.5354
+    },
+    {
+      "scenario": "S2",
+      "n": 100000,
+      "capacity": 100001,
+      "d": 320,
+      "grid": [
+        80,
+        160,
+        320,
+        640,
+        1280
+      ],
+      "chunkCap": 1280,
+      "edge": true,
+      "nsPerEvent": 884.17915
+    },
+    {
+      "scenario": "S2",
+      "n": 131072,
+      "capacity": 131073,
+      "d": 364,
+      "grid": [
+        92,
+        184,
+        364,
+        728,
+        1456
+      ],
+      "chunkCap": 1456,
+      "edge": true,
+      "nsPerEvent": 1049.025
+    },
+    {
+      "scenario": "S2a",
+      "n": 1024,
+      "capacity": 1025,
+      "d": 36,
+      "grid": [
+        12,
+        20,
+        36,
+        72,
+        144
+      ],
+      "chunkCap": 144,
+      "edge": true,
+      "nsPerEvent": 39.614625
+    },
+    {
+      "scenario": "S2a",
+      "n": 2048,
+      "capacity": 2049,
+      "d": 48,
+      "grid": [
+        12,
+        24,
+        48,
+        96,
+        192
+      ],
+      "chunkCap": 192,
+      "edge": true,
+      "nsPerEvent": 44.7734375
+    },
+    {
+      "scenario": "S2a",
+      "n": 4096,
+      "capacity": 4097,
+      "d": 68,
+      "grid": [
+        20,
+        36,
+        68,
+        136,
+        272
+      ],
+      "chunkCap": 272,
+      "edge": true,
+      "nsPerEvent": 49.276
+    },
+    {
+      "scenario": "S2a",
+      "n": 8192,
+      "capacity": 8193,
+      "d": 92,
+      "grid": [
+        24,
+        48,
+        92,
+        184,
+        368
+      ],
+      "chunkCap": 368,
+      "edge": true,
+      "nsPerEvent": 57.1510625
+    },
+    {
+      "scenario": "S2a",
+      "n": 16384,
+      "capacity": 16385,
+      "d": 132,
+      "grid": [
+        36,
+        68,
+        132,
+        264,
+        528
+      ],
+      "chunkCap": 528,
+      "edge": true,
+      "nsPerEvent": 66.3541875
+    },
+    {
+      "scenario": "S2a",
+      "n": 32768,
+      "capacity": 32769,
+      "d": 184,
+      "grid": [
+        48,
+        92,
+        184,
+        368,
+        736
+      ],
+      "chunkCap": 736,
+      "edge": true,
+      "nsPerEvent": 86.546875
+    },
+    {
+      "scenario": "S2a",
+      "n": 65536,
+      "capacity": 65537,
+      "d": 260,
+      "grid": [
+        68,
+        132,
+        260,
+        520,
+        1040
+      ],
+      "chunkCap": 1040,
+      "edge": true,
+      "nsPerEvent": 107.5625
+    },
+    {
+      "scenario": "S2a",
+      "n": 100000,
+      "capacity": 100001,
+      "d": 320,
+      "grid": [
+        80,
+        160,
+        320,
+        640,
+        1280
+      ],
+      "chunkCap": 1280,
+      "edge": true,
+      "nsPerEvent": 137.599
+    },
+    {
+      "scenario": "S2a",
+      "n": 131072,
+      "capacity": 131073,
+      "d": 364,
+      "grid": [
+        92,
+        184,
+        364,
+        728,
+        1456
+      ],
+      "chunkCap": 1456,
+      "edge": true,
+      "nsPerEvent": 156.349
+    },
+    {
+      "scenario": "S2b",
+      "n": 1024,
+      "capacity": 1025,
+      "d": 36,
+      "grid": [
+        12,
+        20,
+        36,
+        72,
+        144
+      ],
+      "chunkCap": 144,
+      "edge": true,
+      "nsPerEvent": 707.292
+    },
+    {
+      "scenario": "S2b",
+      "n": 2048,
+      "capacity": 2049,
+      "d": 48,
+      "grid": [
+        12,
+        24,
+        48,
+        96,
+        192
+      ],
+      "chunkCap": 192,
+      "edge": true,
+      "nsPerEvent": 790.041
+    },
+    {
+      "scenario": "S2b",
+      "n": 4096,
+      "capacity": 4097,
+      "d": 68,
+      "grid": [
+        20,
+        36,
+        68,
+        136,
+        272
+      ],
+      "chunkCap": 272,
+      "edge": true,
+      "nsPerEvent": 1004.208
+    },
+    {
+      "scenario": "S2b",
+      "n": 8192,
+      "capacity": 8193,
+      "d": 92,
+      "grid": [
+        24,
+        48,
+        92,
+        184,
+        368
+      ],
+      "chunkCap": 368,
+      "edge": true,
+      "nsPerEvent": 1337.709
+    },
+    {
+      "scenario": "S2b",
+      "n": 16384,
+      "capacity": 16385,
+      "d": 132,
+      "grid": [
+        36,
+        68,
+        132,
+        264,
+        528
+      ],
+      "chunkCap": 264,
+      "edge": false,
+      "nsPerEvent": 2225.791
+    },
+    {
+      "scenario": "S2b",
+      "n": 32768,
+      "capacity": 32769,
+      "d": 184,
+      "grid": [
+        48,
+        92,
+        184,
+        368,
+        736
+      ],
+      "chunkCap": 368,
+      "edge": false,
+      "nsPerEvent": 3077.75
+    },
+    {
+      "scenario": "S2b",
+      "n": 65536,
+      "capacity": 65537,
+      "d": 260,
+      "grid": [
+        68,
+        132,
+        260,
+        520,
+        1040
+      ],
+      "chunkCap": 520,
+      "edge": false,
+      "nsPerEvent": 4412
+    },
+    {
+      "scenario": "S2b",
+      "n": 100000,
+      "capacity": 100001,
+      "d": 320,
+      "grid": [
+        80,
+        160,
+        320,
+        640,
+        1280
+      ],
+      "chunkCap": 640,
+      "edge": false,
+      "nsPerEvent": 5436.041
+    },
+    {
+      "scenario": "S2b",
+      "n": 131072,
+      "capacity": 131073,
+      "d": 364,
+      "grid": [
+        92,
+        184,
+        364,
+        728,
+        1456
+      ],
+      "chunkCap": 728,
+      "edge": false,
+      "nsPerEvent": 6392.333
+    },
+    {
+      "scenario": "S7",
+      "n": 10000,
+      "capacity": 10000,
+      "d": 100,
+      "grid": [
+        28,
+        52,
+        100,
+        200,
+        400
+      ],
+      "chunkCap": 200,
+      "edge": false,
+      "nsPerEvent": 78.14165
+    },
+    {
+      "scenario": "S7",
+      "n": 100000,
+      "capacity": 100000,
+      "d": 320,
+      "grid": [
+        80,
+        160,
+        320,
+        640,
+        1280
+      ],
+      "chunkCap": 640,
+      "edge": false,
+      "nsPerEvent": 207.62085
+    },
+    {
+      "scenario": "S7",
+      "n": 1000000,
+      "capacity": 1000000,
+      "d": 1000,
+      "grid": [
+        252,
+        500,
+        1000,
+        2000,
+        4000
+      ],
+      "chunkCap": 2000,
+      "edge": false,
+      "nsPerEvent": 598.5396
+    },
+    {
+      "scenario": "S7b",
+      "n": 10000,
+      "capacity": 10000,
+      "d": 100,
+      "grid": [
+        28,
+        52,
+        100,
+        200,
+        400
+      ],
+      "chunkCap": 200,
+      "edge": false,
+      "nsPerEvent": 127.225
+    },
+    {
+      "scenario": "S7b",
+      "n": 100000,
+      "capacity": 100000,
+      "d": 320,
+      "grid": [
+        80,
+        160,
+        320,
+        640,
+        1280
+      ],
+      "chunkCap": 640,
+      "edge": false,
+      "nsPerEvent": 347.01875
+    },
+    {
+      "scenario": "S7b",
+      "n": 1000000,
+      "capacity": 1000000,
+      "d": 1000,
+      "grid": [
+        252,
+        500,
+        1000,
+        2000,
+        4000
+      ],
+      "chunkCap": 2000,
+      "edge": false,
+      "nsPerEvent": 1014.34585
+    }
+  ]
+}

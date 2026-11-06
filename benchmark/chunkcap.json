@@ -1,22 +1,22 @@
 {
   "schema": "yggdrasil-chunkcap/1",
   "meta": {
-    "date": "2026-11-05T05:17:29.573Z",
+    "date": "2026-11-06T04:17:37.608Z",
     "hostState": "QUIET",
-    "commit": "2780610",
+    "commit": "ab168eb",
     "mainFileSha": "e0618227",
     "runCount": 5,
     "loadAvgStart": [
-      2.77587890625,
-      3.5185546875,
-      7.50927734375
+      1.11474609375,
+      1.166015625,
+      3.95361328125
     ],
     "loadAvgEnd": [
-      1.64453125,
-      2.00244140625,
-      4.5341796875
+      4.88525390625,
+      10.5283203125,
+      10.16650390625
     ],
-    "quietLockWhy": "QUIET (load1 2.78, baseline 2.21, 12 cores)",
+    "quietLockWhy": "QUIET (load1 1.11, baseline 2.21, 12 cores)",
     "command": "node benchmark/Bench.mjs --sweep chunkCap --publish --all --runs 5"
   },
   "picks": [
@@ -30,11 +30,12 @@
         20,
         36,
         72,
-        144
+        144,
+        288
       ],
       "chunkCap": 36,
       "edge": false,
-      "nsPerEvent": 270.3479
+      "nsPerEvent": 307.88125
     },
     {
       "scenario": "S1a",
@@ -46,11 +47,12 @@
         24,
         48,
         96,
-        192
+        192,
+        384
       ],
       "chunkCap": 48,
       "edge": false,
-      "nsPerEvent": 330.52085
+      "nsPerEvent": 365.3375
     },
     {
       "scenario": "S1a",
@@ -62,11 +64,12 @@
         36,
         68,
         136,
-        272
+        272,
+        544
       ],
       "chunkCap": 68,
       "edge": false,
-      "nsPerEvent": 424.54795
+      "nsPerEvent": 469.8896
     },
     {
       "scenario": "S1a",
@@ -78,11 +81,12 @@
         48,
         92,
         184,
-        368
+        368,
+        736
       ],
-      "chunkCap": 92,
+      "chunkCap": 184,
       "edge": false,
-      "nsPerEvent": 553.1
+      "nsPerEvent": 632.9542
     },
     {
       "scenario": "S1a",
@@ -94,11 +98,12 @@
         68,
         132,
         264,
-        528
+        528,
+        1056
       ],
       "chunkCap": 132,
       "edge": false,
-      "nsPerEvent": 742.77085
+      "nsPerEvent": 839.76665
     },
     {
       "scenario": "S1a",
@@ -110,11 +115,12 @@
         92,
         184,
         368,
-        736
+        736,
+        1472
       ],
       "chunkCap": 184,
       "edge": false,
-      "nsPerEvent": 989.0896
+      "nsPerEvent": 1122.59585
     },
     {
       "scenario": "S1a",
@@ -126,11 +132,12 @@
         132,
         260,
         520,
-        1040
+        1040,
+        2080
       ],
       "chunkCap": 260,
       "edge": false,
-      "nsPerEvent": 1351.9375
+      "nsPerEvent": 1500.5104
     },
     {
       "scenario": "S1a",
@@ -142,11 +149,12 @@
         160,
         320,
         640,
-        1280
+        1280,
+        2560
       ],
       "chunkCap": 320,
       "edge": false,
-      "nsPerEvent": 1597.5958
+      "nsPerEvent": 1820.8875
     },
     {
       "scenario": "S1a",
@@ -158,11 +166,12 @@
         184,
         364,
         728,
-        1456
+        1456,
+        2912
       ],
       "chunkCap": 364,
       "edge": false,
-      "nsPerEvent": 1791.13545
+      "nsPerEvent": 2008.18125
     },
     {
       "scenario": "S1a",
@@ -174,11 +183,12 @@
         260,
         516,
         1032,
-        2064
+        2064,
+        4128
       ],
       "chunkCap": 516,
       "edge": false,
-      "nsPerEvent": 2376.7375
+      "nsPerEvent": 2686.9125
     },
     {
       "scenario": "S1a",
@@ -190,11 +200,12 @@
         364,
         728,
         1456,
-        2912
+        2912,
+        5824
       ],
       "chunkCap": 728,
       "edge": false,
-      "nsPerEvent": 3641.51045
+      "nsPerEvent": 3921.0625
     },
     {
       "scenario": "S1a",
@@ -206,11 +217,12 @@
         504,
         1004,
         2008,
-        4016
+        4016,
+        8032
       ],
       "chunkCap": 1004,
       "edge": false,
-      "nsPerEvent": 4767.4604
+      "nsPerEvent": 4977.61665
     },
     {
       "scenario": "S1b",
@@ -222,11 +234,12 @@
         20,
         36,
         72,
-        144
+        144,
+        288
       ],
-      "chunkCap": 36,
+      "chunkCap": 72,
       "edge": false,
-      "nsPerEvent": 272.6521
+      "nsPerEvent": 291.88125
     },
     {
       "scenario": "S1b",
@@ -238,11 +251,12 @@
         24,
         48,
         96,
-        192
+        192,
+        384
       ],
       "chunkCap": 48,
       "edge": false,
-      "nsPerEvent": 339.025
+      "nsPerEvent": 348.6104
     },
     {
       "scenario": "S1b",
@@ -254,11 +268,12 @@
         36,
         68,
         136,
-        272
+        272,
+        544
       ],
       "chunkCap": 68,
       "edge": false,
-      "nsPerEvent": 408.94375
+      "nsPerEvent": 433.6917
     },
     {
       "scenario": "S1b",
@@ -270,11 +285,12 @@
         48,
         92,
         184,
-        368
+        368,
+        736
       ],
       "chunkCap": 92,
       "edge": false,
-      "nsPerEvent": 556.7771
+      "nsPerEvent": 581.3875
     },
     {
       "scenario": "S1b",
@@ -286,11 +302,12 @@
         68,
         132,
         264,
-        528
+        528,
+        1056
       ],
       "chunkCap": 132,
       "edge": false,
-      "nsPerEvent": 720.0771
+      "nsPerEvent": 760.0021
     },
     {
       "scenario": "S1b",
@@ -302,11 +319,12 @@
         92,
         184,
         368,
-        736
+        736,
+        1472
       ],
       "chunkCap": 184,
       "edge": false,
-      "nsPerEvent": 949.07085
+      "nsPerEvent": 1003.9896
     },
     {
       "scenario": "S1b",
@@ -318,11 +336,12 @@
         132,
         260,
         520,
-        1040
+        1040,
+        2080
       ],
-      "chunkCap": 520,
+      "chunkCap": 260,
       "edge": false,
-      "nsPerEvent": 1338.44585
+      "nsPerEvent": 1440.65
     },
     {
       "scenario": "S1b",
@@ -334,11 +353,12 @@
         160,
         320,
         640,
-        1280
+        1280,
+        2560
       ],
       "chunkCap": 320,
       "edge": false,
-      "nsPerEvent": 1613.28125
+      "nsPerEvent": 1711.51045
     },
     {
       "scenario": "S1b",
@@ -350,11 +370,12 @@
         184,
         364,
         728,
-        1456
+        1456,
+        2912
       ],
       "chunkCap": 364,
       "edge": false,
-      "nsPerEvent": 1795.88335
+      "nsPerEvent": 1907.07085
     },
     {
       "scenario": "S1b",
@@ -366,11 +387,12 @@
         260,
         516,
         1032,
-        2064
+        2064,
+        4128
       ],
       "chunkCap": 516,
       "edge": false,
-      "nsPerEvent": 2587.0667
+      "nsPerEvent": 2784.6125
     },
     {
       "scenario": "S1b",
@@ -382,11 +404,12 @@
         364,
         728,
         1456,
-        2912
+        2912,
+        5824
       ],
-      "chunkCap": 728,
+      "chunkCap": 1456,
       "edge": false,
-      "nsPerEvent": 3565.64375
+      "nsPerEvent": 3804.47295
     },
     {
       "scenario": "S1b",
@@ -398,11 +421,12 @@
         504,
         1004,
         2008,
-        4016
+        4016,
+        8032
       ],
       "chunkCap": 1004,
       "edge": false,
-      "nsPerEvent": 5006.86665
+      "nsPerEvent": 5277.7729
     },
     {
       "scenario": "S2",
@@ -414,11 +438,12 @@
         20,
         36,
         72,
-        144
+        144,
+        288
       ],
       "chunkCap": 144,
-      "edge": true,
-      "nsPerEvent": 166.43335
+      "edge": false,
+      "nsPerEvent": 170.1333
     },
     {
       "scenario": "S2",
@@ -430,11 +455,12 @@
         24,
         48,
         96,
-        192
+        192,
+        384
       ],
       "chunkCap": 192,
-      "edge": true,
-      "nsPerEvent": 197.20835
+      "edge": false,
+      "nsPerEvent": 205.7396
     },
     {
       "scenario": "S2",
@@ -446,11 +472,12 @@
         36,
         68,
         136,
-        272
+        272,
+        544
       ],
       "chunkCap": 272,
-      "edge": true,
-      "nsPerEvent": 244.83335
+      "edge": false,
+      "nsPerEvent": 246.51875
     },
     {
       "scenario": "S2",
@@ -462,11 +489,12 @@
         48,
         92,
         184,
-        368
+        368,
+        736
       ],
-      "chunkCap": 368,
+      "chunkCap": 736,
       "edge": true,
-      "nsPerEvent": 297.49375
+      "nsPerEvent": 323.125
     },
     {
       "scenario": "S2",
@@ -478,11 +506,12 @@
         68,
         132,
         264,
-        528
+        528,
+        1056
       ],
-      "chunkCap": 528,
+      "chunkCap": 1056,
       "edge": true,
-      "nsPerEvent": 374.40835
+      "nsPerEvent": 418.4125
     },
     {
       "scenario": "S2",
@@ -494,11 +523,12 @@
         92,
         184,
         368,
-        736
+        736,
+        1472
       ],
-      "chunkCap": 736,
+      "chunkCap": 1472,
       "edge": true,
-      "nsPerEvent": 534.525
+      "nsPerEvent": 595.99375
     },
     {
       "scenario": "S2",
@@ -510,11 +540,12 @@
         132,
         260,
         520,
-        1040
+        1040,
+        2080
       ],
-      "chunkCap": 1040,
+      "chunkCap": 2080,
       "edge": true,
-      "nsPerEvent": 704.5354
+      "nsPerEvent": 791.48125
     },
     {
       "scenario": "S2",
@@ -526,11 +557,12 @@
         160,
         320,
         640,
-        1280
+        1280,
+        2560
       ],
-      "chunkCap": 1280,
+      "chunkCap": 2560,
       "edge": true,
-      "nsPerEvent": 884.17915
+      "nsPerEvent": 907.5458
     },
     {
       "scenario": "S2",
@@ -542,11 +574,12 @@
         184,
         364,
         728,
-        1456
+        1456,
+        2912
       ],
-      "chunkCap": 1456,
+      "chunkCap": 2912,
       "edge": true,
-      "nsPerEvent": 1049.025
+      "nsPerEvent": 1094.4271
     },
     {
       "scenario": "S2a",
@@ -558,11 +591,12 @@
         20,
         36,
         72,
-        144
+        144,
+        288
       ],
-      "chunkCap": 144,
-      "edge": true,
-      "nsPerEvent": 39.614625
+      "chunkCap": 72,
+      "edge": false,
+      "nsPerEvent": 53.484375
     },
     {
       "scenario": "S2a",
@@ -574,11 +608,12 @@
         24,
         48,
         96,
-        192
+        192,
+        384
       ],
       "chunkCap": 192,
-      "edge": true,
-      "nsPerEvent": 44.7734375
+      "edge": false,
+      "nsPerEvent": 47.8306875
     },
     {
       "scenario": "S2a",
@@ -590,11 +625,12 @@
         36,
         68,
         136,
-        272
+        272,
+        544
       ],
-      "chunkCap": 272,
+      "chunkCap": 544,
       "edge": true,
-      "nsPerEvent": 49.276
+      "nsPerEvent": 62.3828125
     },
     {
       "scenario": "S2a",
@@ -606,11 +642,12 @@
         48,
         92,
         184,
-        368
+        368,
+        736
       ],
       "chunkCap": 368,
-      "edge": true,
-      "nsPerEvent": 57.1510625
+      "edge": false,
+      "nsPerEvent": 65.1198125
     },
     {
       "scenario": "S2a",
@@ -622,11 +659,12 @@
         68,
         132,
         264,
-        528
+        528,
+        1056
       ],
       "chunkCap": 528,
-      "edge": true,
-      "nsPerEvent": 66.3541875
+      "edge": false,
+      "nsPerEvent": 71.828125
     },
     {
       "scenario": "S2a",
@@ -638,11 +676,12 @@
         92,
         184,
         368,
-        736
+        736,
+        1472
       ],
       "chunkCap": 736,
-      "edge": true,
-      "nsPerEvent": 86.546875
+      "edge": false,
+      "nsPerEvent": 95.5885625
     },
     {
       "scenario": "S2a",
@@ -654,11 +693,12 @@
         132,
         260,
         520,
-        1040
+        1040,
+        2080
       ],
       "chunkCap": 1040,
-      "edge": true,
-      "nsPerEvent": 107.5625
+      "edge": false,
+      "nsPerEvent": 120.2994375
     },
     {
       "scenario": "S2a",
@@ -670,11 +710,12 @@
         160,
         320,
         640,
-        1280
+        1280,
+        2560
       ],
       "chunkCap": 1280,
-      "edge": true,
-      "nsPerEvent": 137.599
+      "edge": false,
+      "nsPerEvent": 151.4296875
     },
     {
       "scenario": "S2a",
@@ -686,11 +727,12 @@
         184,
         364,
         728,
-        1456
+        1456,
+        2912
       ],
       "chunkCap": 1456,
-      "edge": true,
-      "nsPerEvent": 156.349
+      "edge": false,
+      "nsPerEvent": 191.4479375
     },
     {
       "scenario": "S2b",
@@ -702,11 +744,12 @@
         20,
         36,
         72,
-        144
+        144,
+        288
       ],
       "chunkCap": 144,
-      "edge": true,
-      "nsPerEvent": 707.292
+      "edge": false,
+      "nsPerEvent": 766.166
     },
     {
       "scenario": "S2b",
@@ -718,11 +761,12 @@
         24,
         48,
         96,
-        192
+        192,
+        384
       ],
       "chunkCap": 192,
-      "edge": true,
-      "nsPerEvent": 790.041
+      "edge": false,
+      "nsPerEvent": 892.125
     },
     {
       "scenario": "S2b",
@@ -734,11 +778,12 @@
         36,
         68,
         136,
-        272
+        272,
+        544
       ],
       "chunkCap": 272,
-      "edge": true,
-      "nsPerEvent": 1004.208
+      "edge": false,
+      "nsPerEvent": 1100.417
     },
     {
       "scenario": "S2b",
@@ -750,11 +795,12 @@
         48,
         92,
         184,
-        368
+        368,
+        736
       ],
       "chunkCap": 368,
-      "edge": true,
-      "nsPerEvent": 1337.709
+      "edge": false,
+      "nsPerEvent": 1431.583
     },
     {
       "scenario": "S2b",
@@ -766,11 +812,12 @@
         68,
         132,
         264,
-        528
+        528,
+        1056
       ],
       "chunkCap": 264,
       "edge": false,
-      "nsPerEvent": 2225.791
+      "nsPerEvent": 2453.709
     },
     {
       "scenario": "S2b",
@@ -782,11 +829,12 @@
         92,
         184,
         368,
-        736
+        736,
+        1472
       ],
       "chunkCap": 368,
       "edge": false,
-      "nsPerEvent": 3077.75
+      "nsPerEvent": 3480.708
     },
     {
       "scenario": "S2b",
@@ -798,11 +846,12 @@
         132,
         260,
         520,
-        1040
+        1040,
+        2080
       ],
       "chunkCap": 520,
       "edge": false,
-      "nsPerEvent": 4412
+      "nsPerEvent": 4940.958
     },
     {
       "scenario": "S2b",
@@ -814,11 +863,12 @@
         160,
         320,
         640,
-        1280
+        1280,
+        2560
       ],
       "chunkCap": 640,
       "edge": false,
-      "nsPerEvent": 5436.041
+      "nsPerEvent": 6228.417
     },
     {
       "scenario": "S2b",
@@ -830,11 +880,12 @@
         184,
         364,
         728,
-        1456
+        1456,
+        2912
       ],
       "chunkCap": 728,
       "edge": false,
-      "nsPerEvent": 6392.333
+      "nsPerEvent": 7555.375
     },
     {
       "scenario": "S7",
@@ -846,11 +897,12 @@
         52,
         100,
         200,
-        400
+        400,
+        800
       ],
       "chunkCap": 200,
       "edge": false,
-      "nsPerEvent": 78.14165
+      "nsPerEvent": 89.8479
     },
     {
       "scenario": "S7",
@@ -862,11 +914,12 @@
         160,
         320,
         640,
-        1280
+        1280,
+        2560
       ],
       "chunkCap": 640,
       "edge": false,
-      "nsPerEvent": 207.62085
+      "nsPerEvent": 234.1625
     },
     {
       "scenario": "S7",
@@ -878,11 +931,12 @@
         500,
         1000,
         2000,
-        4000
+        4000,
+        8000
       ],
       "chunkCap": 2000,
       "edge": false,
-      "nsPerEvent": 598.5396
+      "nsPerEvent": 682.20625
     },
     {
       "scenario": "S7b",
@@ -894,11 +948,12 @@
         52,
         100,
         200,
-        400
+        400,
+        800
       ],
       "chunkCap": 200,
       "edge": false,
-      "nsPerEvent": 127.225
+      "nsPerEvent": 143.40625
     },
     {
       "scenario": "S7b",
@@ -910,11 +965,12 @@
         160,
         320,
         640,
-        1280
+        1280,
+        2560
       ],
       "chunkCap": 640,
       "edge": false,
-      "nsPerEvent": 347.01875
+      "nsPerEvent": 385.6583
     },
     {
       "scenario": "S7b",
@@ -926,11 +982,12 @@
         500,
         1000,
         2000,
-        4000
+        4000,
+        8000
       ],
       "chunkCap": 2000,
       "edge": false,
-      "nsPerEvent": 1014.34585
+      "nsPerEvent": 1158.9667
     }
   ]
 }

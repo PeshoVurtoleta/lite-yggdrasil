@@ -17,7 +17,11 @@ rival tests and B/op lanes, and the scenario runner with S7 / S7b. S1a / S1b are
 built (3a7a668) and S2 / S2a / S2b are built in the working tree (g2b-2b, R-BA17,
 R-BA19..R-BA27; uncommitted at this edit); the chunkCap sweep / A/B / crossover tooling is built
 (g2b-3a); its timed runs ran in g2b-3b (picks in benchmark/chunkcap.json, 6b70f54; the run of record INCONCLUSIVE, not
-committed); a new run of record is PENDING. The sections below are the contract they are built to.
+committed). Update (2026-11-06, burst 48/49): the 6-point chunkCap table was re-published (8e27490); run of record #2
+(8e27490) read CONCLUSIVE and BA-16 = PAUSE (R-BA49); its numbers are held uncommitted until the BA-41 tooling
+unit lands (R-BA50), then published in one commit (benchmark/results.json, report.html), so this file still holds
+no measured number. The sections below are the
+contract they are built to.
 
 ## The one rule
 
@@ -221,8 +225,11 @@ than 8 samples -> `n/a` (the string), never NaN / Infinity / 0.
 
 Status: the tooling is built and gated (g2b-3a: Bench.mjs, Compare.mjs, Report.mjs; rulings R-BA28..R-BA36, SPEC
 BA-28..BA-36; g2b-4: R-BA41, R-BA42, R-BA44). The QUIET chunkCap sweep ran (g2b-3b, benchmark/chunkcap.json at
-6b70f54); the run of record read INCONCLUSIVE (R-BA29) and is not committed (R-BA39), so a new run of record is
-PENDING: this section holds no measured number.
+6b70f54); the run of record read INCONCLUSIVE (R-BA29) and is not committed (R-BA39), so a new run of
+record was PENDING.
+Update (2026-11-06, burst 48/49): the 6-point table was committed (8e27490); run of record #2 (8e27490) read
+CONCLUSIVE and BA-16 = PAUSE (R-BA49); its numbers are held uncommitted until the BA-41 tooling unit lands (R-BA50),
+then published in one commit (benchmark/results.json, report.html), so this section still holds no measured number.
 
 - Passes (BA-28): K = 5 interleaved passes, pass-major. Inside each (scenario, n) group the label order is rotated
   left by one per pass (Compare.mjs rotateLabels). A child times 5 samples per phase (3 under --quick, never a run
@@ -234,7 +241,11 @@ PENDING: this section holds no measured number.
   columns, the twin 'twin / BlockedArray' column, the pick's ns/event); the report prints the min-of-K beside them
   (the A/B 'unrolled min', 'plain min' and 'min ratio' columns, the twin and twin-noise 'min ratio' column, and the
   section notes). results.json stores each cell's K child medians (the cell is pass 1, its repeats passes 2..K), not a
-  median-of-K; the Scenarios table prints pass 1.
+  median-of-K. The Scenarios table and the D8 table (report.html, the Bench.mjs summarize lines, the README D8 table)
+  print the median-of-K of the K stored passes ("ns/op (median of K)"), the min-of-K in a column beside it, and K
+  (BA-28, BA-41, R-BA47). D8's p50 / p90 stay pass 1's per-sample spread, labelled "(pass 1)"; every other timed D-row
+  value (D1..D7 timing columns) keeps pass 1, labelled "(pass 1)", its median-of-K a later ruling (R-BA51). Counts
+  beside the times are pass 1's (exact, DETERMINISTIC).
 - A/A twin control (BA-29): `BlockedArray.twin` (BlockedArray.js plus one comment line, separately compiled) runs
   beside `BlockedArray` in every pass. Twin vs BlockedArray other than TIE (min-of-K rule) at any (scenario, n), on
   the crossover phase only (blend; a one-phase scenario's only phase, S2b bulk), makes every comparison of that run
@@ -266,8 +277,9 @@ PENDING: this section holds no measured number.
   blend ns/event, REPORTED). validatePicks checks it when written and when read by `--picks` (fail closed on a
   malformed field, an unknown key, a non-plain object, or a chunkCap that is not a multiple of 4 in [8, 65536]). A
   QUIET `--sweep chunkCap --publish --all` writes this committed file ONLY (no results.json / report.html); a sweep
-  without --publish writes `benchmark/out/chunkcap.json` beside its out/ results. The committed file is still on the
-  5-point grid (no 8 x d): validatePicks rejects it until the QUIET re-sweep (R-BA44) re-publishes it.
+  without --publish writes `benchmark/out/chunkcap.json` beside its out/ results. The committed file was on the
+  5-point grid (no 8 x d), which validatePicks rejects; the QUIET re-sweep (R-BA44) re-published it on the 6-point
+  grid (8e27490, 2026-11-06).
 - `--picks <path>`: every BlockedArray label (BlockedArray, BlockedArray.plain, BlockedArray.twin) runs each (Sid, n)
   at the picked chunkCap under its untagged key; results.json carries `tuning { source, sha256, hostState, picks }`.
   planCells exits 2 (also under --quick) on a BlockedArray cell with no pick for its (Sid, n), on a stale pick (its

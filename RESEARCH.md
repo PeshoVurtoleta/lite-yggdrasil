@@ -1216,6 +1216,31 @@ other outcome (for example an S1 crossover between 64k and 100k) has no automati
 from the table. "Wins" = the median of K interleaved runs on a QUIET host; a PRELIMINARY log decides nothing.
 Note (2026-11-05, burst 45, R-BA45, quoted in RESEARCH 17.6): R-BA41 amends 'Wins' -- a win in this reading is the
 BA-29 verdict (min-of-K, 0.95 band) on a QUIET host; amended before any CONCLUSIVE run of record was read.
+Note (2026-11-06, burst 48/49): BA-16 DECIDED = PAUSE.
+R-BA49 (Q-BA16, 2026-11-06, burst 48, on b48 run of record #2, CONCLUSIVE) = "PAUSE (Recommended)". Option text:
+"BA-16 = PAUSE per the pre-registered reading (R-BA12 as amended by R-BA45). On b48 run of record #2 (8e27490,
+CONCLUSIVE, twin 0 / 57), BlockedArray beats SumSequence at n >= 100k on S2 (S2@100000 blend, min-of-K, 0.95 band). An
+R-7 research burst (F = 4 and F = 8 first, RESEARCH 16.5) runs before any SumMap engine work (R-SM9)." The question
+stated the host caveat below.
+run of record #2 (8e27490, Yggdrasil.js sha256/8 e0618227, chunkcap.json f79b43a6): `node benchmark/Bench.mjs
+--publish --all --runs 5 --picks benchmark/chunkcap.json`, K = 5, 358 cells, node v26.8.2, darwin arm64 Apple M4 Pro
+(12 cores), 2026-11-06, start 09:25:15Z QUIET (load1 2.46, baseline 2.21), end 11:11:18Z (load1 1.16), 6,363 s,
+exit 0, drift sentinel 6.6% (< 10%). HOST CAVEAT: the start was QUIET but load1 peaked 26.7 at 09:28-09:41Z and sat
+3-8 at
+10:00-10:25Z (other sessions; no other node process); a 60 s load trace is kept with the evidence.
+Readings (REPORTED, never a law; verdict CONCLUSIVE: twin A/A crossover-phase non-TIE 0 / 57; 18 twin-noise rows on
+non-crossover phases, REPORTED, never a gate, R-BA42; lossTable 15 rows). Crossovers vs BlockedArray (BA-29:
+min-of-K, 0.95 band): S1 1024 (S1a / S1b x unrolled / plain), SumSequence wins at 100k and 1M; S2 none up to 131072
+(BlockedArray wins every n through 100000; plain crosses at 131072), so BlockedArray beats SumSequence at
+S2@100000; S2a none up to 131072 (plain 100000); S2b 16384 (bulk); S7 / S7b: FenwickRebuild wins at every n (the
+expected fixed-n reweight loss). Against the pre-registered reading: the S1 clauses hold (1024 <= 64k, wins at
+100k and 1M); the S7 clause holds (FenwickRebuild wins S7 / S7b at every n); the S2 clause fails (no crossover <=
+32k, no win at 100k) and BlockedArray beats SumSequence at n >= 100k on S2 -> the PAUSE branch.
+Earlier that day: run of record #1 (8e27490, start 06:15Z QUIET load1 1.53, 7,429 s) read INCONCLUSIVE (twin
+crossover non-TIE 4 / 57), archived, not committed, decides nothing (BA-37..BA-40 standing, R-BA46).
+R-BA50 (Q-PUB) = "Hold until BA-41 (Recommended)": run #2's results.json + report.html are held uncommitted until
+the BA-41 tooling unit (median-of-K printing, R-BA47) lands; then one commit carries results.json, report.html
+regenerated from it and the README Benchmarks section, batched with the release (HOLD-RELEASE). A ruling, not done.
 
 Pre-registered additions (maintainer, AskUserQuestion; option text quoted verbatim from the maintainer-local,
 gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"; recorded 2026-11-04, before any timed run of g2b-3b):
@@ -1621,6 +1646,7 @@ nominal = arithmetic, not measured.
   BA-16\": this PROPOSAL's Part B is ruled now; the SumMap engine planner waits for the GO / NO-GO decision on a
   CONCLUSIVE run of record; if that run fires PAUSE, an R-7 research burst (F = 4 and F = 8 first, RESEARCH 16.5) runs
   before any SumMap engine work."
+  (2026-11-06, burst 48/49: that run fired PAUSE, R-BA49; the R-7 research burst is next, RESEARCH 14.4.)
 - R-SM10 (Q-DB5, burst 45, 2026-11-05) = "lite-logn Treap + model (Recommended)": "DB-5's keyed-order references for
   SumMap are the naive sorted-array model (3.2) plus lite-logn Treap (the R-SM1 live rival, a devDependency with
   SumMap per R-BA4); sorted-btree stays documented, not installed (R-SM1 unchanged); ROADMAP DB-5's text says so."
@@ -1736,9 +1762,12 @@ S2" -> evaluate R-7). SumMap changes nothing about it directly:
   F = 4 / 8 / 16 internal nodes) is a TRUNK change: if the PAUSE fires and R-7 wins, both members change. Building
   SumMap's keyed routing (I-6 maxKey caches, the fence-key finger) on the binary trunk and then moving the trunk would
   redo the routing and finger rungs (16.5: at F = 8 the pull adds are ~1.9 x, nominal).
+  (2026-11-06, burst 48/49: the PAUSE fired, R-BA49, RESEARCH 14.4; this is the case this bullet describes.)
 - The SumMap public surface does not depend on the trunk (every contract holds for a binary or a fanout-F trunk,
   except what the binary-trunk counters (equalizes, rotSingle, rotDouble) mean), so the surface is ruled now; the
   engine planner waits for BA-16 (R-SM9).
+  (2026-11-06, burst 48/49: BA-16 decided PAUSE, R-BA49; the R-7 research burst (RESEARCH 16.5, F = 4 and F = 8
+  first) is next and the engine planner waits for its ruled PROPOSAL.)
 
 ### 17.6 Bench rulings R-BA41..R-BA44 (burst 45; option text quoted verbatim, all "(Recommended)")
 
@@ -1762,6 +1791,7 @@ S2" -> evaluate R-7). SumMap changes nothing about it directly:
   3), 2 of the 8 measured edge cells have their argmin at 8 x d, by 1.6% and 4.9% (both TIE under the 0.95 band); 6
   keep 4 x d; 16 x d and above never won (1.4-17.1 x slower); 14 of the 22 edge cells were not measured; the sweep
   gains one grid point per (scenario, n) (~+20% sweep time, nominal)."
+  (2026-11-06, burst 48/49: the QUIET re-sweep ran and re-published chunkcap.json, 8e27490, f79b43a6.)
 - R-BA45 (Q-BA16a, burst 45, 2026-11-05) = "Yes, GO reads min-of-K (Recommended)": "R-BA41 amends R-BA12's 'Wins': a
   win in the pre-registered GO / NO-GO reading (BA-16) is the BA-29 verdict (min-of-K, 0.95 band, R-BA41) on a QUIET
   host; a PRELIMINARY log still decides nothing; the R-BA12 quotes stay verbatim, and a dated note after each
@@ -1770,3 +1800,5 @@ S2" -> evaluate R-7). SumMap changes nothing about it directly:
 
 Next: a Bench tooling code unit (BA-29 min-of-K beside median-of-K + crossover-only twin check; BA-31 grid + 8 x d),
 then a QUIET re-sweep, then the run of record for BA-16; the SumMap engine planner waits for that decision (R-SM9).
+(2026-11-06, burst 48/49: the re-sweep is done and chunkcap.json re-published, 8e27490 (f79b43a6); run of record #2
+read CONCLUSIVE and BA-16 is decided PAUSE, R-BA49, RESEARCH 14.4; the R-7 research burst is next.)

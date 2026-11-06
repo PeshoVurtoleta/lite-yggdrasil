@@ -31,13 +31,18 @@
  * a fifth section lists the twin's non-TIE readings on the other phases (noise, never a gate). Each is labelled PRELIMINARY unless the payload is a QUIET MEASURED run (isPreliminary).
  * A section whose labels did not run in the payload reads "not measured in this run"; any other
  * Compare throw propagates (fail closed). The report prints facts, never a go / no-go verdict (BA-30).
+ *
+ * BA-41 (R-BA47 / R-BA51): the Scenarios phases and the D8 op rows print K, the median-of-K ns/op and the
+ * min-of-K beside it (Compare.mjs runValues / rowRunValues; a malformed repeat throws); every other
+ * timed D-row column (D1 fit, D2, D4, D6 ops/ms + pause, D7, D8 p50 / p90) prints pass 1 and its
+ * header carries "(pass 1)"; counts, sizes and DETERMINISTIC columns carry no label.
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { validateResults } from './Bench.mjs';
 import { COUNTER_NAMES } from './Adapters.mjs';
-import { crossovers, abSummary, twinControl, BAND, SUBJECT, TWIN, TWIN_OF } from './Compare.mjs';
+import { crossovers, abSummary, twinControl, runValues, rowRunValues, median, minOfList, BAND, SUBJECT, TWIN, TWIN_OF } from './Compare.mjs';
 
 const OUT_DIR = fileURLToPath(new URL('./out/', import.meta.url));
 const PATHS = {
@@ -241,6 +246,9 @@ function naNote(r) {
 }
 
 const NOT_MEASURED = 'not measured in this run';
+// BA-41: the note of the two median-of-K tables (Scenarios, D8).
+const KOF_NOTE = 'ns/op = median of the K passes\' child medians (BA-28); min of K = the lowest (what BA-29 verdicts read); ' +
+    'counts are pass 1\'s.';
 const PLAIN = 'BlockedArray.plain';
 const UNTAGGED_SCENARIO = /^([A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)?)\/(S\d+[a-z]?)@([1-9]\d*)$/;
 
@@ -397,8 +405,8 @@ export function renderHtml(payload) {
                 series.push({ name: m, color: color(series.length), points: r.timing.map((t) => ({ x: t.n, y: t.nsPerOp })) });
             }
         }
-        const chart = series.length > 0 ? renderSvg({ type: 'line', title: 'D1 REPORTED ns/op vs n',
-            xlabel: 'n (log10)', ylabel: 'ns per insertAt+removeAt', series }) : null;
+        const chart = series.length > 0 ? renderSvg({ type: 'line', title: 'D1 REPORTED ns/op vs n (pass 1)',
+            xlabel: 'n (log10)', ylabel: 'ns per insertAt+removeAt (pass 1)', series }) : null;
         sections.push(sec('D1 -- Splice witness (counts first, then the REPORTED fit)',
             'DETERMINISTIC first: the subject\'s touches per op against touchesMax(row, Lmax) of test/spec-counts.mjs ' +
             '(G-11 as amended by 0005 C-25; violations must be 0), the foil\'s moves per insertAt(floor(n/2)) ' +
@@ -407,7 +415,7 @@ export function renderHtml(payload) {
             tableRows(['adapter', 'n', 'op', 'ops', 'touches/op', 'max touches', 'max bound', 'hits', 'misses',
                 'splits', 'underflows', 'violations'], subj) +
             tableRows(['adapter', 'n', 'op', 'ops', 'moves/op', 'expected', 'exact'], foil) +
-            tableRows(['adapter', 'fit r2', 'slope (ns/level)', 'intercept', 'r2 reference', 'violations'], fits)));
+            tableRows(['adapter', 'fit r2 (pass 1)', 'slope (ns/level) (pass 1)', 'intercept (pass 1)', 'r2 reference', 'violations'], fits)));
     }
 
     // D2 -- amortized cost over a long mixed trace.
@@ -424,12 +432,12 @@ export function renderHtml(payload) {
         const s = meta.sentinel;
         const note = 'Cumulative ns/op at power-of-two checkpoints on a length-neutral mixed trace; drift = last / first. ' +
             'Counts are cumulative at the last checkpoint. ' + (s === null ? 'No drift sentinel ran.' :
-            'Drift sentinel ' + s.cell + ': ' + num(s.first) + ' -> ' + num(s.second) + ' ns/op (' +
+            'Drift sentinel ' + s.cell + ': first (pass 1) ' + num(s.first) + ' -> ' + num(s.second) + ' ns/op (' +
             (s.drift * 100).toFixed(0) + '%, disclosure limit ' + (s.limit * 100).toFixed(0) + '%).');
         sections.push(sec('D2 -- Amortized cost over a long mixed trace', note,
-            series.length > 0 ? renderSvg({ type: 'line', title: 'D2 amortized', xlabel: 'ops (log10)',
-                ylabel: 'cumulative ns/op', series }) : null,
-            tableRows(['adapter', 'drift (last/first)', 'ops', 'counts at the end'], rows)));
+            series.length > 0 ? renderSvg({ type: 'line', title: 'D2 amortized (pass 1)', xlabel: 'ops (log10)',
+                ylabel: 'cumulative ns/op (pass 1)', series }) : null,
+            tableRows(['adapter', 'drift (last/first) (pass 1)', 'ops', 'counts at the end'], rows)));
     }
 
     // D3 -- memory.
@@ -465,7 +473,7 @@ export function renderHtml(payload) {
         sections.push(sec('D4 -- Cache behaviour (PROXY)',
             'PROXY ONLY: no native perf counters. A full cursor walk (ns per element) vs a random indexAtSum seek ' +
             '(ns/op); gap = seek / walk; then the same pair per leafSize.', null,
-            tableRows(['adapter', 'config', 'walk ns/elem', 'seek ns/op', 'gap', 'seek counts'], rows)));
+            tableRows(['adapter', 'config', 'walk ns/elem (pass 1)', 'seek ns/op (pass 1)', 'gap (pass 1)', 'seek counts'], rows)));
     }
 
     // D5 -- bundle size (R-BA2).
@@ -501,7 +509,7 @@ export function renderHtml(payload) {
             'REPORTED B/op (min clean heap delta over 5 passes) and GC events of one observer pass, per op-row; ' +
             'children run with --no-concurrent-recompilation. The 0 B/op claim is gated by test/torture.mjs and ' +
             'benchmark/kernel-lane.mjs (DETERMINISTIC), never by this table.', null,
-            tableRows(['op-row', 'n', 'B/op', 'ops/ms', 'GC major / minor', 'max pause ms', 'counts'], rows)));
+            tableRows(['op-row', 'n', 'B/op', 'ops/ms (pass 1)', 'GC major / minor', 'max pause ms (pass 1)', 'counts'], rows)));
     }
 
     // D7 -- scalability.
@@ -518,7 +526,7 @@ export function renderHtml(payload) {
         sections.push(sec('D7 -- Scalability: insertion pattern x dims x fill',
             'ns per insert of a fresh build (median of reps), counts of the last build. Key types n/a ' +
             '(positional, integer measures).', null,
-            tableRows(['adapter', 'pattern', 'dims', 'fill', 'inserts', 'ns/insert', 'counts'], rows)));
+            tableRows(['adapter', 'pattern', 'dims', 'fill', 'inserts', 'ns/insert (pass 1)', 'counts'], rows)));
     }
 
     // D8 -- op-row workloads, with one column per counter (per op).
@@ -529,16 +537,17 @@ export function renderHtml(payload) {
             if (!r) continue;
             if (naNote(r)) { rows.push([m, naNote(r)]); continue; }
             for (const x of r.rows) {
-                if (typeof x.na === 'string') { rows.push([m + '.' + x.op, String(x.n), 'n/a: ' + x.na]); continue; }
+                const vs = rowRunValues(r, x.op, x.n); // null = an n/a row (every pass n/a, else it throws)
+                if (vs === null) { rows.push([m + '.' + x.op, String(x.n), 'n/a: ' + x.na]); continue; }
                 const ex = x.extras ? Object.keys(x.extras).map((k) => k + '=' + num(x.extras[k] / x.ops)).join(' ') : '';
-                rows.push([m + '.' + x.op, String(x.n), num(x.nsPerOp), num(x.p50), num(x.p90),
+                rows.push([m + '.' + x.op, String(x.n), String(vs.length), num(median(vs)), num(minOfList(vs)), num(x.p50), num(x.p90),
                     ...COUNTER_NAMES.map((k) => perOp(x, k)), ex]);
             }
         }
         sections.push(sec('D8 -- Op-row workloads (counts per op beside every time)',
             'Every timed row carries the 12 engine counters per op (n/a where the adapter has no pair -- never 0) ' +
-            'and its native extras per op.', null,
-            tableRows(['op-row', 'n', 'ns/op', 'p50', 'p90', ...COUNTER_NAMES, 'extras/op'], rows)));
+            'and its native extras per op. ' + KOF_NOTE, null,
+            tableRows(['op-row', 'n', 'K', 'ns/op (median of K)', 'min of K', 'p50 (pass 1)', 'p90 (pass 1)', ...COUNTER_NAMES, 'extras/op'], rows)));
     }
 
     // Scenarios (group 2b): one row per timed phase; counts beside the times. Every scenario key form
@@ -551,11 +560,12 @@ export function renderHtml(payload) {
             const r = R[k];
             if (naNote(r)) { rows.push([k, naNote(r)]); continue; }
             for (const p of (Array.isArray(r.phases) ? r.phases : [])) {
-                rows.push([k, String(r.n), String(p.phase), num(p.nsPerOp), countsCell(p)]);
+                const vs = runValues(r, p.phase);
+                rows.push([k, String(r.n), String(p.phase), String(vs.length), num(median(vs)), num(minOfList(vs)), countsCell(p)]);
             }
         }
-        sections.push(sec('Scenarios', 'Scenario cells (RESEARCH section 4.2), counts beside the times.', null,
-            tableRows(['cell', 'n', 'phase', 'ns/op', 'counts'], rows)));
+        sections.push(sec('Scenarios', 'Scenario cells (RESEARCH section 4.2), counts beside the times. ' + KOF_NOTE, null,
+            tableRows(['cell', 'n', 'phase', 'K', 'ns/op (median of K)', 'min of K', 'counts'], rows)));
     }
 
     // Loss table (mandatory, RESEARCH section 4.3).

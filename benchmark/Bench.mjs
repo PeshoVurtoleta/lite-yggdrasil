@@ -94,7 +94,8 @@ import { ADAPTERS, RIVAL_SLOTS, RETIRED_SLOTS, selectAdapter, validateCounts, is
     from './Adapters.mjs';
 import { SCENARIOS, MAX_SIZE, selectScenario, scenarioSizes, scenarioEvents, labelBase, knownLabels, resolveLabel, runScenario }
     from './Scenarios.mjs';
-import { defaultChunkCap, sweepGrid, rotateLabels, lossRows, pickChunkCap, CAP_MIN, CAP_MAX, K } from './Compare.mjs';
+import { defaultChunkCap, sweepGrid, rotateLabels, lossRows, pickChunkCap, runValues, rowRunValues, median, minOfList, CAP_MIN, CAP_MAX, K }
+    from './Compare.mjs';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
 const PKG_DIR = fileURLToPath(new URL('..', import.meta.url));
@@ -1068,7 +1069,14 @@ function perOpCount(row, key) {
     return typeof v === 'number' ? fmt(v / row.ops) : NA;
 }
 
-function summarize(results) {
+/**
+ * Print the console summary of a results map (payload.results). BA-41 (R-BA47 / R-BA51): a Scenario
+ * phase line and a D8 op line print the median-of-K ns, the min-of-K beside it and K (Compare.mjs
+ * runValues / rowRunValues; a malformed repeat throws); every other timed D-row line (D1 fit, D2, D4,
+ * D6 maxPauseMs, D7) prints pass 1 and carries "(pass 1)". Exported for the BA-41 parity / permutation
+ * rows; the orchestrator calls it once per run.
+ */
+export function summarize(results) {
     const members = [...SUBJECTS, FOIL];
     const get = (m, d) => results[m + '/' + d];
     const line = (title) => console.log('-- ' + title + ' ' + '-'.repeat(Math.max(3, 72 - title.length)));
@@ -1105,7 +1113,7 @@ function summarize(results) {
             }
             const f = r.fit;
             console.log('  ' + (m + ' fit').padEnd(30) + (f === NA ? ' n/a' : ' r2 ' + fmt(f.r2) + ' slope ' + fmt(f.slope) +
-                ' ns/level (r2 reference ' + f.r2Reference + ', gates nothing)') + ' | traceHash 0x' + (r.traceHash >>> 0).toString(16));
+                ' ns/level (pass 1) (r2 reference ' + f.r2Reference + ', gates nothing)') + ' | traceHash 0x' + (r.traceHash >>> 0).toString(16));
         }
         console.log('');
     }
@@ -1116,7 +1124,7 @@ function summarize(results) {
             if (!r) continue;
             const last = na(r) ? null : r.points[r.points.length - 1];
             console.log('  ' + m.padEnd(12) + (na(r) || ' drift=' + fmt(r.drift) + ' over ' + r.total + ' ops, final ' +
-                fmt(last.nsPerOp) + ' ns/op'));
+                fmt(last.nsPerOp) + ' ns/op (pass 1)'));
         }
         console.log('');
     }
@@ -1139,10 +1147,10 @@ function summarize(results) {
             const r = get(m, 'D4');
             if (!r) continue;
             if (na(r)) { console.log('  ' + m.padEnd(12) + ' ' + na(r)); continue; }
-            console.log('  ' + m.padEnd(12) + ' default   walk ' + fmt(r.walk.nsPerElem) + '  seek ' + fmt(r.seek.nsPerOp) + '  gap ' + fmt(r.gap));
+            console.log('  ' + m.padEnd(12) + ' default   walk ' + fmt(r.walk.nsPerElem) + '  seek ' + fmt(r.seek.nsPerOp) + '  gap ' + fmt(r.gap) + ' (pass 1)');
             for (const p of r.leafSweep) {
                 console.log('  ' + m.padEnd(12) + ' leaf ' + String(p.leafSize).padEnd(4) + ' walk ' + fmt(p.walkNsPerElem) +
-                    '  seek ' + fmt(p.seekNsPerOp) + '  gap ' + fmt(p.gap));
+                    '  seek ' + fmt(p.seekNsPerOp) + '  gap ' + fmt(p.gap) + ' (pass 1)');
             }
         }
         console.log('');
@@ -1166,7 +1174,7 @@ function summarize(results) {
                 console.log('  ' + (m + '.' + o.op).padEnd(30) + ' B/op ' + o.points.map((p) => p.bytesPerOp).join(' / ') +
                     '  zeroAlloc ' + o.zeroAlloc);
             }
-            console.log('  ' + m.padEnd(30) + ' maxMajor ' + r.maxMajor + '  maxPauseMs ' + fmt(r.maxPauseMs));
+            console.log('  ' + m.padEnd(30) + ' maxMajor ' + r.maxMajor + '  maxPauseMs ' + fmt(r.maxPauseMs) + ' (pass 1)');
         }
         console.log('');
     }
@@ -1182,31 +1190,34 @@ function summarize(results) {
                 if (!g.has(k)) g.set(k, []);
                 g.get(k).push(fmt(x.nsPerOp) + '@' + x.fill);
             }
-            for (const [k, v] of g) console.log('  ' + (m + ' ' + k).padEnd(30) + ' ' + v.join('  '));
+            for (const [k, v] of g) console.log('  ' + (m + ' ' + k).padEnd(30) + ' ' + v.join('  ') + ' (pass 1)');
         }
         console.log('');
     }
     const sKeys = Object.keys(results).filter((k) => { const m = RESULT_KEY.exec(k); return m !== null && m[3] !== undefined; });
     if (sKeys.length > 0) {
-        line('Scenario cells (ns/event REPORTED; checksum + endState + traceHash cross-checked per (Sid, n))');
+        line('Scenario cells (median-of-K ns/event, min-of-K beside it, REPORTED; checksum + endState + traceHash cross-checked per (Sid, n))');
         for (const k of sKeys) {
             for (const p of results[k].phases) {
-                console.log('  ' + (k + ' ' + p.phase).padEnd(40) + ' ' + fmt(p.nsPerOp).padStart(9) + ' ns/event  events ' +
+                const vs = runValues(results[k], p.phase);
+                console.log('  ' + (k + ' ' + p.phase).padEnd(40) + ' ' + fmt(median(vs)).padStart(9) + ' ns/event  min ' +
+                    fmt(minOfList(vs)).padStart(9) + '  K ' + vs.length + '  events ' +
                     String(p.events).padStart(6) + '  checksum ' + p.checksum + '  endState 0x' + (p.endState >>> 0).toString(16) + '  traceHash 0x' + (p.traceHash >>> 0).toString(16));
             }
         }
         console.log('');
     }
     if (members.some((m) => get(m, 'D8'))) {
-        line('D8 op-row workloads (ns/op | touches/op | moves/op)');
+        line('D8 op-row workloads (median-of-K ns/op | min-of-K ns/op | touches/op | moves/op  K)');
         for (const m of members) {
             const r = get(m, 'D8');
             if (!r) continue;
             if (na(r)) { console.log('  ' + m.padEnd(12) + ' ' + na(r)); continue; }
             for (const x of r.rows) {
-                if (typeof x.na === 'string') { console.log('  ' + (m + '.' + x.op).padEnd(30) + ' n/a (' + x.na + ')'); continue; }
-                console.log('  ' + (m + '.' + x.op).padEnd(30) + ' ' + fmt(x.nsPerOp).padStart(9) + ' | ' +
-                    perOpCount(x, 'touches').padStart(7) + ' | ' + perOpCount(x, 'moves').padStart(9));
+                const vs = rowRunValues(r, x.op, x.n); // null = an n/a row (every pass n/a, else it throws)
+                if (vs === null) { console.log('  ' + (m + '.' + x.op).padEnd(30) + ' n/a (' + x.na + ')'); continue; }
+                console.log('  ' + (m + '.' + x.op).padEnd(30) + ' ' + fmt(median(vs)).padStart(9) + ' | ' + fmt(minOfList(vs)).padStart(9) +
+                    ' | ' + perOpCount(x, 'touches').padStart(7) + ' | ' + perOpCount(x, 'moves').padStart(9) + '  K ' + vs.length);
             }
         }
         console.log('');

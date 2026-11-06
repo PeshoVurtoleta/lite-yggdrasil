@@ -17,7 +17,8 @@
  *   samples (ns/event); runValues(cell, phase) lists the K child medians in pass order.
  *   A key '<label>/<Sid>@<n>~c<chunkCap>' is a chunkCap sweep cell (g2b-3a TASK 3): lossRows,
  *   abSummary and twinControl skip it; pickChunkCap reads such cells. '<adapter>/D<k>' keys
- *   (D-rows) are skipped. Any other key throws.
+ *   (D-rows) are skipped. Any other key throws. rowRunValues(result, op, n) reads one D-row op row
+ *   (result.rows[] of { op, n, nsPerOp, ... }, passes 2..K in result.repeats) the same way (BA-41).
  *
  * Rules (quoted from SPEC CURRENT):
  *   BA-28  K = 5 interleaved passes (R-BA43 keeps K = 5); a (label, scenario, n, phase) value = median of
@@ -182,6 +183,50 @@ export function runValues(cell, phase) {
                 cmpFail(w, 'names another cell (' + r.member + '/' + r.scenario + '@' + r.n + ' chunkCap ' + r.chunkCap + ')');
             }
             out.push(phaseValue(r, phase, w));
+        }
+    }
+    return out;
+}
+
+// The one row { op, n } of a D-row result's rows (x.n === n, so an n-less row matches n undefined).
+function opRow(result, op, n, where) {
+    if (!Array.isArray(result.rows)) cmpFail(where, 'must be a D-row result with a rows array');
+    let row = null;
+    for (const x of result.rows) {
+        if (x !== null && typeof x === 'object' && x.op === op && x.n === n) {
+            if (row !== null) cmpFail(where, "lists row '" + op + "' n " + String(n) + ' twice');
+            row = x;
+        }
+    }
+    if (row === null) cmpFail(where, "has no row '" + op + "' n " + String(n));
+    return row;
+}
+
+/**
+ * The per-run ns/op of one D-row op row (BA-41, R-BA47 / R-BA51; the D8 op rows): pass 1's row
+ * { op, n } of result.rows, then each result.repeats[i]'s, in pass order. Returns null when pass 1's
+ * row is n/a (never 0). Throws when pass 1 lists no such row or lists it twice; when a repeat is not a
+ * plain object naming the same dim, member and n, lists the row other than exactly once, or differs
+ * from pass 1 in n/a-ness; and on any ns/op that is not a finite number > 0.
+ */
+export function rowRunValues(result, op, n) {
+    if (!isPlain(result)) cmpFail('rowRunValues', 'result must be a D-row result');
+    if (typeof op !== 'string' || op.length === 0) cmpFail('rowRunValues', 'op must be a non-empty string');
+    const row = opRow(result, op, n, 'result');
+    const na = typeof row.na === 'string';
+    const out = na ? null : [checkValue(row.nsPerOp, 'result row ' + op + ' nsPerOp')];
+    if (result.repeats !== undefined) {
+        if (!Array.isArray(result.repeats)) cmpFail('result.repeats', 'must be an array');
+        for (let i = 0; i < result.repeats.length; i++) {
+            const r = result.repeats[i];
+            const w = 'result.repeats[' + i + ']';
+            if (!isPlain(r)) cmpFail(w, 'must be a D-row result');
+            if (r.dim !== result.dim || r.member !== result.member || r.n !== result.n) {
+                cmpFail(w, 'names another result (' + r.member + '/' + r.dim + ' n ' + r.n + ')');
+            }
+            const x = opRow(r, op, n, w);
+            if ((typeof x.na === 'string') !== na) cmpFail(w, "row '" + op + "' n/a-ness differs from pass 1");
+            if (!na) out.push(checkValue(x.nsPerOp, w + ' row ' + op + ' nsPerOp'));
         }
     }
     return out;

@@ -14,7 +14,10 @@
  * - No committed results.json, status PENDING, or hostState PRELIMINARY -> the PENDING form: the
  *   README paragraph as of 0.1.1 byte-for-byte, with <version> read from package.json (R-BA5, R-BA6).
  * - MEASURED + QUIET -> the measured form: no "PENDING", every PROVENANCE_FIELDS value, the
- *   counts / timing table and the loss table. A MEASURED QUIET results.json with zero loss rows
+ *   counts / timing table and the loss table. The D8 timing columns print, per op row, the median-of-K
+ *   ns/op and the min-of-K beside it (BA-41, R-BA47 / R-BA51; Compare.mjs rowRunValues), K = 1 +
+ *   repeats.length printed as a number in the header; the subject's and the foil's D8 cells must
+ *   carry the same K (else it throws). The per-op counts are pass 1's. A MEASURED QUIET results.json with zero loss rows
  *   throws (RESEARCH section 4.3: a report with no loss rows fails the honesty review).
  * The input is validated by validateResults (benchmark/Bench.mjs) first. ASCII only.
  *
@@ -25,6 +28,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { validateResults } from './Bench.mjs';
+import { rowRunValues, median, minOfList } from './Compare.mjs';
 
 const README_PATH = fileURLToPath(new URL('../README.md', import.meta.url));
 const PKG_PATH = fileURLToPath(new URL('../package.json', import.meta.url));
@@ -79,6 +83,21 @@ function d8Row(results, member, op) {
     return null;
 }
 
+// The median-of-K and min-of-K ns/op cells of one D8 op row: an n/a cell, an absent op (as d8Row) or
+// an n/a row -> n/a, never 0. rowRunValues checks every repeat, an n/a row's too (fail closed).
+function kCells(results, member, op) {
+    const r = results.results[member + '/D8'];
+    if (typeof r.na === 'string') return [NA, NA];
+    const x = r.rows.find((y) => y.op === op);
+    const vs = x === undefined ? null : rowRunValues(r, op, x.n);
+    if (vs === null) return [NA, NA];
+    return [num(median(vs)), num(minOfList(vs))];
+}
+
+function runsOf(cell) {
+    return 1 + (Array.isArray(cell.repeats) ? cell.repeats.length : 0);
+}
+
 function perOp(row, key) {
     if (row === null) return NA;
     const v = row.counts[key];
@@ -110,14 +129,18 @@ function measuredForm(results) {
         ', commit ' + m.commit + ' (Yggdrasil.js sha256/8 ' + m.mainFileSha + '), runs ' + m.runCount + ', seed 0x' +
         (m.seed >>> 0).toString(16) + '.');
     lines.push('');
-    lines.push('| op (n = ' + n + ') | ' + subj + ' ns/op | ' + subj + ' touches/op | ' + foil + ' ns/op | ' + foil +
-        ' moves/op |');
-    lines.push('| --- | ---: | ---: | ---: | ---: |');
+    const fd8 = results.results[foil + '/D8'];
+    if (!fd8) throw new Error('[readme] measured form needs results.' + foil + '/D8');
+    const k = runsOf(results.results[subj + '/D8']);
+    if (runsOf(fd8) !== k) throw new Error('[readme] D8 cells disagree on K (' + subj + ' ' + k + ', ' + foil + ' ' + runsOf(fd8) + ')');
+    lines.push('| op (n = ' + n + ') | ' + subj + ' ns/op (median of ' + k + ') | ' + subj + ' ns/op (min of ' + k + ') | ' + subj +
+        ' touches/op | ' + foil + ' ns/op (median of ' + k + ') | ' + foil + ' ns/op (min of ' + k + ') | ' + foil + ' moves/op |');
+    lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
     for (const op of TABLE_OPS) {
         const a = d8Row(results, subj, op);
         const b = d8Row(results, foil, op);
-        lines.push('| ' + op + ' | ' + (a ? num(a.nsPerOp) : NA) + ' | ' + perOp(a, 'touches') + ' | ' +
-            (b ? num(b.nsPerOp) : NA) + ' | ' + perOp(b, 'moves') + ' |');
+        lines.push('| ' + op + ' | ' + kCells(results, subj, op).join(' | ') + ' | ' + perOp(a, 'touches') + ' | ' +
+            kCells(results, foil, op).join(' | ') + ' | ' + perOp(b, 'moves') + ' |');
     }
     lines.push('');
     lines.push('Where ' + subj + ' loses (each loss with its crossover n):');

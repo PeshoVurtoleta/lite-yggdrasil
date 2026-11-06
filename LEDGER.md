@@ -373,7 +373,7 @@ engine code, CI and docs, each with its fix commit.
 - **Evidence:** HISTORY.md:130-142. Only the process rule that changed what ships is recorded here.
 - **Law:** none.
 
-### #35 -- SumMap engine waits for the run of record *(OPEN)*
+### #35 -- SumMap engine waits for the run of record, then for the R-7 PROPOSAL *(OPEN)*
 - **Tried / found:** SumMap contract rulings (R-SM1..R-SM10, 2026-11-05) are RULED; the SumMap ENGINE planner waits for
   GO / NO-GO on a CONCLUSIVE run of record (R-SM9). The PROPOSAL A.1-P1b / A.2 review ended r2 REJECTED (5 LITERAL),
   reviewer text applied verbatim with no third round; a fresh one-pass review of that applied diff (burst 46,
@@ -383,6 +383,14 @@ engine code, CI and docs, each with its fix commit.
   SumSequence, one QUIET run, K = 3) is REPORTED.
 - **Evidence:** RESEARCH.md:1726-1742, :1698-1724; HISTORY.md:12-21; review overlay .handoff/research/summap/review/b45-r3/ (base / head).
 - **Law:** none yet. OPEN.
+- **Update (2026-11-06, burst 48/49):** the run of record decided: BA-16 = PAUSE (R-BA49, Q-BA16, on b48 run of record
+  #2, CONCLUSIVE, twin 0 / 57; 8e27490, chunkcap.json f79b43a6; "PAUSE (Recommended)"). REPORTED: BlockedArray beats
+  SumSequence at S2@100000 (min-of-K, 0.95 band; K = 5, node v26.8.2, Apple M4 Pro x12, darwin arm64; full
+  provenance RESEARCH 14.4); S1 crossover 1024; S2 none up to 131072. Host caveat: QUIET start
+  (load1 2.46, baseline 2.21) but load1 peaked 26.7 at 09:28-09:41Z and sat 3-8 at 10:00-10:25Z (other sessions; no
+  other node process). Run #1 (INCONCLUSIVE, twin 4 / 57) decides nothing. The engine planner now waits for the R-7
+  research burst's ruled PROPOSAL (F = 4 and F = 8 first, RESEARCH 16.5; R-SM9). Still OPEN until that burst rules.
+  R-BA50 "Hold until BA-41 (Recommended)": run #2's results.json / report.html stay uncommitted until BA-41 lands.
 
 ---
 
@@ -533,7 +541,8 @@ engine code, CI and docs, each with its fix commit.
 - **Tried / found:** the sweep grid d x {1/4, 1/2, 1, 2, 4, 8}; P2 one QUIET run, K = 3, 22:47:17Z -> 22:48:07Z (49.6 s), 168
   / 168 cells: 6 of the 8 measured edge cells keep 4 x d as argmin, 2 move to 8 x d by 1.6% and 4.9% (both TIE under 0.95); 16
   x d is 1.4-4.3 x slower at every cell and never argmin. 14 of the 22 edge cells were not measured.
-- **Mechanism:** the sweep must be re-run QUIET to re-publish chunkcap.json before the next run of record.
+- **Mechanism:** the sweep must be re-run QUIET to re-publish chunkcap.json before the next run of record (done
+  2026-11-06, 8e27490, chunkcap.json f79b43a6).
 - **Evidence:** RESEARCH.md:1698-1724 (REPORTED); the 22-of-57 edge fact is DETERMINISTIC (chunkcap.json 921c2b86).
 - **Law:** an argmin at a grid edge prints 'edge'; the fix adds 8 x d to every grid once (R-BA44).
 

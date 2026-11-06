@@ -18,9 +18,12 @@ built (3a7a668) and S2 / S2a / S2b are built in the working tree (g2b-2b, R-BA17
 R-BA19..R-BA27; uncommitted at this edit); the chunkCap sweep / A/B / crossover tooling is built
 (g2b-3a); its timed runs ran in g2b-3b (picks in benchmark/chunkcap.json, 6b70f54; the run of record INCONCLUSIVE, not
 committed). Update (2026-11-06, burst 48/49): the 6-point chunkCap table was re-published (8e27490); run of record #2
-(8e27490) read CONCLUSIVE and BA-16 = PAUSE (R-BA49); its numbers are held uncommitted until the BA-41 tooling
-unit lands (R-BA50), then published in one commit (benchmark/results.json, report.html), so this file still holds
-no measured number. The sections below are the
+(8e27490) read CONCLUSIVE and BA-16 = PAUSE (R-BA49).
+Status (2026-11-06, burst 49): the BA-41 tooling unit (median-of-K
+printing) landed in 804aa83; run #2 is held unpublished (R-BA52 = "Hold; re-run in a quiet window", archived, README
+keeps its PENDING form; supersedes R-BA50 for run #2); run #3 (804aa83) read INCONCLUSIVE, its 60 s load trace
+crossed the R-BA53 line, and it is archived, not committed. This file still holds no measured number. The sections
+below are the
 contract they are built to.
 
 ## The one rule
@@ -228,8 +231,11 @@ BA-28..BA-36; g2b-4: R-BA41, R-BA42, R-BA44). The QUIET chunkCap sweep ran (g2b-
 6b70f54); the run of record read INCONCLUSIVE (R-BA29) and is not committed (R-BA39), so a new run of
 record was PENDING.
 Update (2026-11-06, burst 48/49): the 6-point table was committed (8e27490); run of record #2 (8e27490) read
-CONCLUSIVE and BA-16 = PAUSE (R-BA49); its numbers are held uncommitted until the BA-41 tooling unit lands (R-BA50),
-then published in one commit (benchmark/results.json, report.html), so this section still holds no measured number.
+CONCLUSIVE and BA-16 = PAUSE (R-BA49).
+Status (2026-11-06, burst 49): the BA-41 tooling unit (median-of-K printing) landed in 804aa83. Run #2 is held
+unpublished (R-BA52 = "Hold; re-run in a quiet window"; archived, README keeps its PENDING form; supersedes R-BA50
+for run #2). Run #3 (804aa83) read INCONCLUSIVE and its 60 s trace crossed the R-BA53 line ("Every sample under the
+line"); it is archived, not committed. This section still holds no measured number.
 
 - Passes (BA-28): K = 5 interleaved passes, pass-major. Inside each (scenario, n) group the label order is rotated
   left by one per pass (Compare.mjs rotateLabels). A child times 5 samples per phase (3 under --quick, never a run

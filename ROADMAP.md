@@ -32,6 +32,9 @@
 > SumSequence at n >= 100k on S2. The SumMap engine planner now waits for the R-7 research burst's ruled PROPOSAL
 > (F = 4 and F = 8 first, RESEARCH 16.5; R-SM9 PAUSE branch). Run #2's results.json / report.html are held uncommitted
 > until the BA-41 tooling unit lands (R-BA50 "Hold until BA-41 (Recommended)", a ruling, not done).**
+> (2026-11-06, burst 49: BA-41 landed in 804aa83; R-BA52 "Hold; re-run in a quiet window" holds run #2 unpublished
+> and supersedes R-BA50 for it; run #3 read INCONCLUSIVE, trace crossed the R-BA53 line, archived, not committed;
+> README keeps PENDING, BA-16 = PAUSE unchanged. Detail: section 5 note.)
 >
 > **UPDATE (2026-11-05; supersedes "Left: the chunkCap sweep, unroll A/B, loss rows, run of record ..." of the
 > 2026-10-31 line): g2b-3a landed; g2b-3b ran (the chunkCap sweep wrote benchmark/chunkcap.json, committed 6b70f54;
@@ -432,6 +435,25 @@ What blocks what:
   R-BA50 (Q-PUB) = "Hold until BA-41 (Recommended)": run #2's results.json + report.html are held uncommitted until
   the BA-41 tooling unit (median-of-K printing, R-BA47) lands; then one commit carries results.json, report.html
   regenerated from it and the README Benchmarks section, batched with the release (HOLD-RELEASE). A ruling, not done.
+  (2026-11-06, burst 49): superseded for run #2. BA-41 (median-of-K printing) landed in 804aa83.
+  R-BA52 (Q-PUB2) = "Hold; re-run in a quiet window": "Run #2 stays unpublished (archived in
+  .handoff/evidence/bench-adopt/b48-ror2/); README keeps its PENDING form. A new run of record (BA-37..BA-40 standing)
+  runs in a later quiet window with a 60 s load trace, and only a run whose trace stays quiet is published. BA-16 =
+  PAUSE stands (R-BA49)." It supersedes R-BA50 for run #2 (asked because the generated README says "QUIET host" from
+  the start reading and does not show run #2's mid-run load spike).
+  R-BA53 (Q-TRACE) = "Every sample under the line (Recommended)": "A run of record's trace stays quiet when every 60 s
+  sample has load1 < BASELINE + 1 (quiet-lock's NOISY line; BASELINE 2.21 today -> 3.21) and no node process >= 10%
+  CPU other than the bench's own children, for the whole run. A run whose trace crosses the line is not published:
+  results.json + report.html are archived like an INCONCLUSIVE run (BA-39 pattern), README keeps its PENDING form, and
+  BA-16 is unchanged."
+  Run of record #3 (REPORTED; 2026-11-06, commit 804aa83, Yggdrasil.js e0618227, chunkcap.json f79b43a6, node
+  v26.8.2, Apple M4 Pro x12 darwin arm64, K = 5, 358 cells; start 17:45:48Z after 3 QUIET reads (load1 1.60, baseline
+  2.21), end 19:43:37Z, exit 0): INCONCLUSIVE (twin A/A non-TIE on the crossover phase at S2b@32768 bulk, minRatio
+  0.940); the 60 s trace crossed the R-BA53 line in 2 of 94 samples (load1 3.42 at 18:30:56Z, 3.66 at 18:35:41Z; no
+  node process other than the bench's own); drift sentinel 22% (> 10% limit). Archived, not committed
+  (.handoff/evidence/b49/ror3/); README keeps PENDING; BA-16 = PAUSE unchanged. Its S2 readings repeat run #2's
+  (BlockedArray wins S2 through n = 100000; crossover "none up to 131072") -- REPORTED, decides nothing (INCONCLUSIVE,
+  BA-40 standing). Next: another run of record in a quiet window (R-BA52 / R-BA53); no date set.
 - The pool (0.4) needs SumMap and IntervalMap realms to be worth shipping.
 
 Estimate to SumMap 0.2.0 (2026-10-28, est., from .handoff/HISTORY.md: 28 burst sessions S0 -> 0.1.1 (S0, the

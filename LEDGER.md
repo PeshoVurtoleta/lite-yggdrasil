@@ -391,6 +391,9 @@ engine code, CI and docs, each with its fix commit.
   other node process). Run #1 (INCONCLUSIVE, twin 4 / 57) decides nothing. The engine planner now waits for the R-7
   research burst's ruled PROPOSAL (F = 4 and F = 8 first, RESEARCH 16.5; R-SM9). Still OPEN until that burst rules.
   R-BA50 "Hold until BA-41 (Recommended)": run #2's results.json / report.html stay uncommitted until BA-41 lands.
+  (2026-11-06, burst 49) BA-41 landed (804aa83); R-BA52 "Hold; re-run in a quiet window" supersedes R-BA50 for run #2
+  (unpublished, README keeps PENDING); run #3 (804aa83) INCONCLUSIVE, 60 s trace crossed the R-BA53 line (2 of 94
+  samples, load1 3.42 / 3.66 vs 3.21), archived, not committed; BA-16 = PAUSE unchanged. Detail: RESEARCH 14.4.
 
 ---
 

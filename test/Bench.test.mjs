@@ -684,19 +684,21 @@ describe('g2b-3a B2: sweep keys, flags and the cell plan', () => {
             assert.ok(r.stderr.includes(msg), args.join(' ') + ' stderr: ' + r.stderr);
         }
     });
-    test('planCells: --sweep chunkCap --scenario S7 --quick = BlockedArray x 5 distinct ~c keys, d from the built capacity (A4)', () => {
+    test('planCells: --sweep chunkCap --scenario S7 --quick = BlockedArray x 6 distinct ~c keys, d from the built capacity (A4, R-BA44)', () => {
         const p = B.planCells(B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S7', '--quick']));
         assert.equal(p.groups.length, 1);
-        // hand: S7 builds capacity n = 4096; ceil(sqrt(4096)) = 64 -> d 64; grid 64 x {1/4, 1/2, 1, 2, 4}
-        assert.deepEqual(p.sweep, [{ sid: 'S7', n: 4096, capacity: 4096, d: 64, grid: [16, 32, 64, 128, 256] }]);
+        // hand: S7 builds capacity n = 4096; ceil(sqrt(4096)) = 64 -> d 64; grid 64 x {1/4, 1/2, 1, 2, 4, 8}
+        // = [16, 32, 64, 128, 256, 512]
+        assert.deepEqual(p.sweep, [{ sid: 'S7', n: 4096, capacity: 4096, d: 64, grid: [16, 32, 64, 128, 256, 512] }]);
         const keys = p.groups[0].map((c) => B.cellKey(c.member, c.scenario, c.n, c.chunkCap));
-        assert.deepEqual(keys, [16, 32, 64, 128, 256].map((cc) => 'BlockedArray/S7@4096~c' + cc));
+        assert.deepEqual(keys, [16, 32, 64, 128, 256, 512].map((cc) => 'BlockedArray/S7@4096~c' + cc));
         for (const c of p.groups[0]) assert.deepEqual(c.tune, { chunkCap: c.chunkCap });
-        // S1a builds capacity n + 1 = 1025 at 1024: d = 36 (ceil(sqrt(1025)) = 33 -> 36), not sqrt(n) = 32
+        // S1a builds capacity n + 1 = 1025 at 1024: d = 36 (ceil(sqrt(1025)) = 33 -> 36), not sqrt(n) = 32;
+        // grid 36 x {1/4, 1/2, 1, 2, 4, 8} = 9 -> 12, 18 -> 20, 36, 72, 144, 288
         const q = B.planCells(B.parseArgs(['--sweep', 'chunkCap', '--scenario', 'S1a', '--quick']));
-        assert.deepEqual(q.sweep[0], { sid: 'S1a', n: 1024, capacity: 1025, d: 36, grid: [12, 20, 36, 72, 144] });
+        assert.deepEqual(q.sweep[0], { sid: 'S1a', n: 1024, capacity: 1025, d: 36, grid: [12, 20, 36, 72, 144, 288] });
         assert.equal(q.groups.length, 3);
-        for (const g of q.groups) assert.equal(new Set(g.map((c) => c.chunkCap)).size, 5);
+        for (const g of q.groups) assert.equal(new Set(g.map((c) => c.chunkCap)).size, 6);
     });
     test('planCells: one group per (Sid, n) in registry label order; --all = 16 D-rows + every scenario; --all --sweep has no D-row', () => {
         const S7 = selectScenario('S7');
@@ -765,9 +767,10 @@ describe('g2b-3a B2: sweep keys, flags and the cell plan', () => {
 });
 
 // ---- g2b-3a B3: publishGuard, the picks table, tuning, lossTable / comparison, Report sections, inl drivers
-// (PLAN g2b-3a TASKS 4-5, TASK 7 B3 rows; SPEC CURRENT BA-29..BA-33; ASSERTIONS A2 / A4). Hand oracles:
-// sweepGrid(100) = [28, 52, 100, 200, 400] (25 -> 28, 50 -> 52), d(100000) = ceil(316.23) = 317 -> 320,
-// sweepGrid(1000) = [252, 500, 1000, 2000, 4000] (250 -> 252).
+// (PLAN g2b-3a TASKS 4-5, TASK 7 B3 rows; SPEC CURRENT BA-29..BA-33; ASSERTIONS A2 / A4; g2b-4 TASK 6:
+// the 6-point grid d x {1/4, 1/2, 1, 2, 4, 8}, R-BA44, and A5). Hand oracles:
+// sweepGrid(100) = [28, 52, 100, 200, 400, 800] (25 -> 28, 50 -> 52), d(100000) = ceil(316.23) = 317 -> 320,
+// sweepGrid(320) = [80, 160, 320, 640, 1280, 2560], sweepGrid(1000) = [252, 500, 1000, 2000, 4000, 8000] (250 -> 252).
 describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
     let B, Rep;
     before(async () => {
@@ -781,9 +784,9 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
     const PRELIM = { QUIET_LOCK_HOST: 'preliminary' };
 
     const S7_PICKS = () => [
-        { scenario: 'S7', n: 10000, capacity: 10000, d: 100, grid: [28, 52, 100, 200, 400], chunkCap: 100, edge: false, nsPerEvent: 41.5 },
-        { scenario: 'S7', n: 100000, capacity: 100000, d: 320, grid: [80, 160, 320, 640, 1280], chunkCap: 80, edge: true, nsPerEvent: 52.25 },
-        { scenario: 'S7', n: 1000000, capacity: 1000000, d: 1000, grid: [252, 500, 1000, 2000, 4000], chunkCap: 2000, edge: false, nsPerEvent: 77 },
+        { scenario: 'S7', n: 10000, capacity: 10000, d: 100, grid: [28, 52, 100, 200, 400, 800], chunkCap: 100, edge: false, nsPerEvent: 41.5 },
+        { scenario: 'S7', n: 100000, capacity: 100000, d: 320, grid: [80, 160, 320, 640, 1280, 2560], chunkCap: 80, edge: true, nsPerEvent: 52.25 },
+        { scenario: 'S7', n: 1000000, capacity: 1000000, d: 1000, grid: [252, 500, 1000, 2000, 4000, 8000], chunkCap: 2000, edge: false, nsPerEvent: 77 },
     ];
     const table = (hostState = 'QUIET') => ({
         schema: 'yggdrasil-chunkcap/1',
@@ -883,6 +886,7 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
         ['capacity < n', (t) => { t.picks[0].capacity = 9999; }, /picks\[0\]\.capacity/],
         ['d not defaultChunkCap(capacity)', (t) => { t.picks[0].d = 104; }, /picks\[0\]\.d must be defaultChunkCap/],
         ['grid not sweepGrid(d)', (t) => { t.picks[0].grid = [25, 50, 100, 200, 400]; }, /picks\[0\]\.grid/],
+        ['grid the old 5-point sweepGrid(100) (R-BA44)', (t) => { t.picks[0].grid = [28, 52, 100, 200, 400]; }, /picks\[0\]\.grid/],
         ['chunkCap 102 (not a multiple of 4)', (t) => { t.picks[0].chunkCap = 102; }, /chunkCap must be an integer multiple of 4/],
         ['chunkCap 4 (below 8)', (t) => { t.picks[0].chunkCap = 4; }, /chunkCap must be an integer multiple of 4 in \[8, 65536\]/],
         ['chunkCap 65540 (above 65536)', (t) => { t.picks[0].chunkCap = 65540; }, /chunkCap must be an integer multiple of 4/],
@@ -916,12 +920,15 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
         R[label + '/S7@' + n] = { ...one(runs[0]), repeats: runs.slice(1).map(one) };
     }
     const five = (v) => [v, v, v, v, v];
-    // A2 S7 shape: SumSequence median 100 (outliers 900 / 1), FenwickRebuild.suffix 50 (wins: 50 < 95),
-    // BlockedArray / .plain 100 (TIE), twin ~100 (TIE): conclusive.
+    // A2 S7 shape: SumSequence median 100 (outliers 900 / 140), FenwickRebuild.suffix 50 (wins: 50 < 95),
+    // BlockedArray / .plain 100 (TIE), twin ~100 (TIE): conclusive. Under min-of-K (R-BA41) the verdicts read
+    // the minimum: SumSequence min 100 (the low outlier is 140, not 1, so SumSequence does not win on it),
+    // Fenwick min 50 < 0.95 x 100 = 95 (loss), BlockedArray min 100 (TIE), twin min 99 vs 100: 99 is not
+    // below 95 and 100 is not below 94.05 (TIE).
     const s7 = (twinAt1e5 = [100, 101, 99, 100, 100]) => {
         const R = {};
         for (const n of S7N) {
-            put(R, 'SumSequence', n, [100, 900, 100, 1, 100]);
+            put(R, 'SumSequence', n, [100, 900, 100, 140, 100]);
             put(R, 'FenwickRebuild.suffix', n, five(50));
             put(R, 'BlockedArray', n, five(100));
             put(R, 'BlockedArray.plain', n, five(100));
@@ -962,6 +969,20 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
         assert.ok(p.lossTable.length === 1 && /^INCONCLUSIVE/.test(p.lossTable[0].reason));
         assert.equal(B.validateResults(p), true);
     });
+    test('comparisonOf (A5): a twin reading stores minRatio (min-of-K) beside ratio (median-of-K); noise is not stored; validates', () => {
+        // twin at S7@100000 [80, 80, 80, 60, 80] vs BlockedArray five(100): median 80 -> ratio 0.8; min 60 -> minRatio 0.6
+        const p = payload(s7([80, 80, 80, 60, 80]));
+        assert.deepEqual(Object.keys(p.comparison), ['inconclusive', 'twin'], 'BA-36 shape: no noise key');
+        assert.deepEqual(p.comparison.twin, [{ scenario: 'S7', n: 100000, phase: 'blend', verdict: 'A', ratio: 0.8, minRatio: 0.6 }]);
+        assert.equal(B.validateResults(p), true);
+    });
+    test('comparisonOf (A5): a missing twin cell -> a MISSING reading with ratio and minRatio null; validates', () => {
+        const R = s7();
+        delete R['BlockedArray.twin/S7@10000'];
+        const p = payload(R);
+        assert.deepEqual(p.comparison, { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: null, verdict: 'MISSING', ratio: null, minRatio: null }] });
+        assert.equal(B.validateResults(p), true);
+    });
     test('comparisonOf: nothing to compare (D-rows only, or a ~c sweep) -> lossTable [] and no comparison record', () => {
         assert.deepEqual(B.comparisonOf({ 'SumSequence/D1': {}, 'SpliceFoil/D8': {} }), { lossTable: [], comparison: null });
         const sw = {};
@@ -973,10 +994,18 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
         ['unknown key', (p) => { p.comparison.twins = []; }, /comparison\.twins unknown key/],
         ['inconclusive not a boolean', (p) => { p.comparison.inconclusive = 'no'; }, /comparison\.inconclusive must be a boolean/],
         ['inconclusive true with no reading', (p) => { p.comparison.inconclusive = true; }, /must be true exactly when/],
-        ['a reading with inconclusive false', (p) => { p.comparison.twin.push({ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'A', ratio: 0.8 }); }, /must be true exactly when/],
-        ['a reading with a bad verdict', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'TIE', ratio: 1 }] }; }, /twin\[0\]\.verdict/],
-        ['MISSING with a ratio', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: null, verdict: 'MISSING', ratio: 1 }] }; }, /twin\[0\]\.ratio must be null/],
-        ['a reading with ratio 0', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'B', ratio: 0 }] }; }, /twin\[0\]\.ratio/],
+        ['a reading with inconclusive false', (p) => { p.comparison.twin.push({ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'A', ratio: 0.8, minRatio: 0.8 }); }, /must be true exactly when/],
+        ['a reading with a bad verdict', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'TIE', ratio: 1, minRatio: 1 }] }; }, /twin\[0\]\.verdict/],
+        ['MISSING with a ratio', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: null, verdict: 'MISSING', ratio: 1, minRatio: null }] }; }, /twin\[0\]\.ratio must be null/],
+        ['a reading with ratio 0', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'B', ratio: 0, minRatio: 1.1 }] }; }, /twin\[0\]\.ratio/],
+        // A5 (g2b-4 TASK 3, R-BA41): minRatio fails closed
+        ['A5 a reading without minRatio', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'A', ratio: 0.8 }] }; }, /twin\[0\]\.minRatio missing/],
+        ['A5 MISSING with minRatio 1', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: null, verdict: 'MISSING', ratio: null, minRatio: 1 }] }; }, /twin\[0\]\.minRatio must be null when MISSING/],
+        ['A5 a reading with minRatio 0', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'B', ratio: 1.1, minRatio: 0 }] }; }, /twin\[0\]\.minRatio must be a finite number > 0/],
+        ['A5 a reading with minRatio null', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'B', ratio: 1.1, minRatio: null }] }; }, /twin\[0\]\.minRatio must be a finite number > 0/],
+        ['A5 a reading with minRatio Infinity', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'B', ratio: 1.1, minRatio: Infinity }] }; }, /twin\[0\]\.minRatio must be a finite number > 0/],
+        ['a twin row with an unknown key', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'B', ratio: 1.1, minRatio: 1.1, noise: [] }] }; }, /twin\[0\]\.noise unknown key/],
+        ['A5 a reading with minRatio a string', (p) => { p.comparison = { inconclusive: true, twin: [{ scenario: 'S7', n: 10000, phase: 'blend', verdict: 'B', ratio: 1.1, minRatio: '1.1' }] }; }, /twin\[0\]\.minRatio must be a finite number > 0/],
     ];
     for (const [name, mutate, re] of CMP_BAD) {
         test('validateResults comparison throws: ' + name, () => {
@@ -1147,9 +1176,9 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
     });
     test('planCells with picks fails closed: a pick whose capacity is not the capacity this run builds (a stale table) throws', () => {
         // S7 builds capacity n (the sweep test above pins 4096 -> 4096); a pick swept at capacity 20000 for n 10000 is stale.
-        // Hand oracle: ceil(sqrt(20000)) = 142 -> 144; sweepGrid(144) = [36, 72, 144, 288, 576].
+        // Hand oracle: ceil(sqrt(20000)) = 142 -> 144; sweepGrid(144) = 144 x {1/4, 1/2, 1, 2, 4, 8} = [36, 72, 144, 288, 576, 1152].
         const t = table();
-        Object.assign(t.picks[0], { capacity: 20000, d: 144, grid: [36, 72, 144, 288, 576], chunkCap: 144, edge: false });
+        Object.assign(t.picks[0], { capacity: 20000, d: 144, grid: [36, 72, 144, 288, 576, 1152], chunkCap: 144, edge: false });
         assert.equal(B.validatePicks(t), true, 'fixture: the stale table is otherwise valid');
         assert.throws(() => B.planCells(P(['--scenario', 'S7']), [], t), /pick for S7@10000 was swept at capacity 20000, this run builds capacity 10000/);
         assert.ok(B.planCells(P(['--scenario', 'S7']), [], table()).groups.length > 0, 'control: the capacity-n table plans');
@@ -1162,17 +1191,20 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
         const plan = B.planCells(P(['--sweep', 'chunkCap', '--scenario', 'S7', '--quick']));
         const mk = (vals) => {
             const R = {};
-            [16, 32, 64, 128, 256].forEach((cc, i) => {
+            [16, 32, 64, 128, 256, 512].forEach((cc, i) => {
                 R['BlockedArray/S7@4096~c' + cc] = { member: 'BlockedArray', scenario: 'S7', n: 4096, chunkCap: cc, phases: [phaseRow('BlockedArray', 'blend', vals[i])] };
             });
             return R;
         };
-        const mid = B.sweepPicks(plan, mk([30, 20, 10, 20, 30]));
-        assert.deepEqual(mid, [{ scenario: 'S7', n: 4096, capacity: 4096, d: 64, grid: [16, 32, 64, 128, 256], chunkCap: 64, edge: false, nsPerEvent: 10 }]);
-        const end = B.sweepPicks(plan, mk([30, 20, 10, 9, 8]));
-        assert.deepEqual([end[0].chunkCap, end[0].edge], [256, true]);
+        const mid = B.sweepPicks(plan, mk([30, 20, 10, 20, 30, 40]));
+        assert.deepEqual(mid, [{ scenario: 'S7', n: 4096, capacity: 4096, d: 64, grid: [16, 32, 64, 128, 256, 512], chunkCap: 64, edge: false, nsPerEvent: 10 }]);
+        // argmin at 4d (256) is no longer an edge on the 6-point grid; at 8d (512) it is
+        const four = B.sweepPicks(plan, mk([30, 20, 10, 9, 8, 9]));
+        assert.deepEqual([four[0].chunkCap, four[0].edge], [256, false]);
+        const end = B.sweepPicks(plan, mk([30, 20, 10, 9, 8, 7]));
+        assert.deepEqual([end[0].chunkCap, end[0].edge], [512, true]);
         assert.equal(B.validatePicks({ ...table(), picks: mid }), true);
-        const gap = mk([1, 2, 3, 4, 5]);
+        const gap = mk([1, 2, 3, 4, 5, 6]);
         delete gap['BlockedArray/S7@4096~c128'];
         assert.throws(() => B.sweepPicks(plan, gap), /no cell BlockedArray\/S7@4096~c128/);
     });
@@ -1218,12 +1250,12 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
         assert.ok(!r.stderr.includes('running '));
     });
 
-    // ---- Report: the four sections, PRELIMINARY labels, no GO text, "not measured", fail closed
+    // ---- Report: the five sections, PRELIMINARY labels, no GO text, "not measured", fail closed
     const TITLES = ['chunkCap picks (BA-31)', 'Blend win / TIE / loss grid (BA-29)', 'Crossovers (BA-30)',
-        'BlockedArray unrolled vs plain A/B, twin A/A control (BA-29)'];
+        'BlockedArray unrolled vs plain A/B, twin A/A control (BA-29)', 'twin noise (other phases, never a gate, R-BA42)'];
     const h2 = (title) => '<h2>' + title.replace(/&/g, '&amp;') ;
     const tuned = (hostState) => { const p = payload(s7(), hostState); p.tuning = tuning(); return p; };
-    test('Report: the four sections render; PRELIMINARY payload labels each [PRELIMINARY]; no GO text', () => {
+    test('Report: the five sections render; PRELIMINARY payload labels each [PRELIMINARY]; no GO text', () => {
         const html = Rep.renderHtml(tuned('PRELIMINARY'));
         for (const t of TITLES) assert.ok(html.includes(h2(t) + ' [PRELIMINARY]</h2>'), t);
         assert.ok(html.includes('FenwickRebuild.suffix'));
@@ -1232,7 +1264,7 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
         assert.ok(html.includes('twin TIE'));
         assert.ok(!/\bGO\b/.test(html) && !/NO-GO/i.test(html), 'no GO / NO-GO text');
     });
-    test('Report: a QUIET MEASURED payload renders the four sections WITHOUT the PRELIMINARY label; no GO text', () => {
+    test('Report: a QUIET MEASURED payload renders the five sections WITHOUT the PRELIMINARY label; no GO text', () => {
         const html = Rep.renderHtml(tuned('QUIET'));
         for (const t of TITLES) {
             assert.ok(html.includes(h2(t) + '</h2>'), t);
@@ -1244,6 +1276,7 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
         const html = Rep.renderHtml(payload(s7(five(80))));
         assert.ok(html.includes('<td>INCONCLUSIVE</td>'));
         assert.match(html, /twin A\/A \(BlockedArray\.twin vs BlockedArray\): INCONCLUSIVE/);
+        assert.ok(html.includes('INCONCLUSIVE: the twin A/A control read other than TIE on a crossover phase in this run'), 'incNote names the crossover phase (R-BA42)');
         // grid (SumSequence vs FenwickRebuild.suffix = loss, vs BlockedArray = TIE) and the unrolled vs plain A/B row (TIE)
         assert.ok(html.includes('<td>loss (INCONCLUSIVE)</td>') && html.includes('<td>TIE (INCONCLUSIVE)</td>'), 'grid + A/B rows');
         assert.ok(/<td>0\.\d+<\/td><td>TIE \(INCONCLUSIVE\)<\/td><\/tr>/.test(html) || /<td>1(\.0+)?<\/td><td>TIE \(INCONCLUSIVE\)<\/td>/.test(html),
@@ -1256,13 +1289,66 @@ describe('g2b-3a B3: guard, picks, tuning, loss rows, report', () => {
             dimensions: [], titles: {}, scenarios: [], results: {}, lossTable: [] };
         const html = Rep.renderHtml(d);
         assert.ok(!html.includes(TITLES[0]));
-        assert.ok(html.split('not measured in this run').length - 1 >= 4, 'grid, crossovers, A/B, twin');
+        assert.ok(html.split('not measured in this run').length - 1 >= 5, 'grid, crossovers, A/B, twin, twin noise');
+        assert.ok(html.includes('twin noise: not measured in this run'), 'the noise section reads not measured');
         assert.ok(!/\bGO\b/.test(html), 'no GO text in the not-measured form');
         const R = s7();
         for (const n of S7N) { delete R['BlockedArray.plain/S7@' + n]; }
         const h = Rep.renderHtml(payload(R));
         assert.match(h, /unrolled vs plain: not measured in this run/);
         assert.ok(h.includes('FenwickRebuild.suffix'));
+    });
+    // ---- g2b-4 TASK 4: min-of-K columns, the crossover-phase twin note, the noise table
+    const addPhase = (R, label, n, phase, runs) => {
+        const cell = R[label + '/S7@' + n];
+        [cell, ...cell.repeats].forEach((c, i) => c.phases.push(phaseRow(label, phase, runs[i])));
+    };
+    test('Report (g2b-4): A/B rows print median-of-K and min-of-K side by side; the twin table has a min ratio column', () => {
+        const R = s7([80, 80, 80, 60, 80]);
+        // plain at S7@10000: median 100, min 90 -> A/B ratio 1.00 (median-of-K TIE-looking); the verdict reads
+        // min-of-K -> plain win (a median-of-K verdict would read TIE)
+        put(R, 'BlockedArray.plain', 10000, [100, 100, 100, 90, 100]);
+        // BlockedArray at S7@10000: median 100, min 95 -> unrolled min 95.00, min ratio 95 / 90 = 1.06 (pins the
+        // aMin column apart from the median one); verdict still plain win (90 < 0.95 x 95 = 90.25); twin 99 vs 95 TIE
+        put(R, 'BlockedArray', 10000, [100, 100, 100, 95, 100]);
+        const html = Rep.renderHtml(payload(R));
+        assert.ok(html.includes('<th>unrolled ns/event</th><th>plain ns/event</th><th>ratio</th><th>unrolled min</th><th>plain min</th><th>min ratio</th><th>verdict</th>'), 'A/B header');
+        assert.ok(html.includes('<tr><td>S7</td><td>10000</td><td>blend</td><td>100.00</td><td>100.00</td><td>1.00</td><td>95.00</td><td>90.00</td><td>1.06</td><td>plain win (INCONCLUSIVE)</td></tr>'), 'A/B row, min columns, min-of-K verdict');
+        assert.ok(html.includes('<th>twin verdict</th><th>twin / BlockedArray</th><th>min ratio</th>'), 'twin header');
+        assert.ok(html.includes('<tr><td>S7</td><td>100000</td><td>blend</td><td>A</td><td>0.8000</td><td>0.6000</td></tr>'), 'twin row: ratio median-of-K, min ratio min-of-K');
+        assert.match(html, /The twin A\/A gates on the crossover phase only/);
+        assert.match(html, /every comparison below is INCONCLUSIVE/);
+        assert.ok(html.includes('d x {1/4, 1/2, 1, 2, 4, 8}') === false, 'no tuning section without tuning');
+        const t = Rep.renderHtml(tuned('PRELIMINARY'));
+        assert.ok(t.includes('d x {1/4, 1/2, 1, 2, 4, 8}'), 'chunkCap note: the 6-point grid');
+        assert.ok(t.includes("'s min-of-K below 0.95 x the rival's min-of-K"), 'blend legend: min-of-K');
+        assert.match(t, /TIE at every \(scenario, n\) crossover phase both ran/);
+    });
+    test('Report (g2b-4): a MISSING twin reading prints n/a in phase, ratio and min ratio', () => {
+        const R = s7();
+        delete R['BlockedArray.twin/S7@10000'];
+        const html = Rep.renderHtml(payload(R));
+        assert.ok(html.includes('<tr><td>S7</td><td>10000</td><td>n/a</td><td>MISSING</td><td>n/a</td><td>n/a</td></tr>'), 'MISSING row');
+    });
+    test('Report (g2b-4): twin noise table lists the non-TIE non-crossover twin readings, never INCONCLUSIVE; none -> says none', () => {
+        const R = s7();
+        // a second phase 'seek' on BlockedArray and its twin; twin seek at S7@100000 is 50 vs 100 (not TIE): noise only
+        for (const n of S7N) {
+            addPhase(R, 'BlockedArray', n, 'seek', five(100));
+            addPhase(R, 'BlockedArray.twin', n, 'seek', n === 100000 ? [50, 50, 50, 40, 50] : five(100));
+        }
+        const p = payload(R);
+        assert.deepEqual(p.comparison, { inconclusive: false, twin: [] }, 'noise never gates, never stored');
+        const html = Rep.renderHtml(p);
+        assert.ok(html.includes('<h2>twin noise (other phases, never a gate, R-BA42) [PRELIMINARY]</h2>'));
+        assert.ok(html.includes('1 reading(s) below'));
+        assert.ok(html.includes('<tr><td>S7</td><td>100000</td><td>seek</td><td>A</td><td>0.5000</td><td>0.4000</td></tr>'), 'noise row');
+        assert.ok(!html.includes('(INCONCLUSIVE)') && !html.includes('<td>INCONCLUSIVE</td>') && !html.includes('every comparison below is INCONCLUSIVE') &&
+            !html.includes('): INCONCLUSIVE'), 'a noise reading never makes the run INCONCLUSIVE');
+        assert.ok(html.includes('twin TIE'));
+        const none = Rep.renderHtml(payload(s7()));
+        assert.ok(none.includes('None: every non-crossover twin reading is TIE.'));
+        assert.ok(!/<td>seek<\/td>/.test(none));
     });
     test('Report: the per-phase Scenarios table renders every scenario key form (untagged and a sweep ~c key), n and phase filled', () => {
         const html = Rep.renderHtml(payload(s7()));

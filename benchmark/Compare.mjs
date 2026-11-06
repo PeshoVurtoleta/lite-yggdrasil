@@ -4,7 +4,8 @@
  * MIT (c) Zahary Shinikchiev <shinikchiev@yahoo.com>
  *
  * Repo-only. Bench-ADOPT g2b-3a TASK 1 (.handoff/PLAN-bench-adopt-g2b3a.md; SPEC-bench-adopt CURRENT
- * BA-28 = R-BA28, BA-29 = R-BA29, BA-30 = R-BA30, BA-31 = R-BA31, refining BA-15). Pure and cold: no I/O,
+ * BA-28 = R-BA28 / R-BA43, BA-29 = R-BA29 -> R-BA41 / R-BA42, BA-30 = R-BA30, BA-31 = R-BA31 -> R-BA44,
+ * refining BA-15; g2b-4 TASKS 1-2, .handoff/PLAN-bench-adopt-g2b4.md). Pure and cold: no I/O,
  * no clock, no PRNG; every function reads its arguments and returns a fresh value. Every timing it
  * reads is REPORTED (ADR 0003 G-1, BA-9); it prints facts (win / TIE / loss, crossover n) and never
  * GO / NO-GO text (BA-16, BA-30).
@@ -19,24 +20,33 @@
  *   (D-rows) are skipped. Any other key throws.
  *
  * Rules (quoted from SPEC CURRENT):
- *   BA-28  K = 5 interleaved passes; a (label, scenario, n, phase) value = median of its K child medians.
- *   BA-29  A wins when its median-of-K is below 0.95 x B's, B likewise, else TIE (neither win nor loss).
- *          BlockedArray.twin vs BlockedArray other than TIE at any (scenario, n) -> INCONCLUSIVE.
+ *   BA-28  K = 5 interleaved passes (R-BA43 keeps K = 5); a (label, scenario, n, phase) value = median of
+ *          its K child medians (median-of-K).
+ *   BA-29  A wins when its min-of-K (the minimum of its K child medians) is below 0.95 x B's min-of-K, B
+ *          likewise, else TIE (neither win nor loss); the stored and printed value stays the median-of-K
+ *          (BA-28) and the min-of-K is printed beside it (R-BA41). Every BA-29 verdict (crossover, loss
+ *          rows, A/B rows, twin A/A) uses this rule; the BA-31 pick does not. The twin A/A check reads only
+ *          the crossover phase (blend; a one-phase scenario's only phase, S2b bulk): BlockedArray.twin vs
+ *          BlockedArray other than TIE on that phase at any (scenario, n) -> INCONCLUSIVE; the twin's other
+ *          phases are noise rows, never a gate (R-BA42).
  *   BA-30  Crossover reads the blend phase: the smallest measured n from which SumSequence wins at every
  *          larger measured n; none -> 'none up to <largest n>'. S1 = the larger of S1a / S1b; vs
  *          BlockedArray = the larger of BlockedArray / BlockedArray.plain (combineS1 serves both).
  *          A loss row per (scenario, rival label except twin) with a rival win at >= 1 measured n.
- *   BA-31  chunkCap grid = d x {1/4, 1/2, 1, 2, 4}, each rounded up to a multiple of 4, clamped
- *          [8, 65536], deduped; pick = lowest median-of-K blend ns/event; an end-of-grid pick is 'edge'.
+ *   BA-31  chunkCap grid = d x {1/4, 1/2, 1, 2, 4, 8} (R-BA44), each rounded up to a multiple of 4,
+ *          clamped [8, 65536], deduped; pick = lowest median-of-K blend ns/event (not min-of-K, R-BA41);
+ *          an end-of-grid pick is 'edge'.
  *
  * A one-phase scenario (S2b: ['bulk'], no blend) is read on its only phase wherever blend is named.
  * Every scenario cell of one results map must carry the same run count (1 + repeats.length).
  *
  * INCONCLUSIVE surface: lossRows and abSummary return { rows, inconclusive, twin }; every crossovers()
- * entry carries inconclusive; twin lists every (scenario, n, phase) where the A/A control read other
- * than TIE (or ran no twin cell beside a BlockedArray cell: verdict 'MISSING'), checked over EVERY
- * phase both labels share (fail closed). When inconclusive, every loss row's reason starts with
- * 'INCONCLUSIVE'. A twin cell at another chunkCap than BlockedArray's throws (not an A/A pair).
+ * entry carries inconclusive; twin lists every (scenario, n) where the A/A control read other than TIE
+ * on the crossover phase (or ran no twin cell beside a BlockedArray cell: verdict 'MISSING'; fail
+ * closed). twinControl also returns noise: every non-TIE reading on the other phases both labels
+ * share, never a gate (R-BA42). When inconclusive, every loss row's reason starts with
+ * 'INCONCLUSIVE'. A twin cell at another chunkCap than BlockedArray's throws (not an A/A pair), and so
+ * does a twin listing other phases than BlockedArray.
  *
  * Fail closed: a missing phase, a non-finite or <= 0 value, an empty list, an unknown verdict, an
  * unknown option key (did-you-mean) or a key / cell mismatch throws. ASCII only.
@@ -46,10 +56,10 @@ import { isPlain, didYouMean } from './Adapters.mjs';
 
 /** Interleaved passes per run of record and per sweep (BA-28). */
 export const K = 5;
-/** Win band (BA-29): a wins when med(a) < BAND x med(b). */
+/** Win band (BA-29): a wins when min(a) < BAND x min(b) (min-of-K, R-BA41). */
 export const BAND = 0.95;
-/** chunkCap sweep factors on the class default d (BA-31). */
-export const SWEEP_FACTORS = Object.freeze([1 / 4, 1 / 2, 1, 2, 4]);
+/** chunkCap sweep factors on the class default d (BA-31, R-BA44). */
+export const SWEEP_FACTORS = Object.freeze([1 / 4, 1 / 2, 1, 2, 4, 8]);
 /** chunkCap clamp (BA-31). */
 export const CAP_MIN = 8;
 export const CAP_MAX = 65536;
@@ -177,19 +187,32 @@ export function runValues(cell, phase) {
     return out;
 }
 
-/** The median of the K child medians of one cell's phase (BA-28). */
+/** Minimum of a non-empty list of finite values > 0 (the input is not modified). */
+export function minOfList(xs) {
+    checkList(xs, 'minOfList');
+    let m = xs[0];
+    for (let i = 1; i < xs.length; i++) if (xs[i] < m) m = xs[i];
+    return m;
+}
+
+/** The median of the K child medians of one cell's phase (BA-28): the stored / printed value. */
 export function medianOfK(cell, phase) {
     return median(runValues(cell, phase));
 }
 
+/** The minimum of the K child medians of one cell's phase: the value BA-29 verdicts read (R-BA41). */
+export function minOfK(cell, phase) {
+    return minOfList(runValues(cell, phase));
+}
+
 /**
- * Win / TIE on two lists of per-run values (BA-29): 'A' when med(a) < band x med(b), 'B' when
- * med(b) < band x med(a), else 'TIE'.
+ * Win / TIE on two lists of per-run values (BA-29, R-BA41: min-of-K): 'A' when min(a) < band x
+ * min(b), 'B' when min(b) < band x min(a), else 'TIE'. The median-of-K stays the printed value.
  */
 export function compare(a, b, band = BAND) {
     checkBand(band, 'compare');
-    const ma = median(checkList(a, 'compare a'));
-    const mb = median(checkList(b, 'compare b'));
+    const ma = minOfList(checkList(a, 'compare a'));
+    const mb = minOfList(checkList(b, 'compare b'));
     if (ma < band * mb) return 'A';
     if (mb < band * ma) return 'B';
     return 'TIE';
@@ -291,20 +314,27 @@ function blendOf(cell, where) {
 }
 
 /**
- * The A/A control (BA-29): for every (scenario, n) holding a BlockedArray cell, twin vs BlockedArray
- * over every phase both list. Returns { inconclusive, twin: [{ scenario, n, phase, verdict, ratio }] }
- * with one entry per non-TIE reading; a missing twin cell reads { phase: null, verdict: 'MISSING',
- * ratio: null }.
+ * The A/A control (BA-29, R-BA42): for every (scenario, n) holding a BlockedArray cell, twin vs
+ * BlockedArray on every phase both list. Returns { inconclusive, twin, noise }, rows
+ * { scenario, n, phase, verdict, ratio, minRatio } with ratio = median-of-K twin / BlockedArray and
+ * minRatio = min-of-K twin / BlockedArray (verdict = compare, min-of-K). twin = the non-TIE readings on
+ * the crossover phase (blendOf: blend, or a one-phase scenario's only phase), plus { phase: null,
+ * verdict: 'MISSING', ratio: null, minRatio: null } for a (scenario, n) with no twin cell;
+ * inconclusive = twin.length > 0. noise = the non-TIE readings on every other phase, never a gate.
+ * Throws when a BlockedArray cell that has a twin cell has no 'blend' phase and more than one phase (no
+ * crossover phase; with no twin cell the reading is MISSING, no throw); abSummary, lossRows and
+ * crossovers call twinControl, so they throw on that cell too.
  */
 export function twinControl(results, opts) {
     const band = optBand(opts, 'twinControl');
     const twin = [];
+    const noise = [];
     for (const g of groupCells(results, 'twinControl')) {
         const ref = g.cells.get(TWIN_OF);
         if (ref === undefined) continue;
         const tw = g.cells.get(TWIN);
         if (tw === undefined) {
-            twin.push({ scenario: g.scenario, n: g.n, phase: null, verdict: 'MISSING', ratio: null });
+            twin.push({ scenario: g.scenario, n: g.n, phase: null, verdict: 'MISSING', ratio: null, minRatio: null });
             continue;
         }
         if (tw.chunkCap !== ref.chunkCap) {
@@ -312,14 +342,18 @@ export function twinControl(results, opts) {
         }
         const names = phaseNames(ref);
         if (names.join(',') !== phaseNames(tw).join(',')) cmpFail('twinControl', g.scenario + '@' + g.n + ': twin and BlockedArray list other phases');
+        const xo = blendOf(ref, 'twinControl ' + g.scenario + '@' + g.n);
         for (const ph of names) {
             const a = runValues(tw, ph);
             const b = runValues(ref, ph);
             const v = compare(a, b, band);
-            if (v !== 'TIE') twin.push({ scenario: g.scenario, n: g.n, phase: ph, verdict: v, ratio: median(a) / median(b) });
+            if (v === 'TIE') continue;
+            const row = { scenario: g.scenario, n: g.n, phase: ph, verdict: v, ratio: median(a) / median(b), minRatio: minOfList(a) / minOfList(b) };
+            if (ph === xo) twin.push(row);
+            else noise.push(row);
         }
     }
-    return { inconclusive: twin.length > 0, twin };
+    return { inconclusive: twin.length > 0, twin, noise };
 }
 
 function twinNote(tc) {
@@ -338,7 +372,11 @@ function twinNote(tc) {
  */
 export function crossovers(results, opts) {
     const band = optBand(opts, 'crossovers');
-    const tc = twinControl(results, { band });
+    return crossoversOf(results, band, twinControl(results, { band }));
+}
+
+// crossovers() on a checked band and that band's twinControl result (lossRows reads twinControl once).
+function crossoversOf(results, band, tc) {
     // scenario -> label -> { phase, grid, verdicts }
     const per = new Map();
     for (const g of groupCells(results, 'crossovers')) {
@@ -376,13 +414,13 @@ export function lossRows(results, opts) {
     const tc = twinControl(results, { band });
     const rows = [];
     const prefix = tc.inconclusive ? twinNote(tc) : '';
-    for (const e of crossovers(results, { band })) {
+    for (const e of crossoversOf(results, band, tc)) {
         const lost = [];
         for (let i = 0; i < e.grid.length; i++) if (e.verdicts[i] === 'B') lost.push(e.grid[i]);
         if (lost.length === 0) continue;
         rows.push({
             scenario: e.scenario, winner: e.rival, loser: SUBJECT, crossoverN: e.crossoverN,
-            reason: prefix + e.rival + ' wins ' + e.phase + ' (median-of-K below ' + band + ' x ' + SUBJECT + "'s) at n = " +
+            reason: prefix + e.rival + ' wins ' + e.phase + ' (min-of-K below ' + band + ' x ' + SUBJECT + "'s) at n = " +
                 lost.join(', ') + ' of ' + e.grid.length + ' measured n (largest measured n ' + e.grid[e.grid.length - 1] + ')',
         });
     }
@@ -427,9 +465,11 @@ export function pickChunkCap(rows) {
 
 /**
  * A/B per (scenario, n) where both labels ran (untagged cells): rows [{ scenario, n, verdict, ratio,
- * a, b }] with a / b = median-of-K of phase, ratio = a / b, verdict = compare(A runs, B runs).
- * opts { band }. Returns { rows, inconclusive, twin } (twinControl). Throws when no (scenario, n)
- * holds both labels.
+ * a, b, aMin, bMin, minRatio }] with a / b = median-of-K of phase (the printed value), ratio = a / b,
+ * aMin / bMin = min-of-K of phase, minRatio = aMin / bMin, verdict = compare(A runs, B runs) (min-of-K,
+ * R-BA41). opts { band }. Returns { rows, inconclusive, twin } (twinControl). Throws when no
+ * (scenario, n) holds both labels, and (through twinControl) when a BlockedArray cell that has a twin
+ * cell has no 'blend' phase and more than one phase.
  */
 export function abSummary(results, A, B, phase, opts) {
     const band = optBand(opts, 'abSummary');
@@ -447,7 +487,9 @@ export function abSummary(results, A, B, phase, opts) {
         const rb = runValues(cb, phase);
         const a = median(ra);
         const b = median(rb);
-        rows.push({ scenario: g.scenario, n: g.n, verdict: compare(ra, rb, band), ratio: a / b, a, b });
+        const aMin = minOfList(ra);
+        const bMin = minOfList(rb);
+        rows.push({ scenario: g.scenario, n: g.n, verdict: compare(ra, rb, band), ratio: a / b, a, b, aMin, bMin, minRatio: aMin / bMin });
     }
     if (rows.length === 0) cmpFail('abSummary', 'no (scenario, n) holds both ' + A + ' and ' + B);
     return { rows, inconclusive: tc.inconclusive, twin: tc.twin };

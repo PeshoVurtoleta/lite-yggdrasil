@@ -220,21 +220,28 @@ than 8 samples -> `n/a` (the string), never NaN / Infinity / 0.
 ## Sweep, A/B, crossover
 
 Status: the tooling is built and gated (g2b-3a: Bench.mjs, Compare.mjs, Report.mjs; rulings R-BA28..R-BA36, SPEC
-BA-28..BA-36). The QUIET chunkCap sweep ran (g2b-3b, benchmark/chunkcap.json at 6b70f54); the run of record read
-INCONCLUSIVE (R-BA29) and is not committed (R-BA39), so a new run of record is PENDING: this section holds no measured
-number.
+BA-28..BA-36; g2b-4: R-BA41, R-BA42, R-BA44). The QUIET chunkCap sweep ran (g2b-3b, benchmark/chunkcap.json at
+6b70f54); the run of record read INCONCLUSIVE (R-BA29) and is not committed (R-BA39), so a new run of record is
+PENDING: this section holds no measured number.
 
 - Passes (BA-28): K = 5 interleaved passes, pass-major. Inside each (scenario, n) group the label order is rotated
   left by one per pass (Compare.mjs rotateLabels). A child times 5 samples per phase (3 under --quick, never a run
   of record) and reports their median; a (label, scenario, n, phase) value is the median of its K child medians. The
   sweep uses the same K.
-- Win or TIE (BA-29): A wins when its median-of-K is below 0.95 x B's (Compare.mjs BAND), B wins the same way, else
-  TIE (neither a win nor a loss).
+- Win or TIE (BA-29, R-BA41): A wins when its min-of-K (the minimum of its K child medians) is below 0.95 x B's
+  min-of-K (Compare.mjs BAND), B wins the same way, else TIE (neither a win nor a loss).
+  The printed comparison values stay the median-of-K (the A/B 'unrolled ns/event', 'plain ns/event' and 'ratio'
+  columns, the twin 'twin / BlockedArray' column, the pick's ns/event); the report prints the min-of-K beside them
+  (the A/B 'unrolled min', 'plain min' and 'min ratio' columns, the twin and twin-noise 'min ratio' column, and the
+  section notes). results.json stores each cell's K child medians (the cell is pass 1, its repeats passes 2..K), not a
+  median-of-K; the Scenarios table prints pass 1.
 - A/A twin control (BA-29): `BlockedArray.twin` (BlockedArray.js plus one comment line, separately compiled) runs
-  beside `BlockedArray` in every pass. Twin vs BlockedArray other than TIE at any (scenario, n) makes every comparison
-  of that run INCONCLUSIVE (results.json `comparison { inconclusive, twin }`; each loss row's reason then starts
-  INCONCLUSIVE). A missing twin cell beside a BlockedArray cell also reads INCONCLUSIVE (verdict 'MISSING'). Every
-  phase the two labels share is checked, not only blend (Compare.mjs twinControl).
+  beside `BlockedArray` in every pass. Twin vs BlockedArray other than TIE (min-of-K rule) at any (scenario, n), on
+  the crossover phase only (blend; a one-phase scenario's only phase, S2b bulk), makes every comparison of that run
+  INCONCLUSIVE (results.json `comparison { inconclusive, twin }`, twin[] rows carrying minRatio; each loss row's reason
+  then starts INCONCLUSIVE). A missing twin cell beside a BlockedArray cell also reads INCONCLUSIVE (verdict
+  'MISSING'). The twin's other phases are never a gate (R-BA42): the report prints their non-TIE readings in a "twin
+  noise (other phases, never a gate, R-BA42)" section, and results.json does not store them (Compare.mjs twinControl).
 - Crossover (BA-30): read on the blend phase (S2b, a one-phase scenario, on its only phase, bulk; Compare.mjs blendOf,
   so its crossover and chunkCap pick read bulk, not blend). The crossover vs a rival label is the smallest measured n
   from which SumSequence wins at every larger measured n; a TIE or a rival win breaks the run; none -> 'none up to
@@ -245,10 +252,10 @@ number.
   Fenwick row reads S7's blend against FenwickRebuild.suffix. The tooling never prints GO / NO-GO (the verdict is
   the maintainer's, RESEARCH 14.4).
 - chunkCap sweep (BA-31): `--sweep chunkCap` runs the registered BlockedArray at every (Sid, n) over d x {1/4, 1/2, 1,
-  2, 4}, d = defaultChunkCap(capacity) (max(16, ceil(sqrt(C))) rounded up to a multiple of 4, C the capacity the
-  scenario builds at that n, computed cold in the parent). Each grid member is rounded up to a multiple of 4, clamped
-  to [8, 65536] and deduped. The pick is the lowest median-of-K blend ns/event; a pick at the grid's first or last
-  entry prints 'edge'. Cells are keyed `<label>/<Sid>@<n>~c<chunkCap>`.
+  2, 4, 8} (R-BA44), d = defaultChunkCap(capacity) (max(16, ceil(sqrt(C))) rounded up to a multiple of 4, C the
+  capacity the scenario builds at that n, computed cold in the parent). Each grid member is rounded up to a multiple of 4,
+  clamped to [8, 65536] and deduped. The pick is unchanged by the min-of-K rule: the lowest median-of-K blend ns/event; a
+  pick at the grid's first or last entry prints 'edge'. Cells are keyed `<label>/<Sid>@<n>~c<chunkCap>`.
 - Exclusions (BA-34): a scenario cell whose census wall time exceeds 300 s per pass is left out and printed with its
   census seconds; no SumSequence or BlockedArray cell is ever excluded. Nothing is excluded today
   (the EXCLUDED list in Bench.mjs is empty: the B0 census, PRELIMINARY, one pass at frozen ea760e4,
@@ -259,7 +266,8 @@ number.
   blend ns/event, REPORTED). validatePicks checks it when written and when read by `--picks` (fail closed on a
   malformed field, an unknown key, a non-plain object, or a chunkCap that is not a multiple of 4 in [8, 65536]). A
   QUIET `--sweep chunkCap --publish --all` writes this committed file ONLY (no results.json / report.html); a sweep
-  without --publish writes `benchmark/out/chunkcap.json` beside its out/ results.
+  without --publish writes `benchmark/out/chunkcap.json` beside its out/ results. The committed file is still on the
+  5-point grid (no 8 x d): validatePicks rejects it until the QUIET re-sweep (R-BA44) re-publishes it.
 - `--picks <path>`: every BlockedArray label (BlockedArray, BlockedArray.plain, BlockedArray.twin) runs each (Sid, n)
   at the picked chunkCap under its untagged key; results.json carries `tuning { source, sha256, hostState, picks }`.
   planCells exits 2 (also under --quick) on a BlockedArray cell with no pick for its (Sid, n), on a stale pick (its

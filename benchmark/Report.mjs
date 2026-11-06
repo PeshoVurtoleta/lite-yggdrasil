@@ -22,11 +22,13 @@
  * exports: renderSvg (one chart spec -> an <svg> string), renderHtml (the payload -> an HTML document),
  * isPreliminary (the BA-5 label rule).
  *
- * g2b-3a B3 (SPEC BA-29 / BA-30 / BA-31): four comparison sections read the results map through
+ * g2b-3a B3 (SPEC BA-29 / BA-30 / BA-31): the comparison sections read the results map through
  * benchmark/Compare.mjs (crossovers, abSummary, twinControl): the chunkCap pick table (when the run
  * used --picks), the blend win / TIE / loss grid per (scenario, rival, n), the crossovers (INCONCLUSIVE
  * when the twin A/A control is not TIE), and the unrolled vs plain BlockedArray A/B plus the twin A/A
- * readings. Each is labelled PRELIMINARY unless the payload is a QUIET MEASURED run (isPreliminary).
+ * readings. g2b-4 (R-BA41 / R-BA42 / R-BA44): every verdict reads min-of-K, the printed values stay
+ * median-of-K with the min-of-K columns beside them; the twin A/A gates on the crossover phase only, and
+ * a fifth section lists the twin's non-TIE readings on the other phases (noise, never a gate). Each is labelled PRELIMINARY unless the payload is a QUIET MEASURED run (isPreliminary).
  * A section whose labels did not run in the payload reads "not measured in this run"; any other
  * Compare throw propagates (fail closed). The report prints facts, never a go / no-go verdict (BA-30).
  */
@@ -262,7 +264,7 @@ function comparisonSections(payload, sec) {
     if (payload.tuning !== undefined) {
         const t = payload.tuning;
         out.push(sec('chunkCap picks (BA-31)', 'Every BlockedArray label ran each (scenario, n) at the chunkCap picked by a ' +
-            '--sweep chunkCap run: the lowest median-of-K blend ns/event over d x {1/4, 1/2, 1, 2, 4} (REPORTED). Table ' +
+            '--sweep chunkCap run: the lowest median-of-K blend ns/event over d x {1/4, 1/2, 1, 2, 4, 8} (REPORTED; the pick reads median-of-K, never min-of-K). Table ' +
             t.source + ', sha256/8 ' + t.sha256.slice(0, 8) + ', host ' + t.hostState + '. "edge" = the pick is the end of its grid.', null,
         tableRows(['scenario', 'n', 'capacity', 'd', 'grid', 'chunkCap', 'edge', 'ns/event'],
             t.picks.map((p) => [p.scenario, String(p.n), String(p.capacity), String(p.d), p.grid.join(' '), String(p.chunkCap),
@@ -271,7 +273,8 @@ function comparisonSections(payload, sec) {
 
     const xs = crossovers(R);
     const inc = xs.length > 0 && xs[0].inconclusive;
-    const incNote = inc ? 'INCONCLUSIVE: the twin A/A control read other than TIE in this run (BA-29); every comparison below is INCONCLUSIVE. ' : '';
+    const incNote = inc ? 'INCONCLUSIVE: the twin A/A control read other than TIE on a crossover phase in this run (BA-29, R-BA42); ' +
+        'every comparison below is INCONCLUSIVE. ' : '';
     const grid = [];
     for (const e of xs) {
         for (let i = 0; i < e.grid.length; i++) {
@@ -280,7 +283,8 @@ function comparisonSections(payload, sec) {
     }
     out.push(sec('Blend win / TIE / loss grid (BA-29)', grid.length === 0 ? NOT_MEASURED + ' (no ' + SUBJECT + ' vs rival scenario cells)' :
         incNote + SUBJECT + ' vs each rival on the blend phase (a one-phase scenario on its only phase): win = ' + SUBJECT +
-        "'s median-of-K below " + BAND + " x the rival's, loss = the rival's below " + BAND + ' x ' + SUBJECT + "'s, else TIE. REPORTED.",
+        "'s min-of-K below " + BAND + " x the rival's min-of-K, loss = the rival's min-of-K below " + BAND + ' x ' + SUBJECT +
+        "'s, else TIE (min-of-K = the minimum of the K child medians, R-BA41). REPORTED.",
     null, grid.length === 0 ? '' : tableRows(['scenario', 'rival', 'phase', 'n', SUBJECT], grid)));
 
     out.push(sec('Crossovers (BA-30)', xs.length === 0 ? NOT_MEASURED + ' (no ' + SUBJECT + ' vs rival scenario cells)' :
@@ -304,25 +308,39 @@ function comparisonSections(payload, sec) {
             }
         }
         for (const r of abSummary(sub, TWIN_OF, PLAIN, phase).rows) {
-            ab.push([r.scenario, String(r.n), phase, num(r.a), num(r.b), num(r.ratio),
+            ab.push([r.scenario, String(r.n), phase, num(r.a), num(r.b), num(r.ratio), num(r.aMin), num(r.bMin), num(r.minRatio),
                 (r.verdict === 'A' ? 'unrolled win' : r.verdict === 'B' ? 'plain win' : 'TIE') + (inc ? ' (INCONCLUSIVE)' : '')]);
         }
     }
     let twinRows = null;
+    let noiseRows = null;
     let twinNote = 'twin A/A: ' + NOT_MEASURED + ' (no BlockedArray scenario cell).';
     if (ran(TWIN_OF)) {
         const tc = twinControl(R);
-        twinRows = tc.twin.map((t) => [t.scenario, String(t.n), t.phase === null ? NA : t.phase, t.verdict,
-            t.ratio === null ? NA : num(t.ratio)]);
-        twinNote = tc.inconclusive ? 'twin A/A (' + TWIN + ' vs ' + TWIN_OF + '): INCONCLUSIVE, ' + tc.twin.length +
-            ' reading(s) other than TIE (or a missing twin cell) below; every comparison of this run is INCONCLUSIVE.' :
-            'twin A/A (' + TWIN + ' vs ' + TWIN_OF + '): TIE at every (scenario, n, phase) both ran.';
+        const row = (t) => [t.scenario, String(t.n), t.phase === null ? NA : t.phase, t.verdict,
+            t.ratio === null ? NA : num(t.ratio), t.minRatio === null ? NA : num(t.minRatio)];
+        twinRows = tc.twin.map(row);
+        noiseRows = tc.noise.map(row);
+        twinNote = 'The twin A/A gates on the crossover phase only (blend, or a one-phase scenario\'s only phase; R-BA42). ' +
+            (tc.inconclusive ? 'twin A/A (' + TWIN + ' vs ' + TWIN_OF + '): INCONCLUSIVE, ' + tc.twin.length +
+            ' crossover-phase reading(s) other than TIE (or a missing twin cell) below; every comparison of this run is INCONCLUSIVE.' :
+            'twin A/A (' + TWIN + ' vs ' + TWIN_OF + '): TIE at every (scenario, n) crossover phase both ran.');
     }
     out.push(sec('BlockedArray unrolled vs plain A/B, twin A/A control (BA-29)',
         (ab.length === 0 ? 'unrolled vs plain: ' + NOT_MEASURED + ' (no scenario ran both ' + TWIN_OF + ' and ' + PLAIN + '). ' :
-            'unrolled (' + TWIN_OF + ') vs ' + PLAIN + ', median-of-K ns/event, ratio = unrolled / plain, win band ' + BAND + '. REPORTED. ') + twinNote,
-    null, (ab.length === 0 ? '' : tableRows(['scenario', 'n', 'phase', 'unrolled ns/event', 'plain ns/event', 'ratio', 'verdict'], ab)) +
-        (twinRows === null || twinRows.length === 0 ? '' : tableRows(['scenario', 'n', 'phase', 'twin verdict', 'twin / BlockedArray'], twinRows))));
+            'unrolled (' + TWIN_OF + ') vs ' + PLAIN + ': ns/event and ratio = unrolled / plain are median-of-K; min and min ratio are ' +
+            'min-of-K; the verdict reads min-of-K, win band ' + BAND + ' (R-BA41). REPORTED. ') + twinNote,
+    null, (ab.length === 0 ? '' : tableRows(['scenario', 'n', 'phase', 'unrolled ns/event', 'plain ns/event', 'ratio', 'unrolled min',
+        'plain min', 'min ratio', 'verdict'], ab)) +
+        (twinRows === null || twinRows.length === 0 ? '' : tableRows(['scenario', 'n', 'phase', 'twin verdict', 'twin / BlockedArray',
+            'min ratio'], twinRows))));
+    out.push(sec('twin noise (other phases, never a gate, R-BA42)',
+        noiseRows === null ? 'twin noise: ' + NOT_MEASURED + ' (no BlockedArray scenario cell).' :
+            'The NON-TIE twin A/A readings (' + TWIN + ' vs ' + TWIN_OF + ') on the non-crossover phases: noise, printed, never a gate ' +
+            '(they never make a comparison INCONCLUSIVE). twin / BlockedArray is median-of-K, min ratio min-of-K. ' +
+            (noiseRows.length === 0 ? 'None: every non-crossover twin reading is TIE.' : noiseRows.length + ' reading(s) below.') + ' REPORTED.',
+    null, noiseRows === null || noiseRows.length === 0 ? '' : tableRows(['scenario', 'n', 'phase', 'twin verdict', 'twin / BlockedArray',
+        'min ratio'], noiseRows)));
     return out;
 }
 

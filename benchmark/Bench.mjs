@@ -9,7 +9,8 @@
  *     npm run bench -- --runs 3             # every cell 3 times, interleaved by pass
  *     npm run bench -- --publish --all --runs 5 --picks benchmark/chunkcap.json   # the run of record (under quiet-lock)
  *     npm run bench -- --all                # the 16 D-rows + every registered scenario's cells (BA-33)
- *     npm run bench -- --sweep chunkCap --scenario S7   # BlockedArray x sweepGrid(d) per (Sid, n) (BA-31)
+ *     npm run bench -- --sweep chunkCap --scenario S7   # BlockedArray x sweepGrid(d) per (Sid, n) (BA-31;
+ *                                                     #   d x {1/4, 1/2, 1, 2, 4, 8}, R-BA44)
  *     npm run bench -- --picks <path>       # every BlockedArray label at the picked chunkCap (BA-31)
  *
  * Repo-only. Bench-ADOPT group 1 TASK 6 (.handoff/PLAN-bench-adopt-g1.md; SPEC-bench-adopt BA-1,
@@ -41,7 +42,8 @@
  *
  * g2b-3a B2 (SPEC BA-28 / BA-31 / BA-34): every pass runs each (Sid, n) group with its label order
  * rotated by the pass (Compare.mjs rotateLabels, pass-major); a --sweep chunkCap run's cells are the
- * registered BlockedArray at every chunkCap of sweepGrid(defaultChunkCap(C)), C the scenario's built
+ * registered BlockedArray at every chunkCap of sweepGrid(defaultChunkCap(C)) (g2b-4: the 6-point grid
+ * d x {1/4, 1/2, 1, 2, 4, 8}, R-BA44), C the scenario's built
  * capacity computed cold in this parent, keyed '<label>/<Sid>@<n>~c<chunkCap>' (cellKey); EXCLUDED
  * (the census cells over 300 s per pass) are left out and printed with their census seconds.
  *
@@ -51,9 +53,12 @@
  * non-QUIET --picks table; a QUIET run-of-record --publish --all with no --picks table or one whose
  * meta.runCount is not K.
  * results.json lossTable = Compare.mjs lossRows(results).rows, its INCONCLUSIVE flag + twin readings
- * in 'comparison' (validated); a run with no untagged scenario cell (D-rows only, or a sweep) carries
- * lossTable [] and no 'comparison' (lossRows is never called with nothing to compare). validateResults
- * requires 'comparison' on a MEASURED payload with an untagged scenario cell (BA-36).
+ * in 'comparison' (validated; g2b-4: every BA-29 verdict reads min-of-K (R-BA41), the twin A/A gates
+ * on the crossover phase only and its other-phase noise rows are NOT stored (R-BA42); a measured twin
+ * reading carries minRatio (finite, > 0), a MISSING one minRatio null); a run with no untagged scenario
+ * cell (D-rows only, or a sweep) carries lossTable [] and no 'comparison' (lossRows is never called with
+ * nothing to compare). validateResults requires 'comparison' on a MEASURED payload with an untagged
+ * scenario cell (BA-36).
  *
  * The chunkCap pick table (benchmark/chunkcap.json; schema PICKS_SCHEMA, checked by validatePicks both
  * when written and when read by --picks; fail closed on a malformed field, an unknown key, a non-plain
@@ -63,11 +68,12 @@
  *             command },                       (the results.json meta checks of the same names)
  *     picks: [{ scenario, n, capacity, d, grid, chunkCap, edge, nsPerEvent }] }
  * one row per swept (Sid, n): d = defaultChunkCap(capacity), grid = sweepGrid(d), chunkCap = the
- * pickChunkCap argmin (a grid member), edge = it is the grid's first or last entry, nsPerEvent its
- * median-of-K blend ns/event (REPORTED). A QUIET `--sweep chunkCap --publish --all` writes
- * benchmark/chunkcap.json ONLY (no results.json / report.html); a sweep without --publish writes
- * benchmark/out/chunkcap.json beside its out/ results. With --picks <path>, every BlockedArray label
- * (BlockedArray, BlockedArray.plain, BlockedArray.twin) runs each (Sid, n) cell with tune { chunkCap:
+ * pickChunkCap argmin (a grid member; the pick stays the median-of-K argmin, never min-of-K, R-BA41),
+ * edge = it is the grid's first or last entry, nsPerEvent its median-of-K blend ns/event (REPORTED).
+ * A table cut on the 5-point grid (before R-BA44) fails validatePicks: re-run --sweep chunkCap.
+ * A QUIET `--sweep chunkCap --publish --all` writes benchmark/chunkcap.json ONLY (no results.json /
+ * report.html); a sweep without --publish writes benchmark/out/chunkcap.json beside its out/ results.
+ * With --picks <path>, every BlockedArray label (BlockedArray, BlockedArray.plain, BlockedArray.twin) runs each (Sid, n) cell with tune { chunkCap:
  * pick } under its UNTAGGED key; planCells exits 2 (also --quick) on a BlockedArray cell with no pick for
  * its (Sid, n), on a stale pick (its capacity is not the capacity this run builds at that (Sid, n): re-run
  * --sweep chunkCap) and on a picks table naming no BlockedArray cell of the run; a cell that recorded
@@ -297,7 +303,7 @@ export const PICKS_META_FIELDS = Object.freeze(['date', 'hostState', 'commit', '
 const PICK_KEYS = ['scenario', 'n', 'capacity', 'd', 'grid', 'chunkCap', 'edge', 'nsPerEvent'];
 const TUNING_KEYS = ['source', 'sha256', 'hostState', 'picks'];
 const COMPARISON_KEYS = ['inconclusive', 'twin'];
-const TWIN_KEYS = ['scenario', 'n', 'phase', 'verdict', 'ratio'];
+const TWIN_KEYS = ['scenario', 'n', 'phase', 'verdict', 'ratio', 'minRatio'];
 
 function exactKeys(v, keys, w, fail) {
     if (!isPlain(v)) fail(w, 'must be a plain object {' + keys.join(', ') + '}');
@@ -371,7 +377,11 @@ export function validateTuning(v) {
     return true;
 }
 
-/** Fail-closed check of results.json 'comparison' { inconclusive, twin } (Compare.mjs twinControl's shape). */
+/**
+ * Fail-closed check of results.json 'comparison' { inconclusive, twin } (Compare.mjs twinControl's gate
+ * fields; its noise list is never stored, BA-36 / R-BA42). Twin rows { scenario, n, phase, verdict, ratio,
+ * minRatio }: ratio / minRatio finite > 0 on a measured reading, both null when MISSING.
+ */
 export function validateComparison(v) {
     exactKeys(v, COMPARISON_KEYS, 'comparison', rvFail);
     if (typeof v.inconclusive !== 'boolean') rvFail('comparison.inconclusive', 'must be a boolean');
@@ -387,6 +397,9 @@ export function validateComparison(v) {
         if (missing ? t.phase !== null : !nonEmptyString(t.phase)) rvFail(w + '.phase', missing ? 'must be null when MISSING' : 'must be a non-empty string');
         if (missing ? t.ratio !== null : !(typeof t.ratio === 'number' && Number.isFinite(t.ratio) && t.ratio > 0)) {
             rvFail(w + '.ratio', missing ? 'must be null when MISSING' : 'must be a finite number > 0');
+        }
+        if (missing ? t.minRatio !== null : !(typeof t.minRatio === 'number' && Number.isFinite(t.minRatio) && t.minRatio > 0)) {
+            rvFail(w + '.minRatio', missing ? 'must be null when MISSING' : 'must be a finite number > 0 (min-of-K twin / BlockedArray, R-BA41)');
         }
     });
     return true;
@@ -968,9 +981,9 @@ export function sweepPicks(plan, results) {
 
 /**
  * The comparison records of a results map, pure (BA-29 / BA-30): { lossTable, comparison } with
- * lossTable = lossRows(results).rows and comparison = { inconclusive, twin }. A map with no untagged
- * scenario cell (D-rows only, or a chunkCap sweep) has nothing to compare: { lossTable: [],
- * comparison: null } and lossRows is not called.
+ * lossTable = lossRows(results).rows and comparison = { inconclusive, twin } (twinControl's noise
+ * is not stored: BA-36 shape, R-BA42). A map with no untagged scenario cell (D-rows only, or a
+ * chunkCap sweep) has nothing to compare: { lossTable: [], comparison: null } and lossRows is not called.
  */
 export function comparisonOf(results) {
     const scen = Object.keys(results).some((k) => { const m = RESULT_KEY.exec(k); return m !== null && m[3] !== undefined && m[5] === undefined; });

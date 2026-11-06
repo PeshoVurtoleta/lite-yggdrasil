@@ -495,22 +495,30 @@ async function childMain(specUrl, profUrl) {
   return res;
 }
 
-let gcResult = null;
-function runGcChild() {
-  if (gcResult) return gcResult;
-  const code = '(' + childMain.toString() + ')(' + JSON.stringify(SPEC_URL) + ',' + JSON.stringify(PROF_URL) +
-    ').then((r) => { process.stdout.write("RESULT " + JSON.stringify(r) + "\\n"); },' +
-    ' (e) => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });';
+const GC_CHILD_CODE = '(' + childMain.toString() + ')(' + JSON.stringify(SPEC_URL) + ',' + JSON.stringify(PROF_URL) +
+  ').then((r) => { process.stdout.write("RESULT " + JSON.stringify(r) + "\\n"); },' +
+  ' (e) => { process.stderr.write(String(e && e.stack || e)); process.exit(1); });';
+const GC_CHILD_FLAGS = [
+  '--expose-gc', '--min-semi-space-size=64', '--max-semi-space-size=64', // no scavenge inside a 1e5 window: heapUsed deltas are exact
+  '--no-concurrent-recompilation', // R-G5 / FLAKE-1: the window must read optimized code; a starved concurrent compile thread leaves it unoptimized (32 B/op)
+];
+function spawnGcChild(extraFlags) {
   const r = spawnSync(process.execPath, [
-    '--expose-gc', '--min-semi-space-size=64', '--max-semi-space-size=64', // no scavenge inside a 1e5 window: heapUsed deltas are exact
-    '--input-type=module', '-e', code,
+    ...GC_CHILD_FLAGS, ...extraFlags,
+    '--input-type=module', '-e', GC_CHILD_CODE,
   ], {
     encoding: 'utf8', timeout: 120000,
   });
   assert.equal(r.status, 0, 'child failed: ' + r.stderr);
   const line = r.stdout.split('\n').find((l) => l.startsWith('RESULT '));
   assert.ok(line, 'child printed no RESULT line: ' + r.stdout);
-  gcResult = JSON.parse(line.slice(7));
+  return JSON.parse(line.slice(7));
+}
+
+let gcResult = null;
+function runGcChild() {
+  if (gcResult) return gcResult;
+  gcResult = spawnGcChild([]);
   return gcResult;
 }
 
@@ -531,6 +539,19 @@ test('ASSERTION 5: every export is 0 B/op over 1e5 calls, maxMajor 0 (child --ex
   assert.equal(r.minor, 0, 'no scavenge in the asserted profiler window');
   assert.deepEqual(r.violations, []);
   assert.equal(r.ok, true, 'checkNoGc not ok (inert or violation)');
+});
+
+// FLAKE-1 (R-G5): with concurrent recompilation a busy host can starve the
+// background compile thread, so the measured window runs unoptimized code
+// (~32 B/op per export). --concurrent-recompilation-delay=300 forces that
+// starvation on purpose; the shared GC_CHILD_FLAGS (sync JIT) must neutralize
+// it. Without --no-concurrent-recompilation this row FAILS.
+test('ASSERTION 5 sync-JIT row: a starved compile thread (--concurrent-recompilation-delay=300) still reads < 0.5 B/op', () => {
+  const r = spawnGcChild(['--concurrent-recompilation-delay=300']);
+  const names = Object.keys(r.bpo);
+  assert.deepEqual(names.slice().sort(), Object.keys(SC).filter((k) => typeof SC[k] === 'function').sort(),
+    'starved-compiler lane covers every function export');
+  for (const k of names) assert.ok(r.bpo[k] < 0.5, k + ' allocated ' + r.bpo[k] + ' B/op under a starved compile thread');
 });
 
 test('ASSERTION 5 control: a window containing one forced gc() FAILS checkNoGc', () => {
@@ -603,5 +624,6 @@ test('meta: every gate keeps its must-fail control (deleting one is a failure)',
     'G-9 control: injected import',
     'ASSERTION 5 control: object-returning mutant',
     'ASSERTION 5 control: a window containing one forced gc()',
+    'ASSERTION 5 sync-JIT row: a starved compile thread',
   ]) assert.ok(me.includes("test(" + "'" + tag), tag);
 });

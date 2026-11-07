@@ -20,6 +20,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - CI on node 22: the allocation-meter lane rows and must-fail control rows of the four alloc-child tests are printed
   as REPORTED instead of asserted on node < 24 (the meter is uncalibrated there); node 24 and later assert every row
   unchanged. EditorFeed's A5 lanes run in one child per BlockedArray variant.
+- Benchmark tooling (repo tooling, not shipped): a twin A/A control that reads non-TIE on the crossover phase at a
+  (scenario, n) now re-measures that whole group once (K fresh interleaved passes, after the K passes and before the
+  drift sentinel) and the re-measure replaces the group's cells; the run is CONCLUSIVE only if every re-measured twin
+  reads TIE (R-BA57). results.json gains a top-level `remeasure` record, validated on new-format files (R-BA58);
+  report.html gains a "twin re-measure" section and the README provenance names each re-measured group (R-BA59); a
+  re-measure cell failure fails the run (R-BA60). A missing twin is never re-measured; BAND 0.95 and min-of-K are
+  unchanged.
 
 ## [0.1.1] - 2026-10-27
 

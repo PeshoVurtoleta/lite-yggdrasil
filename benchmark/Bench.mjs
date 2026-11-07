@@ -60,6 +60,18 @@
  * nothing to compare). validateResults requires 'comparison' on a MEASURED payload with an untagged
  * scenario cell (BA-36).
  *
+ * Twin re-measure (R-BA57; rulings R-BA58 / R-BA60): after the K passes and before the drift sentinel,
+ * each (Sid, n) group whose twin A/A reads 'A' or 'B' on the crossover phase is measured ONCE more as a
+ * WHOLE group (every label, o.runs passes, the same rotation; measureRun). Its cells replace the group's
+ * results (every verdict, comparison and loss row reads them); the first measurement is kept in the
+ * top-level 'remeasure': [{ scenario, n, first: { twin: <the A/B twin row>, results: { <key>: the first
+ * cell with its repeats } } }], written (possibly []) on every run that carries 'comparison'. A MISSING
+ * twin is never re-measured (it stays fail-closed); the noise rows never trigger. A failed re-measure
+ * cell exits 1 with nothing written, like any pass cell. validateResults checks the key only when present
+ * (runs #1..#5 carry none): first.twin is reproduced by twinControl(first.results), first.results holds
+ * exactly the group's untagged keys at the same K, every A/B row of comparison.twin is re-measured, and
+ * comparison equals twinControl(results). SCHEMA stays yggdrasil-bench/1 (the key is optional).
+ *
  * The chunkCap pick table (benchmark/chunkcap.json; schema PICKS_SCHEMA, checked by validatePicks both
  * when written and when read by --picks; fail closed on a malformed field, an unknown key, a non-plain
  * object, a chunkCap that is not a multiple of 4 in [8, 65536]):
@@ -94,7 +106,7 @@ import { ADAPTERS, RIVAL_SLOTS, RETIRED_SLOTS, selectAdapter, validateCounts, is
     from './Adapters.mjs';
 import { SCENARIOS, MAX_SIZE, selectScenario, scenarioSizes, scenarioEvents, labelBase, knownLabels, resolveLabel, runScenario }
     from './Scenarios.mjs';
-import { defaultChunkCap, sweepGrid, rotateLabels, lossRows, pickChunkCap, runValues, rowRunValues, median, minOfList, CAP_MIN, CAP_MAX, K }
+import { defaultChunkCap, sweepGrid, rotateLabels, lossRows, twinControl, pickChunkCap, runValues, rowRunValues, median, minOfList, CAP_MIN, CAP_MAX, K }
     from './Compare.mjs';
 
 const THIS_FILE = fileURLToPath(import.meta.url);
@@ -126,7 +138,7 @@ export const META_FIELDS = Object.freeze(['seed', 'node', 'arch', 'platform', 'c
 
 const TOP_REQUIRED = ['schema', 'status', 'meta', 'subjects', 'dimensions', 'titles', 'scenarios', 'results',
     'lossTable'];
-const TOP_OPTIONAL = ['foil', 'adapters', 'opClass', 'tuning', 'comparison'];
+const TOP_OPTIONAL = ['foil', 'adapters', 'opClass', 'tuning', 'comparison', 'remeasure'];
 const LOSS_KEYS = ['scenario', 'winner', 'loser', 'crossoverN', 'reason'];
 const RIVAL_KEYS = ['role', 'status', 'version', 'params', 'reason'];
 const HOST_STATES = ['QUIET', 'PRELIMINARY'];
@@ -305,6 +317,8 @@ const PICK_KEYS = ['scenario', 'n', 'capacity', 'd', 'grid', 'chunkCap', 'edge',
 const TUNING_KEYS = ['source', 'sha256', 'hostState', 'picks'];
 const COMPARISON_KEYS = ['inconclusive', 'twin'];
 const TWIN_KEYS = ['scenario', 'n', 'phase', 'verdict', 'ratio', 'minRatio'];
+const REMEASURE_KEYS = ['scenario', 'n', 'first'];
+const FIRST_KEYS = ['twin', 'results'];
 
 function exactKeys(v, keys, w, fail) {
     if (!isPlain(v)) fail(w, 'must be a plain object {' + keys.join(', ') + '}');
@@ -510,26 +524,7 @@ export function validateResults(results) {
     if (!isPlain(results.results)) rvFail('results', 'must be a plain object');
     const keys = Object.keys(results.results);
     if (results.status === 'MEASURED' && keys.length === 0) rvFail('results', 'must hold >= 1 cell when MEASURED');
-    for (const key of keys) {
-        const m = RESULT_KEY.exec(key);
-        if (!m) rvFail('results.' + key, "key must be '<adapter>/<Dk>', '<label>/<Sid>@<n>' or '<label>/<Sid>@<n>~c<chunkCap>'");
-        const row = results.results[key];
-        if (!isPlain(row)) rvFail('results.' + key, 'must be a plain object');
-        if (row.member !== undefined && row.member !== m[1]) rvFail('results.' + key + '.member', 'must be ' + m[1]);
-        if (m[3] !== undefined && (row.scenario !== m[3] || row.n !== Number(m[4]))) {
-            rvFail('results.' + key + '.scenario', 'must be ' + m[3] + ' at n ' + m[4]);
-        }
-        if (m[5] !== undefined && row.chunkCap !== Number(m[5])) {
-            rvFail('results.' + key + '.chunkCap', 'must equal its key tag ~c' + m[5] + ', got ' + JSON.stringify(row.chunkCap));
-        }
-        let adapter;
-        try {
-            adapter = selectAdapter(labelBase(m[1]));
-        } catch (e) {
-            rvFail('results.' + key, 'names no live adapter: ' + e.message);
-        }
-        walkRow(adapter, row, 'results.' + key);
-    }
+    for (const key of keys) checkResultCell(key, results.results[key], 'results.' + key);
     if (!Array.isArray(results.lossTable)) rvFail('lossTable', 'must be an array');
     results.lossTable.forEach(validateLossRow);
     if (results.adapters !== undefined && !isPlain(results.adapters)) rvFail('adapters', 'must be a plain object');
@@ -559,22 +554,134 @@ export function validateResults(results) {
             rvFail('tuning.hostState', 'a QUIET run cannot cite a non-QUIET picks table (BA-31)');
         }
         // every untagged BlockedArray-family cell ran at its (Sid, n) pick (fail closed)
-        const pick = new Map(results.tuning.picks.map((p) => [p.scenario + '@' + p.n, p.chunkCap]));
-        for (const key of keys) {
-            const m = RESULT_KEY.exec(key);
-            if (m[3] === undefined || m[5] !== undefined || labelBase(m[1]) !== 'BlockedArray') continue;
-            const want = pick.get(m[3] + '@' + m[4]);
-            if (want === undefined) rvFail('results.' + key + '.chunkCap', 'has no tuning pick for ' + m[3] + '@' + m[4]);
-            const row = results.results[key];
-            const runs = [row].concat(Array.isArray(row.repeats) ? row.repeats : []);
-            for (const r of runs) {
-                if (!isPlain(r) || r.chunkCap !== want) {
-                    rvFail('results.' + key + '.chunkCap', 'must equal the tuning pick ' + want + ', got ' + JSON.stringify(isPlain(r) ? r.chunkCap : r));
-                }
+        checkTuningPicks(results.results, keys, 'results.', tuningPickMap(results.tuning));
+    }
+    if (results.remeasure !== undefined) validateRemeasure(results);
+    return true;
+}
+
+// one results-map cell (the main map or a re-measure's first.results): its key shape, member / scenario /
+// n / chunkCap against the key, a live adapter and walkRow; `where` names it ('results.<key>')
+function checkResultCell(key, row, where) {
+    const m = RESULT_KEY.exec(key);
+    if (!m) rvFail(where, "key must be '<adapter>/<Dk>', '<label>/<Sid>@<n>' or '<label>/<Sid>@<n>~c<chunkCap>'");
+    if (!isPlain(row)) rvFail(where, 'must be a plain object');
+    if (row.member !== undefined && row.member !== m[1]) rvFail(where + '.member', 'must be ' + m[1]);
+    if (m[3] !== undefined && (row.scenario !== m[3] || row.n !== Number(m[4]))) {
+        rvFail(where + '.scenario', 'must be ' + m[3] + ' at n ' + m[4]);
+    }
+    if (m[5] !== undefined && row.chunkCap !== Number(m[5])) {
+        rvFail(where + '.chunkCap', 'must equal its key tag ~c' + m[5] + ', got ' + JSON.stringify(row.chunkCap));
+    }
+    let adapter;
+    try {
+        adapter = selectAdapter(labelBase(m[1]));
+    } catch (e) {
+        rvFail(where, 'names no live adapter: ' + e.message);
+    }
+    walkRow(adapter, row, where);
+}
+
+// '<Sid>@<n>' -> the tuning pick's chunkCap
+function tuningPickMap(tuning) {
+    return new Map(tuning.picks.map((p) => [p.scenario + '@' + p.n, p.chunkCap]));
+}
+
+// every untagged BlockedArray-family cell of `keys` in `map` (and each repeat) ran at its (Sid, n) pick
+function checkTuningPicks(map, keys, prefix, pick) {
+    for (const key of keys) {
+        const m = RESULT_KEY.exec(key);
+        if (m[3] === undefined || m[5] !== undefined || labelBase(m[1]) !== 'BlockedArray') continue;
+        const want = pick.get(m[3] + '@' + m[4]);
+        if (want === undefined) rvFail(prefix + key + '.chunkCap', 'has no tuning pick for ' + m[3] + '@' + m[4]);
+        const row = map[key];
+        const runs = [row].concat(Array.isArray(row.repeats) ? row.repeats : []);
+        for (const r of runs) {
+            if (!isPlain(r) || r.chunkCap !== want) {
+                rvFail(prefix + key + '.chunkCap', 'must equal the tuning pick ' + want + ', got ' + JSON.stringify(isPlain(r) ? r.chunkCap : r));
             }
         }
     }
-    return true;
+}
+
+// two twin rows agree on every TWIN_KEYS field
+function sameTwin(a, b) {
+    return TWIN_KEYS.every((k) => a[k] === b[k]);
+}
+
+/**
+ * results.json 'remeasure' (R-BA57 / R-BA58), checked only when the key is present (runs #1..#5 carry
+ * none): [{ scenario, n, first: { twin, results } }]; a comparison record is required; first.twin is the
+ * A/B twin row that triggered the re-measure and twinControl(first.results) reproduces it; first.results
+ * holds exactly the untagged keys of that (Sid, n) in results, each a valid cell with the same K (and the
+ * tuning picks); each (Sid, n) once; every A/B row of comparison.twin is re-measured; comparison equals
+ * twinControl(results) (every verdict reads the re-measured cells).
+ */
+function validateRemeasure(p) {
+    if (p.comparison === undefined) rvFail('remeasure', 'requires a comparison record (R-BA58)');
+    const list = p.remeasure;
+    if (!Array.isArray(list)) rvFail('remeasure', 'must be an array');
+    const pick = p.tuning === undefined ? null : tuningPickMap(p.tuning);
+    const seen = new Set();
+    list.forEach((e, i) => {
+        const w = 'remeasure[' + i + ']';
+        exactKeys(e, REMEASURE_KEYS, w, rvFail);
+        if (typeof e.scenario !== 'string' || !SID_RE.test(e.scenario)) rvFail(w + '.scenario', 'must be a scenario id');
+        if (!(Number.isInteger(e.n) && e.n >= 1)) rvFail(w + '.n', 'must be an integer >= 1');
+        const id = e.scenario + '@' + e.n;
+        if (seen.has(id)) rvFail(w, id + ' listed twice');
+        seen.add(id);
+        exactKeys(e.first, FIRST_KEYS, w + '.first', rvFail);
+        const t = e.first.twin;
+        const tw = w + '.first.twin';
+        exactKeys(t, TWIN_KEYS, tw, rvFail);
+        if (t.scenario !== e.scenario || t.n !== e.n) rvFail(tw, 'must name ' + id);
+        if (t.verdict !== 'A' && t.verdict !== 'B') rvFail(tw + '.verdict', "must be 'A' or 'B' (a MISSING or TIE twin is never re-measured)");
+        if (!nonEmptyString(t.phase)) rvFail(tw + '.phase', 'must be a non-empty string');
+        for (const k of ['ratio', 'minRatio']) {
+            if (!(typeof t[k] === 'number' && Number.isFinite(t[k]) && t[k] > 0)) rvFail(tw + '.' + k, 'must be a finite number > 0');
+        }
+        const fr = e.first.results;
+        const rw = w + '.first.results';
+        if (!isPlain(fr)) rvFail(rw, 'must be a plain object');
+        const want = groupKeys(p.results, e.scenario, e.n);
+        if (want.length === 0) rvFail(rw, 'names no untagged cell of ' + id + ' in results');
+        const got = Object.keys(fr);
+        if (got.length !== want.length || !want.every((k) => Object.prototype.hasOwnProperty.call(fr, k))) {
+            rvFail(rw, 'must hold exactly the untagged keys of ' + id + ' [' + want.join(', ') + '], got [' + got.join(', ') + ']');
+        }
+        for (const k of want) {
+            checkResultCell(k, fr[k], rw + '.' + k);
+            if (runsOf(fr[k]) !== runsOf(p.results[k])) {
+                rvFail(rw + '.' + k, 'has ' + runsOf(fr[k]) + ' run(s), results.' + k + ' ' + runsOf(p.results[k]) + ' (K differs)');
+            }
+        }
+        if (pick !== null) checkTuningPicks(fr, want, rw + '.', pick);
+        let tc;
+        try {
+            tc = twinControl(fr);
+        } catch (err) {
+            rvFail(rw, 'twin control failed: ' + err.message);
+        }
+        if (tc.twin.length !== 1 || !sameTwin(tc.twin[0], t)) {
+            rvFail(tw, 'must equal twinControl(first.results), got ' + JSON.stringify(tc.twin));
+        }
+    });
+    for (const r of p.comparison.twin) {
+        if ((r.verdict === 'A' || r.verdict === 'B') && !seen.has(r.scenario + '@' + r.n)) {
+            rvFail('remeasure', 'misses ' + r.scenario + '@' + r.n + ': its twin reads ' + r.verdict + ' in comparison (every A/B group is re-measured, R-BA57)');
+        }
+    }
+    let tc;
+    try {
+        tc = twinControl(p.results);
+    } catch (err) {
+        rvFail('comparison', 'twin control failed: ' + err.message);
+    }
+    if (tc.inconclusive !== p.comparison.inconclusive || tc.twin.length !== p.comparison.twin.length ||
+        !tc.twin.every((r, i) => sameTwin(r, p.comparison.twin[i]))) {
+        rvFail('comparison', 'must equal twinControl(results) on a re-measured run (every verdict reads the re-measured cells, R-BA57)');
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -839,6 +946,209 @@ function spawnCell(member, dim, o, c = null) {
         throw new Error('[bench] cell ' + member + '/' + dim + ' FAILED: ' + err);
     }
     return parseCellResult(member, dim, r.stdout);
+}
+
+// the default progress sink of measurePasses / measureRun (orchestrate's stderr lines)
+function stderrSay(s) {
+    process.stderr.write(s);
+}
+
+// ---------------------------------------------------------------------------
+// Twin re-measure (R-BA57; PLAN-bench-adopt-remeasure TASKS 1-3, rulings R-BA58 / R-BA60). After the K
+// passes, each (Sid, n) group whose twin A/A reads 'A' or 'B' on the crossover phase is measured once
+// more as a WHOLE group; its cells replace the group's results and the first measurement is kept in
+// results.json 'remeasure'. A MISSING twin is never re-measured (it stays fail-closed); the noise rows
+// (other phases, R-BA42) never trigger. Cold path.
+// ---------------------------------------------------------------------------
+
+// the untagged scenario keys of one (Sid, n) in `results`, in key order
+function groupKeys(results, scenario, n) {
+    return Object.keys(results).filter((k) => {
+        const m = RESULT_KEY.exec(k);
+        return m !== null && m[3] === scenario && Number(m[4]) === n && m[5] === undefined;
+    });
+}
+
+// the run count of one cell (1 + repeats)
+function runsOf(cell) {
+    return 1 + (Array.isArray(cell.repeats) ? cell.repeats.length : 0);
+}
+
+// fail-closed check of one re-measure target (an A/B twin row); returns its '<Sid>@<n>' id
+function targetId(t, where, fn) {
+    if (!isPlain(t)) throw new TypeError('[bench] ' + fn + ': ' + where + ' must be a plain object');
+    if (typeof t.scenario !== 'string' || !SID_RE.test(t.scenario)) throw new TypeError('[bench] ' + fn + ': ' + where + '.scenario must be a scenario id');
+    if (!(Number.isInteger(t.n) && t.n >= 1)) throw new TypeError('[bench] ' + fn + ': ' + where + '.n must be an integer >= 1');
+    if (t.verdict !== 'A' && t.verdict !== 'B') throw new TypeError('[bench] ' + fn + ': ' + where + ".verdict must be 'A' or 'B', got " + JSON.stringify(t.verdict));
+    return t.scenario + '@' + t.n;
+}
+
+// fail-closed check of a target list: an array of A/B rows, each (Sid, n) once
+function checkTargets(targets, fn) {
+    if (!Array.isArray(targets)) throw new TypeError('[bench] ' + fn + ': targets must be an array');
+    const seen = new Set();
+    targets.forEach((t, i) => {
+        const id = targetId(t, 'targets[' + i + ']', fn);
+        if (seen.has(id)) throw new Error('[bench] ' + fn + ': ' + id + ' listed twice');
+        seen.add(id);
+    });
+}
+
+/**
+ * The re-measure targets of a twin control result (Compare.mjs twinControl / lossRows: { twin }), pure:
+ * the twin rows reading 'A' or 'B', in order, each copied. A MISSING row is skipped (never re-measured:
+ * it stays fail-closed); any other verdict, a malformed row or a (Sid, n) listed twice throws.
+ * @param {{ twin: object[] }} tc
+ * @returns {object[]}  { scenario, n, phase, verdict, ratio, minRatio } rows
+ */
+export function remeasureTargets(tc) {
+    if (!isPlain(tc) || !Array.isArray(tc.twin)) throw new TypeError('[bench] remeasureTargets: tc must be a plain object with a twin array');
+    const out = [];
+    const seen = new Set();
+    tc.twin.forEach((t, i) => {
+        if (isPlain(t) && t.verdict === 'MISSING') return;
+        const id = targetId(t, 'twin[' + i + ']', 'remeasureTargets');
+        if (seen.has(id)) throw new Error('[bench] remeasureTargets: ' + id + ' listed twice');
+        seen.add(id);
+        out.push({ ...t });
+    });
+    return out;
+}
+
+/**
+ * The re-measure plan of `targets`, pure: { groups } = the WHOLE untagged scenario groups of `plan` whose
+ * (Sid, n) is a target (every label, cells unchanged, plan order; each group a new array). Throws when a
+ * target matches no group of the plan, or more than one.
+ * @param {{ groups: object[][] }} plan  a planCells plan
+ * @param {object[]} targets  remeasureTargets rows
+ * @returns {{ groups: object[][] }}
+ */
+export function remeasurePlan(plan, targets) {
+    if (!isPlain(plan) || !Array.isArray(plan.groups)) throw new TypeError('[bench] remeasurePlan: plan must be a plain object with a groups array');
+    checkTargets(targets, 'remeasurePlan');
+    const want = new Map(targets.map((t) => [t.scenario + '@' + t.n, 0]));
+    const groups = [];
+    for (const g of plan.groups) {
+        if (!Array.isArray(g) || g.length === 0) throw new TypeError('[bench] remeasurePlan: every plan group must be a non-empty array');
+        const c = g[0];
+        if (!isPlain(c) || c.scenario === undefined || c.chunkCap !== undefined) continue;
+        const id = c.scenario + '@' + c.n;
+        if (!want.has(id)) continue;
+        want.set(id, want.get(id) + 1);
+        groups.push(g.slice());
+    }
+    for (const [id, hits] of want) {
+        if (hits !== 1) throw new Error('[bench] remeasurePlan: target ' + id + ' matches ' + hits + ' plan group(s), expected 1');
+    }
+    return { groups };
+}
+
+/**
+ * The K passes of a plan (BA-28: pass-major, each (Sid, n) group's label order rotated by the pass):
+ * run(member, dim, o, cell) per cell (spawnCell in the CLI), say(text) per progress line. A failing cell
+ * is counted and reported through say; its later passes are dropped when pass 0 failed. Returns
+ * { results, failures } (results: key -> pass-0 cell with its repeats).
+ * @param {{ groups: object[][] }} plan
+ * @param {object} o  parseArgs options (o.runs passes)
+ * @param {Function} run
+ * @param {Function} say
+ * @returns {{ results: object, failures: number }}
+ */
+export function measurePasses(plan, o, run, say) {
+    if (typeof run !== 'function' || typeof say !== 'function') throw new TypeError('[bench] measurePasses: run and say must be functions');
+    if (o === null || typeof o !== 'object' || !(Number.isInteger(o.runs) && o.runs >= 1)) {
+        throw new TypeError('[bench] measurePasses: o.runs must be an integer >= 1');
+    }
+    const results = {};
+    let failures = 0;
+    for (let pass = 0; pass < o.runs; pass++) {
+        // BA-28: pass-major; inside each (Sid, n) group the label order rotates by one per pass
+        for (const c of runOrder(plan, pass)) {
+            const key = keyOf(c);
+            say('  running ' + key + (o.runs > 1 ? ' pass ' + (pass + 1) + '/' + o.runs : '') + ' (' +
+                (DIMENSION_TITLES[c.dim] || c.dim) + ') ...\n');
+            try {
+                const r = run(c.member, c.dim, o, c);
+                if (pass === 0) results[key] = r;
+                else if (results[key]) (results[key].repeats ||= []).push(r);
+            } catch (e) {
+                failures++;
+                say('  ' + e.message + '\n');
+            }
+        }
+    }
+    return { results, failures };
+}
+
+/**
+ * Merge a re-measure into a results map, pure (never mutates an input): { results, remeasure }.
+ * results = a new map in the same key order, every re-measured key -> its fresh cell; remeasure = one
+ * { scenario, n, first: { twin: <target row copy>, results: { <key>: the original cell (with repeats) } } }
+ * per target, in target order (R-BA58). Throws when fresh's key set is not exactly the union of the
+ * targets' untagged (Sid, n) keys in results, when a target's group has no cell, or when a fresh cell's
+ * run count (1 + repeats) differs from the cell it replaces.
+ * @param {object} results  the K-pass results map
+ * @param {object} fresh  the re-measure results map (measurePasses on remeasurePlan)
+ * @param {object[]} targets  remeasureTargets rows
+ * @returns {{ results: object, remeasure: object[] }}
+ */
+export function mergeRemeasure(results, fresh, targets) {
+    if (!isPlain(results) || !isPlain(fresh)) throw new TypeError('[bench] mergeRemeasure: results and fresh must be plain objects');
+    checkTargets(targets, 'mergeRemeasure');
+    const remeasure = [];
+    const replaced = new Set();
+    for (const t of targets) {
+        const keys = groupKeys(results, t.scenario, t.n);
+        if (keys.length === 0) throw new Error('[bench] mergeRemeasure: ' + t.scenario + '@' + t.n + ' has no untagged cell in results');
+        const first = {};
+        for (const k of keys) {
+            if (!Object.prototype.hasOwnProperty.call(fresh, k)) throw new Error('[bench] mergeRemeasure: fresh has no cell ' + k);
+            if (!isPlain(fresh[k]) || !isPlain(results[k])) throw new TypeError('[bench] mergeRemeasure: cell ' + k + ' must be a plain object');
+            if (runsOf(fresh[k]) !== runsOf(results[k])) {
+                throw new Error('[bench] mergeRemeasure: cell ' + k + ' re-measured ' + runsOf(fresh[k]) + ' run(s), first ' + runsOf(results[k]) + ' (K differs)');
+            }
+            first[k] = results[k];
+            replaced.add(k);
+        }
+        remeasure.push({ scenario: t.scenario, n: t.n, first: { twin: { ...t }, results: first } });
+    }
+    for (const k of Object.keys(fresh)) {
+        if (!replaced.has(k)) throw new Error('[bench] mergeRemeasure: fresh cell ' + k + ' is not in a re-measured group');
+    }
+    const merged = {};
+    for (const k of Object.keys(results)) merged[k] = replaced.has(k) ? fresh[k] : results[k];
+    return { results: merged, remeasure };
+}
+
+/**
+ * One measured run (R-BA57): the K passes; on a failure { results, remeasure: null, failures } at once;
+ * else check(results) when given (orchestrate's tuning-pick check: it throws before crossCheck and
+ * before any re-measure cell runs), crossCheck (throws on a mismatch), the twin control on the crossover phase, the A/B (Sid, n)
+ * groups re-measured exactly ONCE as whole groups (o.runs passes, the same rotation), then merged
+ * (mergeRemeasure). A failed re-measure cell returns { results: the K-pass map (nothing merged),
+ * remeasure: null, failures } (R-BA60: the caller exits 1). remeasure is null when the plan has no
+ * untagged scenario cell (D-rows only, or a sweep), else the (possibly empty) list.
+ * @param {{ groups: object[][] }} plan
+ * @param {object} o  parseArgs options
+ * @param {Function} [run]  defaults to spawnCell
+ * @param {Function} [say]  defaults to stderr
+ * @param {Function|null} [check]  called with the K-pass results map; throws to stop the run
+ * @returns {{ results: object, remeasure: object[]|null, failures: number }}
+ */
+export function measureRun(plan, o, run = spawnCell, say = stderrSay, check = null) {
+    if (check !== null && typeof check !== 'function') throw new TypeError('[bench] measureRun: check must be a function or null');
+    const first = measurePasses(plan, o, run, say);
+    if (first.failures > 0) return { results: first.results, remeasure: null, failures: first.failures };
+    if (check !== null) check(first.results);
+    crossCheck(first.results);
+    const scen = Object.keys(first.results).some((k) => { const m = RESULT_KEY.exec(k); return m !== null && m[3] !== undefined && m[5] === undefined; });
+    if (!scen) return { results: first.results, remeasure: null, failures: 0 };
+    const targets = remeasureTargets(twinControl(first.results));
+    if (targets.length === 0) return { results: first.results, remeasure: [], failures: 0 };
+    const again = measurePasses(remeasurePlan(plan, targets), o, run, say);
+    if (again.failures > 0) return { results: first.results, remeasure: null, failures: again.failures };
+    const m = mergeRemeasure(first.results, again.results, targets);
+    return { results: m.results, remeasure: m.remeasure, failures: 0 };
 }
 
 function fmt(x) {
@@ -1272,39 +1582,50 @@ async function orchestrate(o) {
         if (seenKeys.has(key)) usageExit('[bench] duplicate result key ' + key + ' (one cell per label x scenario x n)');
         seenKeys.add(key);
     }
-    const results = {};
-    let failures = 0;
-    for (let pass = 0; pass < o.runs; pass++) {
-        // BA-28: pass-major; inside each (Sid, n) group the label order rotates by one per pass
-        for (const c of runOrder(plan, pass)) {
+    // --picks: every tuned cell (and each repeat) must have run at its pick (fail closed). Run on the K-pass
+    // map inside measureRun (before crossCheck and before any re-measure cell), then on the merged map and on
+    // every re-measured group's first cells. partial: a first.results map holds one (Sid, n) only.
+    const tuned = all.filter((c) => c.pickCap !== undefined);
+    const checkTuning = (map, partial = false) => {
+        for (const c of tuned) {
             const key = keyOf(c);
-            process.stderr.write('  running ' + key + (o.runs > 1 ? ' pass ' + (pass + 1) + '/' + o.runs : '') + ' (' +
-                (DIMENSION_TITLES[c.dim] || c.dim) + ') ...\n');
-            try {
-                const r = spawnCell(c.member, c.dim, o, c);
-                if (pass === 0) results[key] = r;
-                else if (results[key]) (results[key].repeats ||= []).push(r);
-            } catch (e) {
-                failures++;
-                process.stderr.write('  ' + e.message + '\n');
+            const r = map[key];
+            if (r === undefined) {
+                if (partial) continue;
+                throw new Error('[bench] tuning: no cell ' + key);
+            }
+            for (const x of [r].concat(Array.isArray(r.repeats) ? r.repeats : [])) {
+                if (x.chunkCap !== c.pickCap) throw new Error('[bench] tuning: ' + key + ' ran at chunkCap ' + x.chunkCap + ', its pick is ' + c.pickCap);
             }
         }
-    }
-    if (failures > 0) {
-        process.stderr.write('[bench] ' + failures + ' cell(s) failed\n');
+    };
+    // R-BA57: the K passes, then each (Sid, n) whose twin reads A / B re-measured once as a whole group
+    let measured;
+    try {
+        measured = measureRun(plan, o, spawnCell, stderrSay, checkTuning);
+    } catch (e) {
+        process.stderr.write(e.message + '\n[bench] nothing written\n');
         process.exit(1);
     }
-
-    // --picks: every tuned cell (and each repeat) must have run at its pick (fail closed)
-    for (const c of all) {
-        if (c.pickCap === undefined) continue;
-        const r = results[keyOf(c)];
-        for (const x of [r].concat(Array.isArray(r.repeats) ? r.repeats : [])) {
-            if (x.chunkCap !== c.pickCap) {
-                process.stderr.write('[bench] tuning: ' + keyOf(c) + ' ran at chunkCap ' + x.chunkCap + ', its pick is ' + c.pickCap +
-                    '\n[bench] nothing written\n');
-                process.exit(1);
-            }
+    if (measured.failures > 0) {
+        // R-BA60: a failed re-measure cell fails the run like any pass cell
+        process.stderr.write('[bench] ' + measured.failures + ' cell(s) failed\n');
+        process.exit(1);
+    }
+    const results = measured.results;
+    const remeasure = measured.remeasure;
+    try {
+        checkTuning(results);
+        if (remeasure !== null) for (const e of remeasure) checkTuning(e.first.results, true);
+    } catch (e) {
+        process.stderr.write(e.message + '\n[bench] nothing written\n');
+        process.exit(1);
+    }
+    if (remeasure !== null) {
+        for (const e of remeasure) {
+            process.stderr.write('[bench] twin re-measure (R-BA57): ' + e.scenario + '@' + e.n + ' first read ' + e.first.twin.verdict +
+                ' (min ratio ' + fmt(e.first.twin.minRatio) + ', ' + e.first.twin.phase + '); the whole group (' +
+                Object.keys(e.first.results).length + ' cells x ' + o.runs + ' run(s)) re-measured, its cells replace the first\n');
         }
     }
 
@@ -1359,6 +1680,7 @@ async function orchestrate(o) {
         const cmp = comparisonOf(results);
         payload.lossTable = cmp.lossTable;
         if (cmp.comparison !== null) payload.comparison = cmp.comparison;
+        if (remeasure !== null) payload.remeasure = remeasure;
     } catch (e) {
         process.stderr.write(e.message + '\n[bench] nothing written\n');
         process.exit(1);
@@ -1404,7 +1726,7 @@ async function orchestrate(o) {
     writeFileSync(P.results, json);
     writeFileSync(P.report, html);
     console.log('results written to ' + P.label + 'results.json + report.html' + (pickTable !== null ? ' + chunkcap.json' : '') + ' (' + all.length + ' cells x ' +
-        o.runs + ' run(s), host ' + meta.hostState + ')');
+        o.runs + ' run(s)' + (remeasure !== null ? ' + ' + remeasure.length + ' group(s) re-measured' : '') + ', host ' + meta.hostState + ')');
 }
 
 // Guard: only run the CLI (single-cell or orchestrator) when this file is the process entry point,

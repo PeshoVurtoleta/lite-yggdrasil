@@ -454,6 +454,14 @@ What blocks what:
   (.handoff/evidence/b49/ror3/); README keeps PENDING; BA-16 = PAUSE unchanged. Its S2 readings repeat run #2's
   (BlockedArray wins S2 through n = 100000; crossover "none up to 131072") -- REPORTED, decides nothing (INCONCLUSIVE,
   BA-40 standing). Next: another run of record in a quiet window (R-BA52 / R-BA53); no date set.
+  Status (2026-11-07): runs #4 and #5 archived, not committed (#4 CONCLUSIVE but its trace crossed the R-BA53 line; #5
+  trace quiet, INCONCLUSIVE on S2a@1024). Twin-noise read (REPORTED, .handoff research): runs #1..#5 read 6 / 285 twin
+  cells non-TIE; a timed probe (one run, quiet host) found S2a@1024 bimodal in both labels, P(twin non-TIE) K = 5 6.7%
+  -> 0.45% expected with one re-measure (assumes independent draws; FINDINGS F5, 2026-11-07, M4 Pro, node v26.8.2,
+  REPORTED); for the other flagged cells the effect is untested. Rulings R-BA57..R-BA60 (re-measure
+  flagged once, `remeasure` record, report / README naming, re-measure failure fails the run); the tooling landed
+  uncommitted until the maintainer commits it. Run of record #6 is PENDING (exclusive window, after the commit);
+  README stays PENDING; BA-16 = PAUSE unchanged.
 - The pool (0.4) needs SumMap and IntervalMap realms to be worth shipping.
 
 Estimate to SumMap 0.2.0 (2026-10-28, est., from .handoff/HISTORY.md: 28 burst sessions S0 -> 0.1.1 (S0, the

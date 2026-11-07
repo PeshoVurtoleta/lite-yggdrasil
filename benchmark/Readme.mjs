@@ -19,6 +19,9 @@
  *   repeats.length printed as a number in the header; the subject's and the foil's D8 cells must
  *   carry the same K (else it throws). The per-op counts are pass 1's. A MEASURED QUIET results.json with zero loss rows
  *   throws (RESEARCH section 4.3: a report with no loss rows fails the honesty review).
+ * - R-BA57 / R-BA59: a results.json carrying 'remeasure' adds ", twin re-measure (R-BA57): none" or
+ *   "<Sid>@<n> (first <v>, re-measure <v>)" per re-measured group to the provenance line; with no
+ *   'remeasure' key the section is byte-identical to before.
  * The input is validated by validateResults (benchmark/Bench.mjs) first. ASCII only.
  *
  * exports: renderBenchmarksSection(results | null, version), extractSection(readmeText),
@@ -109,6 +112,19 @@ function cell(s) {
     return String(s).replace(/\|/g, '\\|');
 }
 
+// R-BA59: ', twin re-measure (R-BA57): none' or '<Sid>@<n> (first <v>, re-measure <v>)' per re-measured
+// group ('; '-joined); '' when results.json carries no 'remeasure' key (runs #1..#5 render as before). The
+// re-measure verdict is comparison.twin's row for that (Sid, n), or TIE when it lists none (validateResults
+// checked comparison against twinControl(results)).
+function remeasureNote(results) {
+    if (results.remeasure === undefined) return '';
+    if (results.remeasure.length === 0) return ', twin re-measure (R-BA57): none';
+    return ', twin re-measure (R-BA57): ' + results.remeasure.map((e) => {
+        const now = results.comparison.twin.find((x) => x.scenario === e.scenario && x.n === e.n);
+        return e.scenario + '@' + e.n + ' (first ' + e.first.twin.verdict + ', re-measure ' + (now === undefined ? 'TIE' : now.verdict) + ')';
+    }).join('; ');
+}
+
 function measuredForm(results) {
     const m = results.meta;
     const subj = results.subjects[0];
@@ -127,7 +143,7 @@ function measuredForm(results) {
     lines.push('Provenance: date ' + m.date + ', node ' + m.node + ', platform ' + m.platform + ', arch ' + m.arch +
         ', cpu ' + m.cpuModel + ', load average at start ' + JSON.stringify(m.loadAvgStart) + ', host ' + m.hostState +
         ', commit ' + m.commit + ' (Yggdrasil.js sha256/8 ' + m.mainFileSha + '), runs ' + m.runCount + ', seed 0x' +
-        (m.seed >>> 0).toString(16) + '.');
+        (m.seed >>> 0).toString(16) + remeasureNote(results) + '.');
     lines.push('');
     const fd8 = results.results[foil + '/D8'];
     if (!fd8) throw new Error('[readme] measured form needs results.' + foil + '/D8');

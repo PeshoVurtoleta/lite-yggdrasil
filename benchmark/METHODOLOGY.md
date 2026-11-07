@@ -236,6 +236,10 @@ Status (2026-11-06, burst 49): the BA-41 tooling unit (median-of-K printing) lan
 unpublished (R-BA52 = "Hold; re-run in a quiet window"; archived, README keeps its PENDING form; supersedes R-BA50
 for run #2). Run #3 (804aa83) read INCONCLUSIVE and its 60 s trace crossed the R-BA53 line ("Every sample under the
 line"); it is archived, not committed. This section still holds no measured number.
+Status (2026-11-07): runs #4 and #5 are archived, not committed. Run #4 read CONCLUSIVE but its trace crossed the
+R-BA53 line; run #5's trace stayed quiet but it read INCONCLUSIVE on S2a@1024 (twin non-TIE). README stays PENDING;
+BA-16 = PAUSE unchanged. The twin re-measure tooling (R-BA57..R-BA60) is described below; run of record #6 is
+PENDING (exclusive window, after that tooling is committed).
 
 - Passes (BA-28): K = 5 interleaved passes, pass-major. Inside each (scenario, n) group the label order is rotated
   left by one per pass (Compare.mjs rotateLabels). A child times 5 samples per phase (3 under --quick, never a run
@@ -256,9 +260,16 @@ line"); it is archived, not committed. This section still holds no measured numb
   beside `BlockedArray` in every pass. Twin vs BlockedArray other than TIE (min-of-K rule) at any (scenario, n), on
   the crossover phase only (blend; a one-phase scenario's only phase, S2b bulk), makes every comparison of that run
   INCONCLUSIVE (results.json `comparison { inconclusive, twin }`, twin[] rows carrying minRatio; each loss row's reason
-  then starts INCONCLUSIVE). A missing twin cell beside a BlockedArray cell also reads INCONCLUSIVE (verdict
-  'MISSING'). The twin's other phases are never a gate (R-BA42): the report prints their non-TIE readings in a "twin
-  noise (other phases, never a gate, R-BA42)" section, and results.json does not store them (Compare.mjs twinControl).
+  then starts INCONCLUSIVE), unless that group's re-measure reads TIE (next bullet). A missing twin cell beside a
+  BlockedArray cell also reads INCONCLUSIVE (verdict 'MISSING'). The twin's other phases are never a gate (R-BA42): the
+  report prints their non-TIE readings in a "twin noise (other phases, never a gate, R-BA42)" section, and results.json
+  does not store them (Compare.mjs twinControl).
+- Re-measure flagged once (R-BA57, R-BA60): when the twin reads non-TIE at a (scenario, n) on the crossover phase, that
+  whole group (every label, K fresh interleaved passes) is measured once more after the K passes and before the drift
+  sentinel, and the re-measure replaces the group's cells; both measurements are kept (results.json `remeasure`).
+  The run is CONCLUSIVE only if every re-measured twin reads TIE; BAND 0.95 and min-of-K are unchanged (R-BA41). A
+  MISSING twin is never re-measured (fail-closed), and noise rows (non-crossover phases) never trigger one (R-BA42). A
+  re-measure cell failure fails the run like any cell (exit 1, nothing written, R-BA60).
 - Crossover (BA-30): read on the blend phase (S2b, a one-phase scenario, on its only phase, bulk; Compare.mjs blendOf,
   so its crossover and chunkCap pick read bulk, not blend). The crossover vs a rival label is the smallest measured n
   from which SumSequence wins at every larger measured n; a TIE or a rival win breaks the run; none -> 'none up to
@@ -305,6 +316,12 @@ line"); it is archived, not committed. This section still holds no measured numb
 - Comparison record (BA-36, R-BA36): validateResults requires `comparison { inconclusive, twin }` whenever status is
   MEASURED and any key is an untagged scenario key (`<label>/<Sid>@<n>`, no ~c tag); a missing record throws, since
   an unmeasured twin control is never treated as TIE.
+- Re-measure record (R-BA58, R-BA59): results.json carries top-level `remeasure: [{ scenario, n, first: { twin, results } }]`,
+  written (possibly []) on every run with a comparison record; files without the key (runs #1..#5) stay valid and
+  render byte-identically. For a new-format file the validator checks that every A/B twin row is listed in
+  `remeasure` and that `comparison` equals the twin control re-read on the stored cells. report.html adds the section
+  "twin re-measure (R-BA57)" and the generated README provenance names each re-measured group (", twin re-measure
+  (R-BA57): none" or "<Sid>@<n> (first <v>, re-measure <v>)").
 
 ## Provenance and the quiet host
 

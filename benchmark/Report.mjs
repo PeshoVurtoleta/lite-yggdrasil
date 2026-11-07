@@ -36,6 +36,10 @@
  * min-of-K beside it (Compare.mjs runValues / rowRunValues; a malformed repeat throws); every other
  * timed D-row column (D1 fit, D2, D4, D6 ops/ms + pause, D7, D8 p50 / p90) prints pass 1 and its
  * header carries "(pass 1)"; counts, sizes and DETERMINISTIC columns carry no label.
+ *
+ * R-BA57 / R-BA59: a payload carrying results.json 'remeasure' gets a "twin re-measure (R-BA57)" section
+ * (scenario, n, phase, first verdict, first min ratio, re-measure verdict, re-measure min ratio; "None"
+ * when the list is empty); a payload with no 'remeasure' key renders byte-identically to before.
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -349,7 +353,39 @@ function comparisonSections(payload, sec) {
             (noiseRows.length === 0 ? 'None: every non-crossover twin reading is TIE.' : noiseRows.length + ' reading(s) below.') + ' REPORTED.',
     null, noiseRows === null || noiseRows.length === 0 ? '' : tableRows(['scenario', 'n', 'phase', 'twin verdict', 'twin / BlockedArray',
         'min ratio'], noiseRows)));
+    // R-BA57 / R-BA59: only a payload carrying 'remeasure' gets the section (runs #1..#5 render as before)
+    if (payload.remeasure !== undefined) out.push(remeasureSection(payload, sec));
     return out;
+}
+
+// The twin re-measure section (R-BA57, R-BA59): per re-measured (scenario, n), the first reading (the A/B
+// twin row kept in remeasure[].first.twin) beside the re-measure's (comparison.twin's row, or TIE with the
+// min-of-K ratio of the re-measured cells on the same phase). validateResults already checked that
+// comparison equals twinControl(results).
+function remeasureSection(payload, sec) {
+    const R = payload.results;
+    const rows = payload.remeasure.map((e) => {
+        const t = e.first.twin;
+        const now = payload.comparison.twin.find((x) => x.scenario === e.scenario && x.n === e.n);
+        let verdict = 'TIE';
+        let minRatio;
+        if (now !== undefined) {
+            verdict = now.verdict;
+            minRatio = now.minRatio;
+        } else {
+            const at = '/' + e.scenario + '@' + e.n;
+            minRatio = minOfList(runValues(R[TWIN + at], t.phase)) / minOfList(runValues(R[TWIN_OF + at], t.phase));
+        }
+        return [e.scenario, String(e.n), t.phase, t.verdict, num(t.minRatio), verdict, num(minRatio)];
+    });
+    return sec('twin re-measure (R-BA57)',
+        'Every (scenario, n) whose twin A/A (' + TWIN + ' vs ' + TWIN_OF + ') read other than TIE on its crossover phase after the K passes ' +
+        'was measured once more as a whole group (every label, K passes); the re-measured cells replace the first ones and every ' +
+        'verdict of this report reads them. The first measurement is kept in results.json remeasure[]. min ratio = min-of-K twin / ' +
+        'BlockedArray (R-BA41). A missing twin cell is never re-measured. ' +
+        (rows.length === 0 ? 'None: every twin read TIE (or was missing) after the K passes.' : rows.length + ' group(s) below.') + ' REPORTED.',
+    null, rows.length === 0 ? '' : tableRows(['scenario', 'n', 'phase', 'first verdict', 'first min ratio', 're-measure verdict',
+        're-measure min ratio'], rows));
 }
 
 function provenanceLine(meta) {

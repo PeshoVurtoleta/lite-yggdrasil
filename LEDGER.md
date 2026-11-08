@@ -397,6 +397,9 @@ engine code, CI and docs, each with its fix commit.
   (2026-11-07, burst 50) runs #4..#7 archived, not committed: #4 / #6 / #7 CONCLUSIVE with traces crossing the R-BA53
   line (6 / 1 / 1 samples), #5 quiet but INCONCLUSIVE; twin re-measure (R-BA57..R-BA60) committed e9fcf9c; BA-16 =
   PAUSE unchanged; still OPEN.
+  (2026-11-08, burst 50) run #8 (ac6b4cf) CONCLUSIVE, trace crossed 6 of 94 samples, attributed (desktop use), archived,
+  not committed; run #7 published on replication (R-BA64, trace.json R-BA65); BA-16 = PAUSE unchanged; still OPEN (the
+  R-7 research burst gates the SumMap engine).
 
 ---
 

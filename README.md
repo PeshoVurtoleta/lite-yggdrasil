@@ -436,7 +436,39 @@ GC verdict for the engine windows (166 of 166 windows gated): 0 major GCs, 9 min
 
 ## Benchmarks
 
-PENDING for 0.1.1. This release ships no benchmark numbers and no timing claims, and no earlier release has a measured table to point back to. Performance is stated as exact operation counts (the counters above), which are gated.
+Measured by the run of record at commit e9fcf9c (QUIET host at start; load trace below). Every time below is REPORTED: one host's measurement, not a law, and it gates nothing. The operation counts beside each time are exact and DETERMINISTIC (the counters above, gated in `npm test`).
+
+Provenance: date 2026-11-07T22:03:16.396Z, node v26.8.2, platform darwin, arch arm64, cpu Apple M4 Pro, load average at start [1.1357421875,5.95166015625,11.6669921875], host QUIET, commit e9fcf9c (Yggdrasil.js sha256/8 e0618227), runs 5, seed 0x9e3779b1, twin re-measure (R-BA57): none, load trace (R-BA53): 1 of 94 samples crossed load1 < 3.21 (peak 3.67 at 23:04:17Z, unattributed); published on replication (R-BA64): runs #2 8e27490, #4 8d0113f.
+
+| op (n = 16384) | SumSequence ns/op (median of 5) | SumSequence ns/op (min of 5) | SumSequence touches/op | SpliceFoil ns/op (median of 5) | SpliceFoil ns/op (min of 5) | SpliceFoil moves/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| insertAt+removeAt | 281.38 | 261.84 | 10.55 | 14003 | 13182 | 16133 |
+| setMeasure | 115.04 | 111.96 | 10.55 | 4956 | 4857 | 0 |
+| indexAtSum | 65.45 | 59.48 | 10.60 | 375.00 | 351.56 | 0 |
+| sumBefore | 50.23 | 45.38 | 10.55 | 98.94 | 88.56 | 0 |
+| mixed | 159.67 | 158.96 | 10.49 | 6885 | 4966 | 5424 |
+
+Where SumSequence loses (each loss with its crossover n):
+
+| scenario | winner | loser | crossover n | reason |
+| --- | --- | --- | --- | --- |
+| S1a | FenwickRebuild.suffix | SumSequence | 4096 | FenwickRebuild.suffix wins blend (min-of-K below 0.95 x SumSequence's) at n = 1024 of 12 measured n (largest measured n 1000000) |
+| S1b | FenwickRebuild.suffix | SumSequence | 4096 | FenwickRebuild.suffix wins blend (min-of-K below 0.95 x SumSequence's) at n = 1024, 2048 of 12 measured n (largest measured n 1000000) |
+| S2 | BlockedArray | SumSequence | none up to 131072 | BlockedArray wins blend (min-of-K below 0.95 x SumSequence's) at n = 1024, 2048, 4096, 8192, 16384, 32768, 65536, 100000 of 9 measured n (largest measured n 131072) |
+| S2 | BlockedArray.plain | SumSequence | 131072 | BlockedArray.plain wins blend (min-of-K below 0.95 x SumSequence's) at n = 1024, 2048, 4096, 8192, 16384, 32768, 65536 of 9 measured n (largest measured n 131072) |
+| S2a | BlockedArray | SumSequence | none up to 131072 | BlockedArray wins blend (min-of-K below 0.95 x SumSequence's) at n = 1024, 2048, 4096, 8192, 16384, 32768, 65536, 100000, 131072 of 9 measured n (largest measured n 131072) |
+| S2a | BlockedArray.plain | SumSequence | 100000 | BlockedArray.plain wins blend (min-of-K below 0.95 x SumSequence's) at n = 1024, 2048, 4096, 8192, 16384, 32768 of 9 measured n (largest measured n 131072) |
+| S2b | BlockedArray | SumSequence | 16384 | BlockedArray wins bulk (min-of-K below 0.95 x SumSequence's) at n = 1024, 2048, 4096 of 9 measured n (largest measured n 131072) |
+| S2b | BlockedArray.plain | SumSequence | 16384 | BlockedArray.plain wins bulk (min-of-K below 0.95 x SumSequence's) at n = 1024, 2048, 4096 of 9 measured n (largest measured n 131072) |
+| S7 | BlockedArray | SumSequence | 100000 | BlockedArray wins blend (min-of-K below 0.95 x SumSequence's) at n = 10000 of 3 measured n (largest measured n 1000000) |
+| S7 | BlockedArray.plain | SumSequence | 1000000 | BlockedArray.plain wins blend (min-of-K below 0.95 x SumSequence's) at n = 10000, 100000 of 3 measured n (largest measured n 1000000) |
+| S7 | FenwickRebuild.full | SumSequence | none up to 1000000 | FenwickRebuild.full wins blend (min-of-K below 0.95 x SumSequence's) at n = 10000, 100000, 1000000 of 3 measured n (largest measured n 1000000) |
+| S7 | FenwickRebuild.suffix | SumSequence | none up to 1000000 | FenwickRebuild.suffix wins blend (min-of-K below 0.95 x SumSequence's) at n = 10000, 100000, 1000000 of 3 measured n (largest measured n 1000000) |
+| S7b | BlockedArray.plain | SumSequence | 100000 | BlockedArray.plain wins blend (min-of-K below 0.95 x SumSequence's) at n = 10000 of 3 measured n (largest measured n 1000000) |
+| S7b | FenwickRebuild.full | SumSequence | none up to 1000000 | FenwickRebuild.full wins blend (min-of-K below 0.95 x SumSequence's) at n = 10000, 100000, 1000000 of 3 measured n (largest measured n 1000000) |
+| S7b | FenwickRebuild.suffix | SumSequence | none up to 1000000 | FenwickRebuild.suffix wins blend (min-of-K below 0.95 x SumSequence's) at n = 10000, 100000, 1000000 of 3 measured n (largest measured n 1000000) |
+
+Every dimension, scenario and counter column: `benchmark/report.html` (data: `benchmark/results.json`; method: `benchmark/METHODOLOGY.md`).
 
 ## Design decisions worth knowing
 
@@ -470,16 +502,16 @@ The torture phases (`test/torture.mjs`, exit 0 only if every GATE line is ok): *
 Verification tiers. Every claim in this README belongs to one of two tiers:
 
 - **DETERMINISTIC**: correctness, error tokens, the types, finger on/off parity, exact operation counts, allocation B/op per lane, and the engine-window major-GC count (`maxMajor 0`). Gated on every `npm run verify`.
-- **REPORTED**: figures printed with provenance and gating nothing (the max GC pause, the engine-window minor-GC count, and the whole-window GC counts above).
+- **REPORTED**: figures printed with provenance and gating nothing (the max GC pause, the engine-window minor-GC count, the whole-window GC counts above, and the Benchmarks section's times and crossovers).
 
-There is no statistical tier in 0.1.1: no timing ratio or speed number is claimed anywhere.
+There is no statistical tier in 0.1.1: no timing ratio or speed number is gated or stated as a law; the Benchmarks table is REPORTED (one host's run of record #7).
 
 ## What this is not
 
 - **Not growable.** Capacity is fixed at construction (see [Composability](#composability) for the rebuild recipe).
 - **Not a keyed map or an interval tree.** `SumSequence` is positional. A keyed `SumMap` and an `IntervalMap` are planned (see ROADMAP.md, repo only), not part of this release.
 - **Not an entity index.** There is no entity-to-index lookup and no `readRange`; walk with the cursor.
-- **Not a benchmarked package.** Counts are gated; no speed numbers ship.
+- **Not a speed promise.** Counts are gated; the Benchmarks table is one host's REPORTED run of record, not a law, and it gates nothing.
 - **Not tested outside Node.** The allocation gates are measured on Node v26.8.2 only; the browser build of V8 may box where Node does not.
 - **Not thread-safe.** One sequence, one thread.
 

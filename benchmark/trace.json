@@ -1,0 +1,26 @@
+{
+  "schema": "lite-yggdrasil/trace/1",
+  "commit": "e9fcf9c",
+  "date": "2026-11-07T22:03:16.396Z",
+  "baseline": 2.21,
+  "line": 3.21,
+  "samples": 94,
+  "crossed": 1,
+  "peak": {
+    "load1": 3.67,
+    "at": "23:04:17Z"
+  },
+  "crossings": [
+    {
+      "at": "23:04:17Z",
+      "load1": 3.67,
+      "foreign": []
+    }
+  ],
+  "cause": "unattributed",
+  "replicas": [
+    "#2 8e27490",
+    "#4 8d0113f"
+  ],
+  "rule": "R-BA64"
+}

@@ -52,7 +52,7 @@ Gated on Node v26.8.2 (npm run torture; one run 2026-10-27, host QUIET, load1 3.
   b = 1: setMeasure, sumBefore, total, indexAtSum, getMeasure, seekSum, cursor offset / measure. b = 0: removeAt, entityAt, seekIndex, next, splitAt, append.
   Measured: setMeasure 15.98, seekSum 16; sumBefore / total / indexAtSum 0; getMeasure, offset, measure 0 (gated <= 1 as a TurboFan-only regression row on this Node, not a contract).
 - insertAt documented limit: b = dims, i.e. <= 16*dims + 1 B/op on the big lane (<= 17 at dims 1 ... <= 65 at dims 4). Measured 15.98 / 31.97 / 47.95 / 63.94.
-- Other V8 builds and values outside these lanes are not gated. maxPauseMs is REPORTED, not gated. No timing or speed claims exist (no statistical tier).
+- Other V8 builds and values outside these lanes are not gated. maxPauseMs is REPORTED, not gated. No timing or speed claim is gated (no statistical tier); the README Benchmarks times are REPORTED from one run of record.
 
 ## Gates
 

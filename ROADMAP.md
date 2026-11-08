@@ -468,6 +468,10 @@ What blocks what:
   load1 3.40 at 19:50:35Z, 1 of 93; #7: load1 3.67 at 23:04:17Z, 1 of 94; no node process other than the bench's
   own). Both archived, not committed; README stays PENDING; BA-16 = PAUSE unchanged. R-BA62 kept R-BA53 unchanged
   for run #7. Next: run of record #8 in a quiet window (R-BA52 / R-BA53); no date set.
+  Status (2026-11-08, burst 50): run #8 (ac6b4cf) read CONCLUSIVE but its trace crossed 6 of 94 samples (peak load1
+  4.09), attributed to interactive desktop use; archived, not committed. Run #7 is published on replication (R-BA64:
+  runs #2 and #4 agree on all 28 crossover rows and BA-16; trace.json R-BA65): the README Benchmarks section carries
+  its numbers (REPORTED). BA-16 = PAUSE unchanged; the "README stays PENDING" lines above are history.
 - The pool (0.4) needs SumMap and IntervalMap realms to be worth shipping.
 
 Estimate to SumMap 0.2.0 (2026-10-28, est., from .handoff/HISTORY.md: 28 burst sessions S0 -> 0.1.1 (S0, the

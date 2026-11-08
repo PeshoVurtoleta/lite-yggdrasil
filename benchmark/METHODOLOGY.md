@@ -244,6 +244,20 @@ Status (2026-11-07, burst 50): the re-measure tooling is committed (e9fcf9c). Ru
 read CONCLUSIVE (twin non-TIE 0 / 57, no group re-measured) but each 60 s trace crossed the R-BA53 line in one
 sample (#6: 1 of 93, load1 3.40; #7: 1 of 94, load1 3.67; no node process other than the bench's own); both are
 archived, not committed. README stays PENDING; BA-16 = PAUSE unchanged. No run of record has yet re-measured a group.
+Status (2026-11-08): run #8 (ac6b4cf) read CONCLUSIVE but its trace crossed 6 of 94 samples (peak load1 4.09 at
+04:11:17Z), attributed to interactive desktop use (Chrome renderers, WindowServer, coreaudiod); archived, not committed.
+Run #7 is published on replication (R-BA64): the README Benchmarks section now carries its numbers (REPORTED, one
+host, gates nothing), and the 2026-11-06 / 2026-11-07 lines above that say "holds no measured number" or "README
+stays PENDING" are history, superseded by this line.
+R-BA64 (2026-11-08; amends R-BA53 for this program): a CONCLUSIVE run of record whose trace crossed the line may be
+published when at least two other CONCLUSIVE runs of record on the same Yggdrasil.js and chunkcap.json agree with it
+on all 28 crossover rows and on the BA-16 reading; the crossing (samples, peak load1, cause or "unattributed") is
+printed in the README provenance and the CHANGELOG. Run #7 (e9fcf9c; 1 of 94 samples, load1 3.67, unattributed) is
+published; its replicas are runs #2 (8e27490) and #4 (8d0113f), Yggdrasil.js e0618227, chunkcap.json f79b43a6.
+R-BA65 (2026-11-08): benchmark/trace.json, written by `node benchmark/Trace.mjs <load> <baseline> <benchPid>` from the
+run's 60 s trace (samples, crossed, line, peak load1 + time, each crossing, cause, replica runs), is read by
+Readme.mjs; when present the provenance line adds the R-BA53 trace verdict and the replication note, without it the
+section is byte-identical. results.json keeps the archived run's bytes.
 
 - Passes (BA-28): K = 5 interleaved passes, pass-major. Inside each (scenario, n) group the label order is rotated
   left by one per pass (Compare.mjs rotateLabels). A child times 5 samples per phase (3 under --quick, never a run
@@ -314,7 +328,7 @@ archived, not committed. README stays PENDING; BA-16 = PAUSE unchanged. No run o
   - a QUIET run, published or not, citing a non-QUIET `--picks` table;
   - a QUIET run-of-record `--publish --all` with no `--picks` table, or one whose meta.runCount is not 5.
 - Empty loss table (BA-35, R-BA35): a MEASURED QUIET results.json with an empty lossTable makes Readme.mjs
-  renderBenchmarksSection throw (Readme.mjs:151-152); README keeps its PENDING form and the run is re-planned. A run
+  renderBenchmarksSection's empty-lossTable throw; README keeps its PENDING form and the run is re-planned. A run
   with no untagged scenario cell (D-rows only, or a sweep) carries lossTable [] and no `comparison`; it is not a run
   of record.
 - Comparison record (BA-36, R-BA36): validateResults requires `comparison { inconclusive, twin }` whenever status is
@@ -355,10 +369,10 @@ state, run count, commit + main-file sha, plus the seed and the exact command.
   `--sweep chunkCap --publish --all --runs 5` that writes chunkcap.json (see "Sweep, A/B, crossover").
 - The README "Benchmarks" section is generated from the committed results.json,
   never hand-typed, and a test pins that README equals the generator output.
-- README carries numbers only from a QUIET run of record. A PRELIMINARY
+- README carries numbers only from a QUIET run of record (2026-11-08: run #7, published on replication, R-BA64). A PRELIMINARY
   results.json renders the R-B1 PENDING form in README, and report.html shows its
   numbers labelled PRELIMINARY (maintainer ruling R-BA5).
-- The PENDING form is the current README Benchmarks paragraph byte-for-byte, with
+- The PENDING form is the 0.1.1 README Benchmarks paragraph byte-for-byte (PENDING_TEMPLATE in Readme.mjs), with
   <version> read from package.json (maintainer ruling R-BA6). A release whose
   bench is PENDING ships no benchmark numbers (decisions/0005 R-B1, C-42).
 - Numbers enter README / llms.txt / CHANGELOG only from a run log of THIS cycle,

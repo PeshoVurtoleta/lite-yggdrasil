@@ -1222,6 +1222,9 @@ CONCLUSIVE but their 60 s traces crossed the R-BA53 line (6 of 94, 1 of 93, 1 of
 quiet trace but read INCONCLUSIVE (twin non-TIE at S2a@1024). All four are archived, not committed. Their S2 rows
 repeat run #2's (BlockedArray wins S2 through n = 100000; crossover "none up to 131072") -- REPORTED, not a verdict;
 BA-16 = PAUSE (R-BA49) stands.
+Note (2026-11-08, burst 50): run #8 (ac6b4cf) read CONCLUSIVE but its trace crossed 6 of 94 samples (peak load1 4.09),
+attributed to interactive desktop use; archived, not committed. Run #7 is published on replication (R-BA64; runs #2
+and #4 agree on all 28 crossover rows and BA-16; trace.json R-BA65). BA-16 = PAUSE (R-BA49) unchanged.
 R-BA49 (Q-BA16, 2026-11-06, burst 48, on b48 run of record #2, CONCLUSIVE) = "PAUSE (Recommended)". Option text:
 "BA-16 = PAUSE per the pre-registered reading (R-BA12 as amended by R-BA45). On b48 run of record #2 (8e27490,
 CONCLUSIVE, twin 0 / 57), BlockedArray beats SumSequence at n >= 100k on S2 (S2@100000 blend, min-of-K, 0.95 band). An
@@ -1303,7 +1306,7 @@ gitignored .handoff/SPEC-bench-adopt.md "Maintainer rulings"; recorded 2026-11-0
   a GO input; no SumSequence or BlockedArray cell is ever excluded (one over 300 s re-plans the run)."
 - R-BA35 (Q-EMPTYLOSS, 2026-11-01, burst 38, asked after the B3 r1 review) = "Refuse, keep the rule (Recommended)".
   Option text: "A MEASURED QUIET results.json with an empty lossTable still makes renderBenchmarksSection throw
-  (Readme.mjs:151-152); the README keeps its PENDING form and the run is re-planned. Every scenario has a variant
+  (renderBenchmarksSection's empty-lossTable throw); the README keeps its PENDING form and the run is re-planned. Every scenario has a variant
   designed for a rival win (RESEARCH 4.3; R-BA12 requires the S7 Fenwick loss row), so zero rival wins means the
   honesty design failed, not that SumSequence won everywhere."
 - R-BA36 (Q-CMPREQ, 2026-11-04, burst 39, asked after the B3 r2 review) = "Require comparison (Recommended)". Option

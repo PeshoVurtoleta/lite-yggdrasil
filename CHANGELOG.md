@@ -27,6 +27,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   report.html gains a "twin re-measure" section and the README provenance names each re-measured group (R-BA59); a
   re-measure cell failure fails the run (R-BA60). A missing twin is never re-measured; BAND 0.95 and min-of-K are
   unchanged.
+- README Benchmarks: the section now carries measured numbers from run of record #7 (commit e9fcf9c, 2026-11-07
+  22:03:15Z -> 23:36:56Z, node v26.8.2, Apple M4 Pro x12 darwin arm64, K = 5, 358 cells; QUIET start, load1 1.14 vs
+  baseline 2.21, quiet-lock run --strict exit 0; CONCLUSIVE: twin A/A non-TIE 0 / 57, no group re-measured, drift
+  sentinel 1.7%). Its 60 s load trace crossed the R-BA53 line in 1 of 94 samples (load1 3.67 at 23:04:17Z,
+  unattributed), so it is published on replication (R-BA64): runs #2 (8e27490) and #4 (8d0113f), same Yggdrasil.js
+  e0618227 and chunkcap.json f79b43a6, agree with it on all 28 crossover rows and on BA-16 (= PAUSE, R-BA49). Run #8
+  (ac6b4cf, CONCLUSIVE) crossed 6 of 94 samples (peak load1 4.09), attributed to interactive desktop use; archived,
+  not committed. Every time in the README is REPORTED (one host's run; gates nothing). README "Not a benchmarked
+  package" is now "Not a speed promise".
+- Benchmark tooling (repo tooling, not shipped): benchmark/Trace.mjs writes the committed benchmark/trace.json from a
+  run's 60 s load trace (`node benchmark/Trace.mjs <load> <baseline> <benchPid>`); benchmark/Readme.mjs reads it and
+  adds the R-BA53 trace verdict and the replication note to the provenance line (R-BA65); without trace.json the
+  section is byte-identical. test/Trace.test.mjs adds 32 tests.
 
 ## [0.1.1] - 2026-10-27
 

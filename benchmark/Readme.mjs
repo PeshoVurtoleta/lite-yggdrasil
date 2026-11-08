@@ -22,20 +22,28 @@
  * - R-BA57 / R-BA59: a results.json carrying 'remeasure' adds ", twin re-measure (R-BA57): none" or
  *   "<Sid>@<n> (first <v>, re-measure <v>)" per re-measured group to the provenance line; with no
  *   'remeasure' key the section is byte-identical to before.
+ * - R-BA64 / R-BA65: when benchmark/trace.json exists (written by benchmark/Trace.mjs from the run's
+ *   60 s load trace), main passes it as the third argument: results.json must then be MEASURED + QUIET,
+ *   the trace is checked by validateTrace (benchmark/Trace.mjs) against it, the provenance line adds
+ *   traceNote(trace) after the re-measure note (the R-BA53 trace verdict and, when the trace crossed,
+ *   "published on replication (R-BA64): runs ..."), and the lead's "(QUIET host)" reads "(QUIET host at
+ *   start; load trace below)". With no trace.json (trace null) the section is byte-identical to before.
  * The input is validated by validateResults (benchmark/Bench.mjs) first. ASCII only.
  *
- * exports: renderBenchmarksSection(results | null, version), extractSection(readmeText),
- * PROVENANCE_FIELDS, PENDING_TEMPLATE.
+ * exports: renderBenchmarksSection(results | null, version, trace = null), extractSection(readmeText),
+ * readTraceFile(path), PROVENANCE_FIELDS, PENDING_TEMPLATE.
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { validateResults } from './Bench.mjs';
 import { rowRunValues, median, minOfList } from './Compare.mjs';
+import { validateTrace, traceNote } from './Trace.mjs';
 
 const README_PATH = fileURLToPath(new URL('../README.md', import.meta.url));
 const PKG_PATH = fileURLToPath(new URL('../package.json', import.meta.url));
 const RESULTS_PATH = fileURLToPath(new URL('./results.json', import.meta.url));
+const TRACE_PATH = fileURLToPath(new URL('./trace.json', import.meta.url));
 
 const START = '## Benchmarks\n\n';
 const END = '\n\n## Design';
@@ -125,7 +133,7 @@ function remeasureNote(results) {
     }).join('; ');
 }
 
-function measuredForm(results) {
+function measuredForm(results, trace) {
     const m = results.meta;
     const subj = results.subjects[0];
     const foil = results.foil;
@@ -136,14 +144,15 @@ function measuredForm(results) {
         throw new Error('[readme] measured form needs the run of record (meta.command has no --publish): ' + m.command);
     }
     const lines = [];
-    lines.push('Measured by the run of record at commit ' + m.commit + ' (QUIET host). Every time below is REPORTED: one ' +
+    lines.push('Measured by the run of record at commit ' + m.commit + (trace === null ? ' (QUIET host)' :
+        ' (QUIET host at start; load trace below)') + '. Every time below is REPORTED: one ' +
         'host\'s measurement, not a law, and it gates nothing. The operation counts beside each time are exact and ' +
         'DETERMINISTIC (the counters above, gated in `npm test`).');
     lines.push('');
     lines.push('Provenance: date ' + m.date + ', node ' + m.node + ', platform ' + m.platform + ', arch ' + m.arch +
         ', cpu ' + m.cpuModel + ', load average at start ' + JSON.stringify(m.loadAvgStart) + ', host ' + m.hostState +
         ', commit ' + m.commit + ' (Yggdrasil.js sha256/8 ' + m.mainFileSha + '), runs ' + m.runCount + ', seed 0x' +
-        (m.seed >>> 0).toString(16) + remeasureNote(results) + '.');
+        (m.seed >>> 0).toString(16) + remeasureNote(results) + (trace === null ? '' : traceNote(trace)) + '.');
     lines.push('');
     const fd8 = results.results[foil + '/D8'];
     if (!fd8) throw new Error('[readme] measured form needs results.' + foil + '/D8');
@@ -173,26 +182,45 @@ function measuredForm(results) {
 }
 
 /**
- * The README Benchmarks section body for a results payload (or null) and the package version.
+ * The README Benchmarks section body for a results payload (or null), the package version and the
+ * run's trace.json object (or null: byte-identical to the two-argument form).
  * @param {object|null} results
  * @param {string} version
+ * @param {object|null} [trace]
  * @returns {string}
  */
-export function renderBenchmarksSection(results, version) {
+export function renderBenchmarksSection(results, version, trace = null) {
     if (typeof version !== 'string' || !SEMVER.test(version)) {
         throw new Error('[readme] version must be a semver string, got ' + JSON.stringify(version));
     }
+    if (trace !== null && results === null) throw new Error('[readme] trace.json needs a measured results.json');
     if (results === null) return PENDING_TEMPLATE.replace('<version>', version);
     validateResults(results);
     if (results.status === 'PENDING' || results.meta.hostState !== 'QUIET') {
+        if (trace !== null) throw new Error('[readme] trace.json needs a measured results.json');
         return PENDING_TEMPLATE.replace('<version>', version);
     }
+    if (trace !== null) validateTrace(trace, results);
     if (results.lossTable.length === 0) {
         throw new Error('[readme] a MEASURED QUIET results.json must carry >= 1 loss row (lossTable is empty)');
     }
-    const out = measuredForm(results);
+    const out = measuredForm(results, trace);
     if (out.includes('PENDING')) throw new Error('[readme] the measured form must not contain "PENDING"');
     return out;
+}
+
+/**
+ * The parsed trace.json at path, or null when the file is absent. A present file must parse to a plain
+ * object (null / array / scalar throw: a "null" file is not "no trace").
+ * @param {string} path
+ * @returns {object|null}
+ */
+export function readTraceFile(path) {
+    if (!existsSync(path)) return null;
+    const t = JSON.parse(readFileSync(path, 'utf8'));
+    const p = t !== null && typeof t === 'object' && !Array.isArray(t) ? Object.getPrototypeOf(t) : undefined;
+    if (p !== Object.prototype && p !== null) throw new Error('[readme] trace.json must be an object');
+    return t;
 }
 
 function firstDiff(a, b) {
@@ -209,13 +237,15 @@ function main() {
     }
     const version = JSON.parse(readFileSync(PKG_PATH, 'utf8')).version;
     const results = existsSync(RESULTS_PATH) ? JSON.parse(readFileSync(RESULTS_PATH, 'utf8')) : null;
-    const want = renderBenchmarksSection(results, version);
+    const trace = readTraceFile(TRACE_PATH);
+    const want = renderBenchmarksSection(results, version, trace);
     const readme = readFileSync(README_PATH, 'utf8');
     const have = extractSection(readme);
     if (args[0] === '--check') {
         if (have === want) {
             process.stdout.write('[readme] Benchmarks section matches the generator (' +
-                (results === null ? 'no committed results.json' : 'benchmark/results.json') + ', version ' + version + ')\n');
+                (results === null ? 'no committed results.json' : 'benchmark/results.json') +
+                (trace === null ? '' : ' + benchmark/trace.json') + ', version ' + version + ')\n');
             return;
         }
         const i = firstDiff(have, want);

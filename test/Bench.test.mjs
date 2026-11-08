@@ -479,24 +479,27 @@ describe('B3: Bench / Readme', () => {
     });
 
     const readmeText = readFileSync(PKG + 'README.md', 'utf8');
-    const headText = () => {
-        const p = PKG + '.handoff/evidence/bench-adopt/README.HEAD.md';
-        if (existsSync(p)) return readFileSync(p, 'utf8');
-        const g = spawnSync('git', ['show', 'HEAD:README.md'], { cwd: PKG, encoding: 'utf8' });
-        assert.equal(g.status, 0);
-        return g.stdout;
+    // The committed run of record (results.json + trace.json, R-BA64 / R-BA65); null when a file is absent.
+    const committedRes = () => {
+        const rj = PKG + 'benchmark/results.json';
+        return existsSync(rj) ? JSON.parse(readFileSync(rj, 'utf8')) : null;
     };
+    const committedTrace = () => {
+        const tj = PKG + 'benchmark/trace.json';
+        return existsSync(tj) ? JSON.parse(readFileSync(tj, 'utf8')) : null;
+    };
+    const committedRender = () => R.renderBenchmarksSection(committedRes(), pkg.version, committedTrace());
 
     test('A4: PROVENANCE_FIELDS is the 9 names', () => {
         assert.deepEqual([...R.PROVENANCE_FIELDS], PROV9);
     });
-    test('A4: render(null) == README section == README.HEAD section', () => {
-        const render = R.renderBenchmarksSection(null, pkg.version);
-        assert.equal(R.extractSection(readmeText), render);
-        assert.equal(R.extractSection(headText()), render);
+    test('A4: render(null) is the PENDING template; README section == the committed-results render (R-BA64)', () => {
+        const pending = R.renderBenchmarksSection(null, pkg.version);
+        assert.ok(pending.includes('PENDING'), 'the null render is the PENDING form');
+        assert.equal(R.extractSection(readmeText), committedRender());
     });
-    test('A4 control: a 1-byte mutation of the README no longer equals the render', () => {
-        const render = R.renderBenchmarksSection(null, pkg.version);
+    test('A4 control: a 1-byte mutation of the README no longer equals the committed render', () => {
+        const render = committedRender();
         const i = readmeText.indexOf('## Benchmarks\n\n') + '## Benchmarks\n\n'.length + 3;
         const mut = readmeText.slice(0, i) + (readmeText[i] === 'x' ? 'y' : 'x') + readmeText.slice(i + 1);
         assert.notEqual(R.extractSection(mut), render);
@@ -587,9 +590,7 @@ describe('B3: Bench / Readme', () => {
     }
 
     test('A4: README pin survives a committed results.json', () => {
-        const rj = PKG + 'benchmark/results.json';
-        const res = existsSync(rj) ? JSON.parse(readFileSync(rj, 'utf8')) : null;
-        assert.equal(R.renderBenchmarksSection(res, pkg.version), R.extractSection(readmeText));
+        assert.equal(R.renderBenchmarksSection(committedRes(), pkg.version, committedTrace()), R.extractSection(readmeText));
     });
 
     test('A6: --scenario BOGUS exits 2 with "unknown scenario BOGUS"', () => {

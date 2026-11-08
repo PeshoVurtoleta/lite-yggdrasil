@@ -462,6 +462,12 @@ What blocks what:
   flagged once, `remeasure` record, report / README naming, re-measure failure fails the run); the tooling landed
   uncommitted until the maintainer commits it. Run of record #6 is PENDING (exclusive window, after the commit);
   README stays PENDING; BA-16 = PAUSE unchanged.
+  Status (2026-11-07, burst 50): the tooling is committed (e9fcf9c). Runs of record #6 and #7 (e9fcf9c, K = 5,
+  358 cells, node v26.8.2, Apple M4 Pro x12) read CONCLUSIVE (twin non-TIE 0 / 57, no group re-measured; drift
+  sentinel 3.0% / 1.7%; S2 rows identical to run #2) but each 60 s trace crossed the R-BA53 line in one sample (#6:
+  load1 3.40 at 19:50:35Z, 1 of 93; #7: load1 3.67 at 23:04:17Z, 1 of 94; no node process other than the bench's
+  own). Both archived, not committed; README stays PENDING; BA-16 = PAUSE unchanged. R-BA62 kept R-BA53 unchanged
+  for run #7. Next: run of record #8 in a quiet window (R-BA52 / R-BA53); no date set.
 - The pool (0.4) needs SumMap and IntervalMap realms to be worth shipping.
 
 Estimate to SumMap 0.2.0 (2026-10-28, est., from .handoff/HISTORY.md: 28 burst sessions S0 -> 0.1.1 (S0, the

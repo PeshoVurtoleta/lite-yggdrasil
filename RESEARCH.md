@@ -1217,6 +1217,11 @@ from the table. "Wins" = the median of K interleaved runs on a QUIET host; a PRE
 Note (2026-11-05, burst 45, R-BA45, quoted in RESEARCH 17.6): R-BA41 amends 'Wins' -- a win in this reading is the
 BA-29 verdict (min-of-K, 0.95 band) on a QUIET host; amended before any CONCLUSIVE run of record was read.
 Note (2026-11-06, burst 48/49): BA-16 DECIDED = PAUSE.
+Note (2026-11-07, burst 50): runs of record #4..#7 decide nothing new. #4 (8d0113f), #6 and #7 (e9fcf9c) read
+CONCLUSIVE but their 60 s traces crossed the R-BA53 line (6 of 94, 1 of 93, 1 of 94 samples); #5 (8d0113f) kept a
+quiet trace but read INCONCLUSIVE (twin non-TIE at S2a@1024). All four are archived, not committed. Their S2 rows
+repeat run #2's (BlockedArray wins S2 through n = 100000; crossover "none up to 131072") -- REPORTED, not a verdict;
+BA-16 = PAUSE (R-BA49) stands.
 R-BA49 (Q-BA16, 2026-11-06, burst 48, on b48 run of record #2, CONCLUSIVE) = "PAUSE (Recommended)". Option text:
 "BA-16 = PAUSE per the pre-registered reading (R-BA12 as amended by R-BA45). On b48 run of record #2 (8e27490,
 CONCLUSIVE, twin 0 / 57), BlockedArray beats SumSequence at n >= 100k on S2 (S2@100000 blend, min-of-K, 0.95 band). An

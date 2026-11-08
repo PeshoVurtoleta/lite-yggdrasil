@@ -394,6 +394,9 @@ engine code, CI and docs, each with its fix commit.
   (2026-11-06, burst 49) BA-41 landed (804aa83); R-BA52 "Hold; re-run in a quiet window" supersedes R-BA50 for run #2
   (unpublished, README keeps PENDING); run #3 (804aa83) INCONCLUSIVE, 60 s trace crossed the R-BA53 line (2 of 94
   samples, load1 3.42 / 3.66 vs 3.21), archived, not committed; BA-16 = PAUSE unchanged. Detail: RESEARCH 14.4.
+  (2026-11-07, burst 50) runs #4..#7 archived, not committed: #4 / #6 / #7 CONCLUSIVE with traces crossing the R-BA53
+  line (6 / 1 / 1 samples), #5 quiet but INCONCLUSIVE; twin re-measure (R-BA57..R-BA60) committed e9fcf9c; BA-16 =
+  PAUSE unchanged; still OPEN.
 
 ---
 

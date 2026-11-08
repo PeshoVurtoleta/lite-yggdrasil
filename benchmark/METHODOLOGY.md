@@ -240,6 +240,10 @@ Status (2026-11-07): runs #4 and #5 are archived, not committed. Run #4 read CON
 R-BA53 line; run #5's trace stayed quiet but it read INCONCLUSIVE on S2a@1024 (twin non-TIE). README stays PENDING;
 BA-16 = PAUSE unchanged. The twin re-measure tooling (R-BA57..R-BA60) is described below; run of record #6 is
 PENDING (exclusive window, after that tooling is committed).
+Status (2026-11-07, burst 50): the re-measure tooling is committed (e9fcf9c). Runs of record #6 and #7 (e9fcf9c)
+read CONCLUSIVE (twin non-TIE 0 / 57, no group re-measured) but each 60 s trace crossed the R-BA53 line in one
+sample (#6: 1 of 93, load1 3.40; #7: 1 of 94, load1 3.67; no node process other than the bench's own); both are
+archived, not committed. README stays PENDING; BA-16 = PAUSE unchanged. No run of record has yet re-measured a group.
 
 - Passes (BA-28): K = 5 interleaved passes, pass-major. Inside each (scenario, n) group the label order is rotated
   left by one per pass (Compare.mjs rotateLabels). A child times 5 samples per phase (3 under --quick, never a run
